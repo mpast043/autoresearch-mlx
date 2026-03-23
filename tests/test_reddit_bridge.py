@@ -112,3 +112,59 @@ async def test_bridge_search_returns_items_and_cursor():
     assert len(items) == 1
     assert next_cursor == "t3_next"
     assert items[0]["kind"] == "post"
+
+
+@pytest.mark.asyncio
+async def test_bridge_client_reuses_single_bounded_session(monkeypatch):
+    created_sessions = []
+    created_connectors = []
+
+    class FakeResponse:
+        status = 200
+
+        async def json(self):
+            return {"ok": True, "items": [], "next_cursor": ""}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeSession:
+        def __init__(self, *, timeout=None, connector=None):
+            self.timeout = timeout
+            self.connector = connector
+            self.closed = False
+            self.calls = []
+            created_sessions.append(self)
+
+        def post(self, url, json=None, headers=None):
+            self.calls.append(("post", url, json, headers))
+            return FakeResponse()
+
+        async def close(self):
+            self.closed = True
+
+    class FakeConnector:
+        def __init__(self, *, limit=None, enable_cleanup_closed=None):
+            self.limit = limit
+            self.enable_cleanup_closed = enable_cleanup_closed
+            created_connectors.append(self)
+
+    monkeypatch.setattr("reddit_bridge.aiohttp.ClientSession", FakeSession)
+    monkeypatch.setattr("reddit_bridge.aiohttp.TCPConnector", FakeConnector)
+
+    client = RedditBridgeClient(
+        {"enabled": True, "base_url": "https://bridge.example.com", "connection_limit": 3}
+    )
+
+    await client.search_posts(subreddit="operations", query="manual cleanup", limit=1)
+    await client.search_posts(subreddit="operations", query="manual cleanup", limit=1)
+    await client.close()
+
+    assert len(created_sessions) == 1
+    assert len(created_connectors) == 1
+    assert created_connectors[0].limit == 3
+    assert len(created_sessions[0].calls) == 2
+    assert created_sessions[0].closed is True

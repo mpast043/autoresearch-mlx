@@ -486,6 +486,10 @@ class AutoResearcher:
     async def shutdown(self) -> None:
         if self.orchestrator:
             await self.orchestrator.stop()
+        for agent in self.agents.values():
+            toolkit = getattr(agent, "toolkit", None)
+            if toolkit and hasattr(toolkit, "close"):
+                await toolkit.close()
         if self.db:
             self.db.close()
 

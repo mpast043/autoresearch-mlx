@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from dataclasses import dataclass
@@ -63,7 +64,11 @@ class RedditBridgeClient:
         self.base_url = _resolve_env(config.get("base_url", "")).rstrip("/")
         self.auth_token = _resolve_env(config.get("auth_token", ""))
         self.timeout_seconds = float(config.get("timeout_seconds", 20))
+        self.connection_limit = max(1, int(config.get("connection_limit", 8)))
         self.enabled = bool(config.get("enabled", False) and self.base_url)
+        self._session: aiohttp.ClientSession | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
+        self._session_lock = asyncio.Lock()
 
     def _auth_headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -71,25 +76,49 @@ class RedditBridgeClient:
             headers["Authorization"] = f"Bearer {self.auth_token}"
         return headers
 
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if not self.enabled:
+            raise BridgeError("bridge_disabled", "reddit bridge is disabled")
+        current_loop = asyncio.get_running_loop()
+        async with self._session_lock:
+            if self._session is not None:
+                if self._session.closed or self._session_loop is not current_loop:
+                    await self._session.close()
+                    self._session = None
+                    self._session_loop = None
+                else:
+                    return self._session
+            timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+            connector = aiohttp.TCPConnector(limit=self.connection_limit, enable_cleanup_closed=True)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+            self._session_loop = current_loop
+            return self._session
+
+    async def close(self) -> None:
+        async with self._session_lock:
+            if self._session is not None and not self._session.closed:
+                await self._session.close()
+            self._session = None
+            self._session_loop = None
+
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.enabled:
             raise BridgeError("bridge_disabled", "reddit bridge is disabled")
-        timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    f"{self.base_url}{path}",
-                    json=payload,
-                    headers=self._auth_headers(),
-                ) as response:
-                    try:
-                        body = await response.json()
-                    except aiohttp.ContentTypeError as exc:
-                        raise BridgeError(
-                            "bad_response_shape",
-                            "bridge returned non-json response",
-                            response.status,
-                        ) from exc
+            session = await self._get_session()
+            async with session.post(
+                f"{self.base_url}{path}",
+                json=payload,
+                headers=self._auth_headers(),
+            ) as response:
+                try:
+                    body = await response.json()
+                except aiohttp.ContentTypeError as exc:
+                    raise BridgeError(
+                        "bad_response_shape",
+                        "bridge returned non-json response",
+                        response.status,
+                    ) from exc
         except TimeoutError as exc:
             raise BridgeError("bridge_timeout", "reddit bridge request timed out") from exc
         except aiohttp.ClientError as exc:
@@ -188,14 +217,13 @@ class RedditBridgeClient:
     async def health(self) -> dict[str, Any]:
         if not self.enabled:
             raise BridgeError("bridge_disabled", "reddit bridge is disabled")
-        timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    f"{self.base_url}/api/health",
-                    headers=self._auth_headers(),
-                ) as response:
-                    payload = await response.json()
+            session = await self._get_session()
+            async with session.get(
+                f"{self.base_url}/api/health",
+                headers=self._auth_headers(),
+            ) as response:
+                payload = await response.json()
         except TimeoutError as exc:
             raise BridgeError("bridge_timeout", "reddit bridge health check timed out") from exc
         except aiohttp.ClientError as exc:

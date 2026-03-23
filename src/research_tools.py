@@ -35,6 +35,16 @@ except Exception:  # pragma: no cover - supports package and direct module usage
     from src.reddit_bridge import BridgeError, RedditBridgeClient
 
 try:
+    from reddit_transport import RedditTransport
+except Exception:  # pragma: no cover - supports package and direct module usage
+    from src.reddit_transport import RedditTransport
+
+try:
+    from search_models import SearchDocument
+except Exception:  # pragma: no cover - supports package and direct module usage
+    from src.search_models import SearchDocument
+
+try:
     from discovery_queries import reddit_problem_keywords, reddit_problem_subreddits, reddit_success_keywords
 except Exception:  # pragma: no cover - supports package and direct module usage
     from src.discovery_queries import reddit_problem_keywords, reddit_problem_subreddits, reddit_success_keywords
@@ -517,16 +527,6 @@ def infer_recurrence_key(text: str) -> str:
 
 
 @dataclass
-class SearchDocument:
-    title: str
-    url: str
-    snippet: str
-    source: str
-    source_family: str = ""
-    retrieval_query: str = ""
-
-
-@dataclass
 class CorroborationPlan:
     signature_terms: list[str]
     role_terms: list[str]
@@ -675,23 +675,25 @@ class ResearchToolkit:
             self.reddit_mode = "public_direct"
         self._search_cache: dict[tuple[str, int, Optional[str], str], list[SearchDocument]] = {}
         self._fetch_cache: dict[str, dict[str, Any]] = {}
-        self._reddit_search_cache: dict[tuple[str, str, int, str], list[SearchDocument]] = {}
-        self._reddit_thread_cache: dict[str, dict[str, Any]] = {}
         self._recurrence_attempt_cache: dict[str, tuple[list[SearchDocument], dict[str, Any]]] = {}
         self._discovery_feedback: dict[str, dict[str, dict[str, Any]]] = {}
-        self._reddit_metrics = {
-            "reddit_mode": self.reddit_mode,
-            "reddit_bridge_hits": 0,
-            "reddit_bridge_misses": 0,
-            "reddit_fallback_queries": 0,
-            "reddit_public_direct_queries": 0,
-            "reddit_validation_seed_runs": 0,
-            "reddit_validation_seeded_pairs": 0,
-            "reddit_validation_seed_searches": 0,
-            "reddit_validation_seed_uncovered_before": 0,
-            "reddit_validation_seed_uncovered_after": 0,
-        }
-        self._reddit_validation_seeded_pairs: set[tuple[str, str]] = set()
+        self.reddit_transport = RedditTransport(
+            config=self.config,
+            reddit_bridge=self.reddit_bridge,
+            reddit_mode=self.reddit_mode,
+            node_bin=self.node_bin,
+            readonly_script=self.reddit_readonly_script,
+            user_agent=self.user_agent,
+            run_json_command=self._run_json_command,
+            compact_text=compact_text,
+            normalize_query=self._normalize_recurrence_query,
+            request_get=lambda *args, **kwargs: requests.get(*args, **kwargs),
+            logger=logger,
+        )
+        self._reddit_search_cache = self.reddit_transport.search_cache
+        self._reddit_thread_cache = self.reddit_transport.thread_cache
+        self._reddit_metrics = self.reddit_transport.metrics
+        self._reddit_validation_seeded_pairs = self.reddit_transport.validation_seeded_pairs
         validation_search = self.config.get("validation", {}).get("search", {})
         self.validation_query_terms = max(8, int(validation_search.get("query_terms", 14)))
         self.validation_recurrence_limit = max(4, int(validation_search.get("recurrence_results", 6)))
@@ -714,8 +716,12 @@ class ResearchToolkit:
         self.wordpress_review_adapter = WordPressPluginReviewAdapter(self.user_agent)
         self.shopify_review_adapter = ShopifyAppReviewAdapter(self.user_agent)
 
+    async def close(self) -> None:
+        if self.reddit_transport:
+            await self.reddit_transport.close()
+
     def get_reddit_runtime_metrics(self) -> dict[str, Any]:
-        return dict(self._reddit_metrics)
+        return self.reddit_transport.get_runtime_metrics()
 
     async def warm_reddit_validation_queries(
         self,
@@ -723,85 +729,10 @@ class ResearchToolkit:
         subreddits: list[str],
         queries: list[str],
     ) -> dict[str, int]:
-        if self.reddit_mode != "bridge_only" or not self.reddit_bridge.enabled:
-            return {
-                "seed_runs": 0,
-                "seeded_pairs": 0,
-                "seeded_searches": 0,
-                "uncovered_before": 0,
-                "uncovered_after": 0,
-            }
-
-        normalized_subreddits = [str(subreddit).strip() for subreddit in subreddits if str(subreddit).strip()]
-        normalized_queries: list[str] = []
-        for query in queries:
-            normalized = self._normalize_recurrence_query(query)
-            if normalized and normalized not in normalized_queries:
-                normalized_queries.append(normalized)
-        if not normalized_subreddits or not normalized_queries:
-            return {
-                "seed_runs": 0,
-                "seeded_pairs": 0,
-                "seeded_searches": 0,
-                "uncovered_before": 0,
-                "uncovered_after": 0,
-            }
-
-        pairs = [
-            (subreddit, query)
-            for subreddit in normalized_subreddits
-            for query in normalized_queries
-            if (subreddit, query) not in self._reddit_validation_seeded_pairs
-        ]
-        if not pairs:
-            return {
-                "seed_runs": 0,
-                "seeded_pairs": 0,
-                "seeded_searches": 0,
-                "uncovered_before": 0,
-                "uncovered_after": 0,
-            }
-
-        try:
-            try:
-                from reddit_seed import RedditSeeder
-            except Exception:  # pragma: no cover - supports package usage
-                from src.reddit_seed import RedditSeeder
-
-            seeder = RedditSeeder(self.config)
-            before = seeder.coverage_report(subreddits=normalized_subreddits, queries=normalized_queries)
-            summary = await seeder.seed(subreddits=normalized_subreddits, queries=normalized_queries)
-            after = seeder.coverage_report(subreddits=normalized_subreddits, queries=normalized_queries)
-        except Exception as exc:
-            logger.warning("reddit validation query warm failed (%s)", exc)
-            return {
-                "seed_runs": 0,
-                "seeded_pairs": 0,
-                "seeded_searches": 0,
-                "uncovered_before": 0,
-                "uncovered_after": 0,
-            }
-
-        self._reddit_validation_seeded_pairs.update(pairs)
-        self._reddit_metrics["reddit_validation_seed_runs"] += 1
-        self._reddit_metrics["reddit_validation_seeded_pairs"] += len(pairs)
-        self._reddit_metrics["reddit_validation_seed_searches"] += int(summary.cached_searches)
-        self._reddit_metrics["reddit_validation_seed_uncovered_before"] += int(before.uncovered_pairs)
-        self._reddit_metrics["reddit_validation_seed_uncovered_after"] += int(after.uncovered_pairs)
-        logger.info(
-            "reddit validation queries warmed pairs=%s searches=%s uncovered_before=%s uncovered_after=%s",
-            len(pairs),
-            summary.cached_searches,
-            before.uncovered_pairs,
-            after.uncovered_pairs,
+        return await self.reddit_transport.warm_validation_queries(
+            subreddits=subreddits,
+            queries=queries,
         )
-        return {
-            "seed_runs": 1,
-            "seeded_pairs": len(pairs),
-            "seeded_searches": int(summary.cached_searches),
-            "uncovered_before": int(before.uncovered_pairs),
-            "uncovered_after": int(after.uncovered_pairs),
-        }
 
     def _approved_skill_path(self, skill_name: str, relative_path: str) -> Path:
         skill_dir = self.skills_root / skill_name
@@ -1470,259 +1401,15 @@ class ResearchToolkit:
         limit: int = 2,
         sort: str = "relevance",
     ) -> list[SearchDocument]:
-        cache_key = (subreddit, query, limit, sort)
-        if cache_key in self._reddit_search_cache:
-            return list(self._reddit_search_cache[cache_key])
-
-        if self.reddit_mode in {"bridge_with_fallback", "bridge_only"}:
-            if not self.reddit_bridge.enabled:
-                self._reddit_metrics["reddit_bridge_misses"] += 1
-                logger.info(
-                    "reddit_search bridge unavailable subreddit=%s query=%r mode=%s",
-                    subreddit,
-                    query,
-                    self.reddit_mode,
-                )
-                self._reddit_search_cache[cache_key] = []
-                return []
-            try:
-                bridge_posts, _next_cursor = await self.reddit_bridge.search_posts(
-                    subreddit=subreddit,
-                    query=query,
-                    limit=limit,
-                    sort=sort,
-                )
-                docs = [
-                    SearchDocument(
-                        title=post.get("title", ""),
-                        url=post.get("permalink", ""),
-                        snippet=compact_text(post.get("body", ""), 500),
-                        source=f"reddit/{post.get('subreddit', subreddit)}",
-                    )
-                    for post in bridge_posts
-                    if post.get("permalink")
-                ]
-                self._reddit_metrics["reddit_bridge_hits"] += 1
-                logger.info(
-                    "reddit_search using bridge path subreddit=%s query=%r limit=%s results=%s mode=%s",
-                    subreddit,
-                    query,
-                    limit,
-                    len(docs),
-                    self.reddit_mode,
-                )
-                self._reddit_search_cache[cache_key] = list(docs)
-                return docs
-            except BridgeError as exc:
-                self._reddit_metrics["reddit_bridge_misses"] += 1
-                if self.reddit_mode == "bridge_only":
-                    logger.info(
-                        "reddit_search bridge miss code=%s subreddit=%s query=%r mode=bridge_only; returning empty",
-                        exc.code,
-                        subreddit,
-                        query,
-                    )
-                    self._reddit_search_cache[cache_key] = []
-                    return []
-                log_fn = logger.info if exc.code == "no_cached_result" else logger.warning
-                log_fn(
-                    "reddit_search bridge failure code=%s subreddit=%s query=%r; falling back to legacy/public path (%s)",
-                    exc.code,
-                    subreddit,
-                    query,
-                    exc.message,
-                )
-                self._reddit_metrics["reddit_fallback_queries"] += 1
-
-        if self.reddit_mode == "public_direct":
-            self._reddit_metrics["reddit_public_direct_queries"] += 1
-
-        if self.node_bin and self.reddit_readonly_script.exists():
-            payload = await self._run_json_command(
-                [
-                    self.node_bin,
-                    str(self.reddit_readonly_script),
-                    "search",
-                    subreddit or "all",
-                    query,
-                    "--limit",
-                    str(limit),
-                ],
-                timeout=20,
-            )
-            if payload and payload.get("ok"):
-                logger.info(
-                    "reddit_search using fallback path=readonly_script subreddit=%s query=%r limit=%s results=%s",
-                    subreddit,
-                    query,
-                    limit,
-                    len(payload.get("data", {}).get("posts", [])),
-                )
-                docs = [
-                    SearchDocument(
-                        title=post.get("title", ""),
-                        url=post.get("permalink", ""),
-                        snippet=post.get("selftext_snippet", "") or "",
-                        source=f"reddit/{post.get('subreddit', subreddit)}",
-                    )
-                    for post in payload.get("data", {}).get("posts", [])
-                    if post.get("permalink")
-                ]
-                self._reddit_search_cache[cache_key] = list(docs)
-                return docs
-
-        def _request() -> list[SearchDocument]:
-            response = requests.get(
-                f"https://www.reddit.com/r/{subreddit}/search.json",
-                params={
-                    "q": query,
-                    "restrict_sr": "on",
-                    "sort": sort,
-                    "t": "year",
-                    "limit": limit,
-                },
-                timeout=15,
-                headers={"User-Agent": self.user_agent},
-            )
-            response.raise_for_status()
-            payload = response.json()
-            docs: list[SearchDocument] = []
-            for child in payload.get("data", {}).get("children", []):
-                data = child.get("data", {})
-                permalink = data.get("permalink", "")
-                docs.append(
-                    SearchDocument(
-                        title=data.get("title", ""),
-                        url=f"https://reddit.com{permalink}" if permalink else "",
-                        snippet=compact_text(data.get("selftext", ""), 500),
-                        source=f"reddit/{subreddit}",
-                    )
-                )
-            return [doc for doc in docs if doc.url]
-
-        try:
-            docs = await asyncio.to_thread(_request)
-            logger.info(
-                "reddit_search using fallback path=public_json subreddit=%s query=%r limit=%s results=%s",
-                subreddit,
-                query,
-                limit,
-                len(docs),
-            )
-            self._reddit_search_cache[cache_key] = list(docs)
-            return docs
-        except Exception:
-            return []
+        return await self.reddit_transport.search(
+            subreddit=subreddit,
+            query=query,
+            limit=limit,
+            sort=sort,
+        )
 
     async def reddit_thread_context(self, url: str) -> dict[str, Any]:
-        if url in self._reddit_thread_cache:
-            return dict(self._reddit_thread_cache[url])
-
-        if self.reddit_mode in {"bridge_with_fallback", "bridge_only"}:
-            if not self.reddit_bridge.enabled:
-                self._reddit_metrics["reddit_bridge_misses"] += 1
-                logger.info("reddit_thread_context bridge unavailable url=%s mode=%s", url, self.reddit_mode)
-                self._reddit_thread_cache[url] = {}
-                return {}
-            try:
-                payload = await self.reddit_bridge.get_post_thread(url=url, comment_limit=8, depth=4)
-                comments = [item.get("body", "") for item in payload.get("comments", []) if item.get("body")]
-                result = {
-                    "title": payload.get("post", {}).get("title", ""),
-                    "text": compact_text(
-                        " ".join(
-                            [
-                                payload.get("post", {}).get("title", ""),
-                                payload.get("post", {}).get("body", ""),
-                                *comments,
-                            ]
-                        ),
-                        2500,
-                    ),
-                    "description": compact_text(payload.get("post", {}).get("body", ""), 900),
-                    "comments": comments[:6],
-                }
-                self._reddit_metrics["reddit_bridge_hits"] += 1
-                self._reddit_thread_cache[url] = result
-                return result
-            except BridgeError as exc:
-                self._reddit_metrics["reddit_bridge_misses"] += 1
-                if self.reddit_mode == "bridge_only":
-                    logger.info(
-                        "reddit_thread_context bridge miss code=%s url=%s mode=bridge_only; returning empty",
-                        exc.code,
-                        url,
-                    )
-                    self._reddit_thread_cache[url] = {}
-                    return {}
-                logger.info("reddit_thread_context bridge failure code=%s url=%s (%s)", exc.code, url, exc.message)
-                self._reddit_metrics["reddit_fallback_queries"] += 1
-
-        if self.reddit_mode == "public_direct":
-            self._reddit_metrics["reddit_public_direct_queries"] += 1
-
-        if self.node_bin and self.reddit_readonly_script.exists():
-            payload = await self._run_json_command(
-                [
-                    self.node_bin,
-                    str(self.reddit_readonly_script),
-                    "thread",
-                    url,
-                    "--commentLimit",
-                    "8",
-                    "--depth",
-                    "4",
-                ],
-                timeout=25,
-            )
-            if payload and payload.get("ok"):
-                data = payload.get("data", {})
-                post = data.get("post", {})
-                comments = [comment.get("body_snippet", "") for comment in data.get("comments", []) if comment.get("body_snippet")]
-                result = {
-                    "title": post.get("title", ""),
-                    "text": compact_text(" ".join([post.get("title", ""), post.get("selftext_snippet", ""), *comments]), 2500),
-                    "description": compact_text(post.get("selftext_snippet", ""), 900),
-                    "comments": comments,
-                }
-                self._reddit_thread_cache[url] = result
-                return result
-
-        json_url = url.rstrip("/") + "/.json"
-
-        def _request() -> dict[str, Any]:
-            response = requests.get(
-                json_url,
-                params={"limit": 8},
-                timeout=15,
-                headers={"User-Agent": self.user_agent},
-            )
-            response.raise_for_status()
-            payload = response.json()
-            post = payload[0]["data"]["children"][0]["data"]
-            comments = []
-            for child in payload[1]["data"].get("children", []):
-                if child.get("kind") != "t1":
-                    continue
-                body = child.get("data", {}).get("body", "")
-                if body:
-                    comments.append(body)
-                if len(comments) >= 6:
-                    break
-            text = compact_text(" ".join([post.get("title", ""), post.get("selftext", ""), *comments]), 2500)
-            return {
-                "title": post.get("title", ""),
-                "text": text,
-                "description": compact_text(post.get("selftext", ""), 900),
-                "comments": comments,
-            }
-
-        try:
-            payload = await asyncio.to_thread(_request)
-            self._reddit_thread_cache[url] = payload
-            return payload
-        except Exception:
-            return {"title": "", "text": "", "description": "", "comments": []}
+        return await self.reddit_transport.thread_context(url)
 
     async def youtube_transcript(self, video_id: str) -> str:
         if self.youtube_transcript_script.exists() and self.yt_dlp_exec:
