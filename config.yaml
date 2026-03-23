@@ -29,4 +29,5 @@ reddit_bridge:
   auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}
 
 reddit_relay:
+  auth_token: ${REDDIT_RELAY_AUTH_TOKEN}
   allow_no_auth: false
