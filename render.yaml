@@ -22,7 +22,6 @@ services:
     dockerContext: .
     dockerCommand: python cli.py run
     autoDeployTrigger: commit
-    maxShutdownDelaySeconds: 120
     disk:
       name: autoresearch-pipeline-data
       mountPath: /app/data
