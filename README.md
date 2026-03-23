@@ -121,6 +121,12 @@ For environment variables, runtime paths, and startup steps, use:
 
 - [docs/production-runtime.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/production-runtime.md)
 - [docs/render-deploy.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/render-deploy.md)
+- [docs/codespaces.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/codespaces.md)
+
+Codespaces support is now included through:
+
+- [.devcontainer/devcontainer.json](/Users/meganpastore/Projects/autoresearch-mlx/.devcontainer/devcontainer.json)
+- [.env.example](/Users/meganpastore/Projects/autoresearch-mlx/.env.example)
 
 ## Current Guardrails
 

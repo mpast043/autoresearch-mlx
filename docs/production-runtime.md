@@ -2,6 +2,10 @@
 
 This repo now has a minimal production-style package surface for the Python pipeline and the local Reddit relay.
 
+If you want a cloud dev environment instead of a local laptop setup, use:
+
+- [docs/codespaces.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/codespaces.md)
+
 ## What Runs
 
 - `pipeline`: long-running discovery/evidence/validation runtime

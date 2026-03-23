@@ -10,6 +10,7 @@ dashboard/node_modules/
 
 .env
 .env.*
+!.env.example
 bridges/reddit-devvit/.git
 
 *.db
