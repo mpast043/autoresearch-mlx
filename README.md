@@ -88,7 +88,7 @@ These agents consume a canonical persisted build brief and write traceable outpu
 - [CLAUDE.md](/Users/meganpastore/Projects/autoresearch-mlx/CLAUDE.md): internal operator/developer guide
 - [docs/state-model.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/state-model.md): runtime state model and active table definitions
 - [docs/production-runtime.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/production-runtime.md): packaging, environment, and Docker runtime notes
-- [docs/render-deploy.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/render-deploy.md): Render Blueprint and deployment notes
+- [docs/render-deploy.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/render-deploy.md): Render relay deployment notes
 - [src/source_policy.py](/Users/meganpastore/Projects/autoresearch-mlx/src/source_policy.py): first-class source routing rules
 - [src/review_sources.py](/Users/meganpastore/Projects/autoresearch-mlx/src/review_sources.py): review-source adapters and parsing
 - [src/github_sources.py](/Users/meganpastore/Projects/autoresearch-mlx/src/github_sources.py): GitHub issue/discussion adapter

@@ -12,25 +12,3 @@ services:
     envVars:
       - key: REDDIT_RELAY_AUTH_TOKEN
         sync: false
-
-  - name: autoresearch-pipeline
-    type: worker
-    runtime: docker
-    plan: starter
-    region: oregon
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    dockerCommand: python cli.py run
-    autoDeployTrigger: commit
-    disk:
-      name: autoresearch-pipeline-data
-      mountPath: /app/data
-      sizeGB: 1
-    envVars:
-      - key: REDDIT_BRIDGE_BASE_URL
-        fromService:
-          type: web
-          name: autoresearch-relay
-          envVarKey: RENDER_EXTERNAL_URL
-      - key: REDDIT_BRIDGE_AUTH_TOKEN
-        sync: false
