@@ -2,8 +2,10 @@
 
 import asyncio
 import os
+import shutil
 import sys
 import tempfile
+from pathlib import Path
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -11,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from reddit_relay import RedditRelayStore
 from reddit_seed import RedditSeeder, build_comment_items, build_post_item, reddit_post_id_from_url
 from research_tools import SearchDocument
+from runtime.paths import PROJECT_ROOT
 
 
 def test_reddit_post_id_from_url_extracts_id():
@@ -144,3 +147,15 @@ def test_seed_caches_empty_search_results_for_no_doc_pairs():
     finally:
         if os.path.exists(path):
             os.remove(path)
+
+
+def test_seed_resolves_default_relay_cache_path_from_project_root():
+    temp_dir = tempfile.mkdtemp()
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(temp_dir)
+        seeder = RedditSeeder({"discovery": {"reddit": {}}, "reddit_relay": {}})
+        assert Path(seeder.relay_store.db_path) == PROJECT_ROOT / "data" / "reddit_relay_cache.db"
+    finally:
+        os.chdir(original_cwd)
+        shutil.rmtree(temp_dir)

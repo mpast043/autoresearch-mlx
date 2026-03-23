@@ -149,10 +149,12 @@ class DiscoveryAgent(BaseAgent):
                     finding_ids.append(finding_id)
         if not prime_task.done():
             prime_task.cancel()
-            try:
-                await prime_task
-            except asyncio.CancelledError:
-                pass
+        try:
+            await prime_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.warning("reddit relay priming task failed: %s", exc)
         self._persist_cycle_health()
         self._publish_cycle_health()
         return finding_ids

@@ -184,6 +184,25 @@ def test_reddit_runtime_summary_preserves_seed_coverage_when_prime_is_cancelled(
     assert runtime["seeded_pairs_uncovered"] == 10
 
 
+def test_discover_once_reaps_reddit_priming_exception(temp_db, caplog):
+    agent = DiscoveryAgent(temp_db, sources=["reddit"])
+
+    async def failing_prime():
+        raise RuntimeError("prime failed")
+
+    async def fast_check(source):
+        return []
+
+    agent._prime_reddit_relay = failing_prime
+    agent._check_source = fast_check
+
+    with caplog.at_level("WARNING"):
+        result = asyncio.run(agent._discover_once())
+
+    assert result == []
+    assert "reddit relay priming task failed: prime failed" in caplog.text
+
+
 def test_github_source_timeout_does_not_stall_discovery(temp_db):
     agent = DiscoveryAgent(
         temp_db,

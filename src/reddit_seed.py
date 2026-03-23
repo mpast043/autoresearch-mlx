@@ -6,7 +6,6 @@ import copy
 import logging
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -14,10 +13,12 @@ try:
     from reddit_relay import RedditRelayStore
     from research_tools import ResearchToolkit, SearchDocument
     from discovery_queries import reddit_problem_keywords, reddit_problem_subreddits
+    from runtime.paths import resolve_project_path
 except Exception:  # pragma: no cover - supports package and direct module usage
     from src.reddit_relay import RedditRelayStore
     from src.research_tools import ResearchToolkit, SearchDocument
     from src.discovery_queries import reddit_problem_keywords, reddit_problem_subreddits
+    from src.runtime.paths import resolve_project_path
 
 
 logger = logging.getLogger(__name__)
@@ -116,8 +117,11 @@ class RedditSeeder:
         max_pairs_value = self.discovery_config.get("seed_pairs")
         self.max_pairs = int(max_pairs_value) if max_pairs_value not in (None, "") else None
         self.cache_ttl_seconds = int(relay_config.get("seed_cache_ttl_seconds", 21600))
+        relay_cache_path = str(
+            resolve_project_path(relay_config.get("cache_db_path"), default="data/reddit_relay_cache.db")
+        )
         self.relay_store = relay_store or RedditRelayStore(
-            relay_config.get("cache_db_path", "data/reddit_relay_cache.db")
+            relay_cache_path
         )
 
     def build_toolkit(self) -> ResearchToolkit:
