@@ -1,0 +1,27 @@
+services:
+  relay:
+    build:
+      context: .
+    command: ["python", "cli.py", "reddit-relay", "--host", "0.0.0.0", "--port", "8787"]
+    environment:
+      REDDIT_RELAY_AUTH_TOKEN: ${REDDIT_RELAY_AUTH_TOKEN:-}
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+
+  pipeline:
+    build:
+      context: .
+    command: ["python", "cli.py", "run"]
+    depends_on:
+      - relay
+    environment:
+      REDDIT_BRIDGE_BASE_URL: http://relay:8787
+      REDDIT_BRIDGE_AUTH_TOKEN: ${REDDIT_RELAY_AUTH_TOKEN:-}
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output

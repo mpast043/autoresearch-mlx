@@ -1,0 +1,1640 @@
+"""Deterministic extraction and scoring helpers for the evidence-first pipeline."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from collections import Counter
+from typing import Any
+from urllib.parse import urlparse
+
+from database import OpportunityCluster, ProblemAtom, RawSignal, ValidationExperiment
+from research_tools import compact_text, infer_recurrence_key
+
+
+PAIN_KEYWORDS = [
+    "pain",
+    "manual",
+    "broken",
+    "fails",
+    "failed",
+    "error",
+    "friction",
+    "workaround",
+    "spreadsheet",
+    "restore",
+    "recovery",
+    "sync",
+    "compliance",
+    "unreachable",
+    "fallback",
+]
+PAIN_SIGNAL_HINTS = [
+    "doesn't work",
+    "doesnt work",
+    "stopped working",
+    "fails every time",
+    "every time",
+    "manual workaround",
+    "fall back to",
+    "falls back to",
+    "restore fails",
+    "sync fails",
+    "support deleted",
+    "stays manual",
+    "csv export",
+]
+EMOTION_TERMS = [
+    "frustrating",
+    "annoying",
+    "losing my mind",
+    "urgent",
+    "panic",
+    "painful",
+    "hate",
+]
+WHY_NOW_TERMS = [
+    "after",
+    "when",
+    "during",
+    "because",
+    "suddenly",
+    "recently",
+    "now",
+    "migration",
+    "upgrade",
+    "publish",
+    "restore",
+]
+URGENCY_TERMS = [
+    "urgent",
+    "asap",
+    "immediately",
+    "must",
+    "critical",
+    "blocked",
+    "outage",
+    "down",
+]
+FREQUENCY_TERMS = [
+    "every day",
+    "daily",
+    "every week",
+    "weekly",
+    "every time",
+    "repeatedly",
+    "again",
+    "always",
+    "constantly",
+]
+PROMOTIONAL_PATTERNS = [
+    "great app",
+    "excellent support",
+    "highly recommend",
+    "we recommend",
+    "best tool",
+    "love this app",
+]
+GENERIC_PROMPT_PATTERNS = [
+    "any recommendations",
+    "looking for",
+    "does anyone know",
+    "feature request",
+    "roadmap",
+    "idea",
+]
+GENERIC_REQUEST_PATTERNS = [
+    "can anyone suggest",
+    "what app should i use",
+    "need a recommendation",
+    "what's the best",
+]
+SOLICITATION_PROMPT_PATTERNS = [
+    "tell me your most annoying manual",
+    "what manual process would you like to automate",
+    "what is the most annoying manual task",
+    "i'm a developer looking to build",
+    "instead of guessing what people need",
+    "wanted to ask directly",
+    "i might automate it for free",
+    "working on some automation stuff",
+    "looking for some real-world problems",
+]
+HELP_PAGE_PATTERNS = [
+    "help center",
+    "documentation",
+    "docs",
+    "knowledge base",
+    "support article",
+    "api reference",
+]
+META_GUIDANCE_PATTERNS = [
+    "roadmap skill iteration",
+    "intent 001",
+    "internal task",
+    "meta guidance",
+    "evaluation harness",
+]
+DEMAND_SIGNAL_PATTERNS = [
+    "search volume",
+    "trend",
+    "growth",
+    "reviews",
+    "rating",
+    "rating count",
+]
+COMPETITION_SIGNAL_PATTERNS = [
+    "competitor",
+    "alternative",
+    "pricing page",
+    "app store listing",
+]
+SEGMENT_RULES = [
+    ("smallbusiness", "small business operations"),
+    ("small business", "small business operations"),
+    ("etsy", "etsy sellers"),
+    ("seller", "sellers"),
+    ("shopify", "shopify merchants"),
+    ("woocommerce", "woocommerce merchants"),
+    ("wordpress", "wordpress operators"),
+    ("compliance", "compliance teams"),
+    ("operator", "operations teams"),
+    ("developer", "developers"),
+    ("support", "support teams"),
+    ("backup", "operators with backup and recovery workflows"),
+]
+ROLE_RULES = [
+    ("compliance", "compliance lead"),
+    ("support", "support lead"),
+    ("seller", "seller"),
+    ("merchant", "merchant"),
+    ("developer", "developer"),
+    ("engineer", "developer"),
+    ("finance", "finance lead"),
+    ("operator", "operator"),
+    ("ops", "operations lead"),
+    ("small business", "operations lead"),
+]
+JTBD_RULES = [
+    ("backup", "keep backup restore and recovery reliable"),
+    ("restore", "keep backup restore and recovery reliable"),
+    ("recovery", "keep backup restore and recovery reliable"),
+    ("sync", "keep sync and data handoff workflows reliable"),
+    ("integration", "keep sync and data handoff workflows reliable"),
+    ("shipping", "keep listing setup and shipping settings reliable"),
+    ("compliance", "keep multi-framework compliance evidence and monitoring reliable"),
+    ("audit", "keep multi-framework compliance evidence and monitoring reliable"),
+    ("spreadsheet", "keep operations data in sync without manual cleanup"),
+    ("manual data entry", "keep operations data in sync without manual cleanup"),
+    ("template", "keep template application and onboarding reliable"),
+    ("review", "respond to reviews and reputation issues consistently"),
+]
+SOURCE_TYPE_HINTS = [
+    ("reddit", "forum"),
+    ("github", "github_issue"),
+    ("wordpress-review", "review"),
+    ("shopify-review", "review"),
+    ("review", "review"),
+]
+WORKAROUND_TERMS = {
+    "spreadsheet": "spreadsheets",
+    "excel": "spreadsheets",
+    "csv": "csv exports",
+    "manual": "manual work",
+    "email": "email routing",
+    "copy": "copy/paste",
+    "script": "custom scripts",
+    "workaround": "manual workarounds",
+}
+REVIEW_NEGATIVE_TERMS = [
+    "useless",
+    "no support",
+    "terrible support",
+    "scam",
+    "waste of money",
+]
+INTERNAL_IDENTIFIER_PATTERNS = [
+    "intent 001",
+    "skill iteration",
+    "roadmap",
+    "ticket only",
+    "template id",
+]
+
+
+def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
+    return max(lower, min(upper, float(value)))
+
+
+def _normalized(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip()).lower()
+
+
+def _value(obj: Any, name: str, default: Any = "") -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def json_dumps(value: Any) -> str:
+    return json.dumps(value)
+
+
+def _pick_first_sentence(text: str, hints: list[str]) -> str:
+    text = compact_text(text or "", 1600)
+    if not text:
+        return ""
+    parts = [part.strip(" .:-") for part in re.split(r"(?<=[.!?])\s+|\n+", text) if part.strip()]
+    for part in parts:
+        lowered = _normalized(part)
+        if any(hint in lowered for hint in hints):
+            return compact_text(part, 220)
+    return compact_text(parts[0], 220) if parts else ""
+
+
+def _clean_fragment(text: str) -> str:
+    cleaned = compact_text(re.sub(r"\s+", " ", (text or "").strip(" .:-")), 140)
+    return cleaned.rstrip(".")
+
+
+def _is_generic_phrase(text: str) -> bool:
+    lowered = _normalized(text)
+    return lowered in {
+        "",
+        "keep a recurring workflow reliable without manual cleanup",
+        "keep a recurring workflow on track",
+        "operators with recurring workflow pain",
+        "remove repeated operational bottlenecks",
+    }
+
+
+def _has_phrase(text: str, phrases: list[str]) -> bool:
+    lowered = _normalized(text)
+    return any(phrase in lowered for phrase in phrases)
+
+
+def _strip_title_prefix(title: str, body: str) -> str:
+    title = compact_text(title or "", 240).strip()
+    body = compact_text(body or "", 1600).strip()
+    if not title or not body:
+        return body
+    pattern = r"^\s*" + re.escape(title) + r"[\s:|.\-]*"
+    stripped = re.sub(pattern, "", body, count=1, flags=re.IGNORECASE).strip()
+    return stripped or body
+
+
+def _normalize_problem_fragment(text: str, *, fallback: str = "", limit: int = 96) -> str:
+    cleaned = compact_text(re.sub(r"\s+", " ", (text or "").strip()), 240)
+    if not cleaned:
+        return fallback
+    cleaned = re.sub(r"https?://\S+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(contact|logs stored|stack trace|version|windows v\d[\w.\-]*)\b[: ]*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"^\s*(feature request:?|request:?|issue:?|discussion:?|question:?|trouble with|looking for|is anyone|does anyone|need help with|the app doesn't work how it should)\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:;-")
+    if not cleaned:
+        cleaned = fallback
+    return compact_text(cleaned, limit).rstrip(".")
+
+
+def _match_rule(text: str, rules: list[tuple[str, str]], fallback: str) -> str:
+    lowered = _normalized(text)
+    for needle, label in rules:
+        if needle in lowered:
+            return label
+    return fallback
+
+
+def _extract_workarounds(text: str) -> list[str]:
+    lowered = _normalized(text)
+    hits: list[str] = []
+    for term, label in WORKAROUND_TERMS.items():
+        if term in lowered and label not in hits:
+            hits.append(label)
+    return hits
+
+
+def _extract_clues(text: str, terms: list[str]) -> list[str]:
+    lowered = _normalized(text)
+    return [term for term in terms if term in lowered]
+
+
+def _extract_cost_clues(text: str) -> list[str]:
+    lowered = _normalized(text)
+    clues: list[str] = []
+    if re.search(r"\$[\d,.]+", text):
+        clues.append("money")
+    if re.search(r"\b\d+\s+(hours?|days?|weeks?)\b", lowered):
+        clues.append("time")
+    if any(term in lowered for term in ["expensive", "waste", "lost", "late", "missed", "downtime", "risk", "consequence"]):
+        clues.append("consequence")
+    return clues
+
+
+def _normalize_tools(text: str) -> str:
+    return compact_text(re.sub(r"\s+", " ", (text or "").replace("|", ",").replace("/", ", ")).strip(" ,"), 120)
+
+
+def _looks_like_meta_prompt(text: str) -> bool:
+    lowered = _normalized(text)
+    return any(pattern in lowered for pattern in META_GUIDANCE_PATTERNS + INTERNAL_IDENTIFIER_PATTERNS)
+
+
+def _is_clean_context(text: str) -> bool:
+    lowered = _normalized(text)
+    if not lowered:
+        return False
+    if any(pattern in lowered for pattern in HELP_PAGE_PATTERNS + INTERNAL_IDENTIFIER_PATTERNS):
+        return False
+    if re.search(r"\b(v?\d+\.\d+(?:\.\d+)*)\b", lowered):
+        return False
+    return True
+
+
+def _normalize_workaround_phrase(text: str, *, fallback: str = "manual workarounds") -> str:
+    phrase = _normalize_problem_fragment(text, fallback=fallback, limit=72).lower()
+    return phrase or fallback
+
+
+def _normalize_cost_phrase(text: str) -> str:
+    lowered = _normalized(text)
+    if "money" in lowered:
+        return "real money and time loss"
+    if "consequence" in lowered:
+        return "missed work and operational risk"
+    if "time" in lowered:
+        return "wasted time"
+    return "workflow instability"
+
+
+def _infer_specific_job(job: str, fallback: str) -> str:
+    cleaned = _normalize_problem_fragment(job, fallback=fallback, limit=96)
+    if _is_generic_phrase(cleaned):
+        return fallback
+    return cleaned
+
+
+def _select_specific_context(*values: str, limit: int = 72) -> str:
+    for value in values:
+        cleaned = _normalize_problem_fragment(value, fallback="", limit=limit)
+        if cleaned and _is_clean_context(cleaned):
+            return cleaned
+    return ""
+
+
+def _summarize_context(text: str) -> str:
+    return _normalize_problem_fragment(text, fallback="", limit=72)
+
+
+def _fallback_context_from_atom(atom: Any) -> str:
+    for value in [
+        _value(atom, "failure_mode", ""),
+        _value(atom, "pain_statement", ""),
+        _value(atom, "trigger_event", ""),
+    ]:
+        cleaned = _normalize_problem_fragment(value, fallback="", limit=72)
+        if cleaned:
+            return cleaned
+    return "the workflow breaks"
+
+
+def _review_generalizability(text: str, source_name: str, source_url: str) -> dict[str, Any]:
+    lowered = _normalized(f"{source_name} {source_url} {text}")
+    reasons: list[str] = []
+    score = 0.0
+    if any(term in lowered for term in ["restore", "recovery", "sync", "manual workaround", "manual work", "fallback", "csv", "spreadsheet"]):
+        score += 0.55
+        reasons.append("workflow_relevance")
+    if any(term in lowered for term in ["support deleted", "no support", "terrible support", "useless"]):
+        score -= 0.42
+        reasons.append("vendor_specific_complaint")
+    if any(term in lowered for term in ["plugin", "app", "extension"]) and not reasons:
+        score += 0.05
+    issue_type = "reusable_workflow_pain" if score >= 0.42 else "product_specific_issue"
+    return {
+        "review_issue_type": issue_type,
+        "review_generalizability_score": round(clamp(score), 4),
+        "review_generalizability_reasons": reasons or (["workflow_relevance"] if issue_type == "reusable_workflow_pain" else ["vendor_specific_complaint"]),
+    }
+
+
+def _github_generalizability(text: str) -> dict[str, Any]:
+    lowered = _normalized(text)
+    reasons: list[str] = []
+    score = 0.0
+    if any(term in lowered for term in ["restore", "backup", "recovery", "sync", "manual workaround", "fall back", "unreachable"]):
+        score += 0.58
+        reasons.append("workflow_failure")
+    if any(term in lowered for term in INTERNAL_IDENTIFIER_PATTERNS):
+        score -= 0.55
+        reasons.append("internal_identifier_github_issue")
+    if any(term in lowered for term in ["feature request", "wishlist", "nice to have"]) and score < 0.4:
+        score -= 0.25
+        reasons.append("generic_feature_request")
+    issue_type = "reusable_workflow_pain" if score >= 0.42 else "product_specific_issue"
+    return {
+        "github_issue_type": issue_type,
+        "github_generalizability_score": round(clamp(score), 4),
+        "github_generalizability_reasons": reasons or (["workflow_failure"] if issue_type == "reusable_workflow_pain" else ["product_specific_issue"]),
+    }
+
+
+def infer_source_type(source_name: str, source_url: str) -> str:
+    haystack = f"{source_name} {source_url}".lower()
+    for term, label in SOURCE_TYPE_HINTS:
+        if term in haystack:
+            return label
+    domain = urlparse(source_url).netloc.lower()
+    if "reddit.com" in domain:
+        return "forum"
+    if "github.com" in domain:
+        return "github_issue"
+    return "web"
+
+
+def build_raw_signal_payload(finding_data: dict[str, Any]) -> dict[str, Any]:
+    evidence = finding_data.get("evidence", {}) or {}
+    title = finding_data.get("product_built") or "Untitled signal"
+    excerpt = compact_text(
+        " ".join(
+            part
+            for part in [
+                finding_data.get("outcome_summary") or "",
+                evidence.get("page_excerpt") or "",
+                evidence.get("snippet") or "",
+                evidence.get("review_text") or "",
+                evidence.get("transcript_excerpt") or "",
+            ]
+            if part
+        ),
+        1400,
+    )
+    source_name = finding_data.get("source", "unknown")
+    source_url = finding_data.get("source_url", "")
+    signal_text = compact_text(f"{title}. {excerpt}", 1600)
+    role_hint = _match_rule(signal_text, ROLE_RULES, "")
+    metadata_json = {
+        "finding_kind": finding_data.get("finding_kind", "problem_signal"),
+        "source_class": finding_data.get("source_class", ""),
+        "tool_used": finding_data.get("tool_used", ""),
+        "discovery_query": evidence.get("discovery_query", ""),
+        "source_plan": evidence.get("source_plan", ""),
+        "record_origin": evidence.get("record_origin", ""),
+        "evidence": evidence,
+    }
+    return {
+        "source_name": source_name,
+        "source_type": infer_source_type(source_name, source_url),
+        "source_url": source_url,
+        "title": compact_text(title, 240),
+        "body_excerpt": excerpt or compact_text(title, 400),
+        "quote_text": _pick_first_sentence(signal_text, PAIN_KEYWORDS + EMOTION_TERMS + WHY_NOW_TERMS),
+        "role_hint": role_hint,
+        "published_at": evidence.get("published_at") or evidence.get("date"),
+        "timestamp_hint": evidence.get("timestamp_hint", ""),
+        "metadata_json": metadata_json,
+    }
+
+
+def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, Any]) -> dict[str, Any]:
+    title_text = compact_text(signal_payload.get("title", ""), 400)
+    body_text = compact_text(signal_payload.get("body_excerpt", ""), 1600)
+    cleaned_body_text = _strip_title_prefix(title_text, body_text)
+    text = compact_text(f"{title_text}. {body_text}", 1800)
+    segment = _match_rule(
+        f"{finding_data.get('source', '')} {finding_data.get('source_url', '')} {text}",
+        SEGMENT_RULES,
+        "operators with recurring workflow pain",
+    )
+    user_role = signal_payload.get("role_hint") or _match_rule(text, ROLE_RULES, "operator")
+    job_to_be_done = _match_rule(text, JTBD_RULES, "keep a recurring workflow reliable without manual cleanup")
+    descriptive_text = cleaned_body_text or body_text or text
+    pain_statement = _normalize_problem_fragment(
+        _pick_first_sentence(descriptive_text, PAIN_KEYWORDS + EMOTION_TERMS + PAIN_SIGNAL_HINTS),
+        fallback=_normalize_problem_fragment(title_text, limit=120),
+        limit=140,
+    )
+    failure_mode = _normalize_problem_fragment(
+        _pick_first_sentence(
+            descriptive_text,
+            [
+                "manual",
+                "break",
+                "broken",
+                "fails",
+                "failed",
+                "error",
+                "can't",
+                "cant",
+                "unreachable",
+                "stuck",
+                "reset",
+                "deleted",
+                "fallback",
+            ],
+        ),
+        fallback="",
+        limit=120,
+    )
+    workarounds = _extract_workarounds(text)
+    current_tools = _normalize_tools(finding_data.get("tool_used") or "")
+    urgency_clues = _extract_clues(text, URGENCY_TERMS)
+    frequency_clues = _extract_clues(text, FREQUENCY_TERMS)
+    why_now_clues = _extract_clues(text, WHY_NOW_TERMS)
+    cost_clues = _extract_cost_clues(text)
+    emotional_hits = _extract_clues(text, EMOTION_TERMS)
+    trigger_event = _normalize_problem_fragment(
+        _pick_first_sentence(descriptive_text, WHY_NOW_TERMS + ["when", "after", "during", "because"]),
+        fallback="",
+        limit=120,
+    )
+    if trigger_event == pain_statement:
+        trigger_event = ""
+    if _looks_like_meta_prompt(pain_statement):
+        pain_statement = ""
+    if _looks_like_meta_prompt(failure_mode):
+        failure_mode = ""
+    if _looks_like_meta_prompt(trigger_event):
+        trigger_event = ""
+    if trigger_event and not _is_clean_context(trigger_event):
+        trigger_event = ""
+    if not failure_mode and workarounds:
+        failure_mode = f"teams fall back to {', '.join(workarounds)}"
+
+    if _is_generic_phrase(job_to_be_done) and failure_mode:
+        job_to_be_done = _normalize_problem_fragment(failure_mode, fallback=job_to_be_done, limit=120)
+    else:
+        job_to_be_done = _normalize_problem_fragment(job_to_be_done, fallback=job_to_be_done, limit=120)
+
+    filled_fields = sum(
+        bool(value)
+        for value in [
+            segment,
+            user_role,
+            job_to_be_done,
+            pain_statement,
+            failure_mode,
+            workarounds,
+            current_tools,
+            urgency_clues,
+            frequency_clues,
+            why_now_clues,
+            cost_clues,
+        ]
+    )
+    confidence = clamp(0.35 + filled_fields * 0.045)
+    emotional_intensity = clamp(0.2 + len(emotional_hits) * 0.16 + min(text.count("!"), 3) * 0.04)
+    cluster_key = infer_recurrence_key(f"{segment} {user_role} {job_to_be_done} {failure_mode} {' '.join(workarounds)}")
+    return {
+        "cluster_key": cluster_key,
+        "segment": segment,
+        "user_role": user_role,
+        "job_to_be_done": job_to_be_done,
+        "trigger_event": trigger_event,
+        "pain_statement": pain_statement,
+        "failure_mode": failure_mode,
+        "current_workaround": ", ".join(workarounds),
+        "current_tools": current_tools,
+        "urgency_clues": ", ".join(urgency_clues),
+        "frequency_clues": ", ".join(frequency_clues),
+        "emotional_intensity": emotional_intensity,
+        "cost_consequence_clues": ", ".join(cost_clues),
+        "why_now_clues": ", ".join(why_now_clues),
+        "confidence": confidence,
+        "atom_json": {
+            "source_type": signal_payload.get("source_type", "web"),
+            "workaround_terms": workarounds,
+            "urgency_terms": urgency_clues,
+            "frequency_terms": frequency_clues,
+            "cost_terms": cost_clues,
+            "why_now_terms": why_now_clues,
+            "emotional_terms": emotional_hits,
+        },
+    }
+
+
+def classify_source_signal(
+    finding_data: dict[str, Any],
+    signal_payload: dict[str, Any],
+    atom_payload: dict[str, Any],
+) -> dict[str, Any]:
+    evidence = signal_payload.get("metadata_json", {}).get("evidence", {})
+    record_origin = str(signal_payload.get("metadata_json", {}).get("record_origin", "") or evidence.get("record_origin", "")).strip()
+    text = _normalized(
+        " ".join(
+            [
+                finding_data.get("source", ""),
+                finding_data.get("source_url", ""),
+                signal_payload.get("title", ""),
+                signal_payload.get("body_excerpt", ""),
+                json_dumps(signal_payload.get("metadata_json", {})),
+            ]
+        )
+    )
+    context_text = _normalized(
+        " ".join(
+            [
+                finding_data.get("source", ""),
+                finding_data.get("source_url", ""),
+                evidence.get("source_plan", ""),
+                evidence.get("discovery_query", ""),
+                record_origin,
+            ]
+        )
+    )
+    reasons: list[str] = []
+
+    if record_origin in {"listing", "app_description", "marketing_copy"}:
+        reasons.append("listing_or_marketing_copy")
+        return {"source_class": "low_signal_summary", "reasons": reasons}
+    if _has_phrase(text, HELP_PAGE_PATTERNS):
+        reasons.append("help_or_generic_summary_content")
+        return {"source_class": "low_signal_summary", "reasons": reasons}
+    if _has_phrase(context_text, DEMAND_SIGNAL_PATTERNS):
+        reasons.append("search_or_trend_signal")
+        return {"source_class": "demand_signal", "reasons": reasons}
+    if _has_phrase(context_text, COMPETITION_SIGNAL_PATTERNS):
+        reasons.append("competition_or_alternative_signal")
+        return {"source_class": "competition_signal", "reasons": reasons}
+    if _has_phrase(text, META_GUIDANCE_PATTERNS) or _has_phrase(text, INTERNAL_IDENTIFIER_PATTERNS):
+        reasons.append("methodology_or_guidance_signal")
+        return {"source_class": "meta_guidance", "reasons": reasons}
+    if _has_phrase(text, PROMOTIONAL_PATTERNS):
+        reasons.append("promo_or_generic_praise")
+        return {"source_class": "low_signal_summary", "reasons": reasons}
+
+    review_profile: dict[str, Any] = {}
+    github_profile: dict[str, Any] = {}
+    source_name = str(finding_data.get("source", "") or "")
+    source_type = str(signal_payload.get("source_type", "") or "")
+    finding_kind = str(finding_data.get("finding_kind", "") or "")
+
+    if finding_kind == "success_signal":
+        return {"source_class": "success_signal", "reasons": ["success_signal_finding_kind"]}
+    if finding_kind == "meta_guidance":
+        return {"source_class": "meta_guidance", "reasons": ["meta_guidance_finding_kind"]}
+
+    if "review" in source_type or "wordpress-review" in source_name or "shopify-review" in source_name:
+        review_profile = _review_generalizability(text, source_name, str(finding_data.get("source_url", "") or ""))
+        if review_profile["review_issue_type"] == "product_specific_issue":
+            reasons.append("review_product_specific_issue")
+    if "github" in source_type or "github" in source_name.lower():
+        github_profile = _github_generalizability(text)
+        if github_profile["github_issue_type"] == "product_specific_issue":
+            reasons.append("github_product_specific_issue")
+
+    specificity = sum(
+        bool(value)
+        for value in [
+            atom_payload.get("user_role"),
+            atom_payload.get("segment"),
+            atom_payload.get("job_to_be_done"),
+            atom_payload.get("trigger_event"),
+            atom_payload.get("failure_mode"),
+            atom_payload.get("current_workaround"),
+            atom_payload.get("cost_consequence_clues"),
+            atom_payload.get("frequency_clues"),
+        ]
+    )
+    has_consequence = bool(atom_payload.get("cost_consequence_clues") or atom_payload.get("urgency_clues"))
+    has_structure = bool(atom_payload.get("failure_mode")) and bool(atom_payload.get("current_workaround") or has_consequence)
+
+    if (
+        finding_data.get("finding_kind") in {"pain_point", "problem_signal"}
+        and specificity >= 5
+        and has_structure
+        and "review_product_specific_issue" not in reasons
+        and "github_product_specific_issue" not in reasons
+    ):
+        return {"source_class": "pain_signal", "reasons": ["specific_structured_pain_evidence"], **review_profile, **github_profile}
+
+    return {
+        "source_class": "low_signal_summary",
+        "reasons": reasons or ["insufficient_problem_specificity"],
+        **review_profile,
+        **github_profile,
+    }
+
+
+def qualify_problem_signal(
+    finding_data: dict[str, Any],
+    signal_payload: dict[str, Any],
+    atom_payload: dict[str, Any],
+) -> dict[str, Any]:
+    finding_kind = finding_data.get("finding_kind", "")
+    source_class = finding_data.get("source_class") or signal_payload.get("metadata_json", {}).get("source_class", "")
+    text = _normalized(f"{signal_payload.get('title', '')}. {signal_payload.get('body_excerpt', '')}")
+    positive_signals: list[str] = []
+    negative_signals: list[str] = []
+    score = 0
+    source_name = str(finding_data.get("source", "") or "")
+
+    if finding_kind in {"pain_point", "problem_signal"}:
+        positive_signals.append("problem_finding_kind")
+        score += 2
+    else:
+        negative_signals.append("non_problem_finding_kind")
+        score -= 4
+    if source_class == "pain_signal":
+        positive_signals.append("pain_signal_source_class")
+        score += 2
+    elif source_class:
+        negative_signals.append(f"source_class_{source_class}")
+        score -= 5
+
+    if atom_payload.get("current_workaround"):
+        positive_signals.append("workaround_detected")
+        score += 2
+    if atom_payload.get("failure_mode"):
+        positive_signals.append("failure_mode_detected")
+        score += 1
+    if atom_payload.get("urgency_clues"):
+        positive_signals.append("urgency_detected")
+        score += 1
+    if atom_payload.get("frequency_clues"):
+        positive_signals.append("frequency_detected")
+        score += 1
+    if atom_payload.get("cost_consequence_clues"):
+        positive_signals.append("cost_detected")
+        score += 1
+    if atom_payload.get("why_now_clues"):
+        positive_signals.append("why_now_detected")
+        score += 1
+
+    pain_hits = sum(1 for keyword in PAIN_KEYWORDS if keyword in text)
+    if pain_hits >= 2:
+        positive_signals.append("pain_language")
+        score += 1
+
+    if _has_phrase(text, HELP_PAGE_PATTERNS):
+        negative_signals.append("support_or_help_page")
+        score -= 5
+    if _has_phrase(text, REVIEW_NEGATIVE_TERMS) and not atom_payload.get("failure_mode"):
+        negative_signals.append("vague_negative_review")
+        score -= 3
+    if _has_phrase(text, PROMOTIONAL_PATTERNS):
+        negative_signals.append("promotional_or_celebratory")
+        score -= 3
+    if _has_phrase(text, GENERIC_REQUEST_PATTERNS):
+        negative_signals.append("generic_request_or_vendor_shopping")
+        score -= 3
+    if _has_phrase(text, GENERIC_PROMPT_PATTERNS) and not atom_payload.get("current_workaround"):
+        negative_signals.append("generic_prompt_without_behavioral_pain")
+        score -= 3
+    if _has_phrase(text, SOLICITATION_PROMPT_PATTERNS):
+        negative_signals.append("solicitation_for_problem_examples")
+        score -= 5
+    if "?" in signal_payload.get("title", "") and not atom_payload.get("current_workaround"):
+        negative_signals.append("question_without_workaround")
+        score -= 1
+    if "github" in source_name.lower() and "feature request" in text:
+        behavior_signals = sum(
+            bool(atom_payload.get(field))
+            for field in ["current_workaround", "frequency_clues", "urgency_clues", "cost_consequence_clues"]
+        )
+        if behavior_signals < 2:
+            negative_signals.append("feature_request_without_behavioral_evidence")
+            score -= 3
+
+    accepted = (
+        score >= 3
+        and "non_problem_finding_kind" not in negative_signals
+        and "support_or_help_page" not in negative_signals
+        and "vague_negative_review" not in negative_signals
+        and "solicitation_for_problem_examples" not in negative_signals
+        and (not source_class or source_class == "pain_signal")
+    )
+    if accepted and _has_phrase(text, GENERIC_REQUEST_PATTERNS) and score < 5:
+        accepted = False
+        negative_signals.append("too_generic_after_review")
+
+    return {
+        "accepted": accepted,
+        "score": score,
+        "positive_signals": positive_signals,
+        "negative_signals": negative_signals,
+    }
+
+
+def build_cluster_summary(atoms: list[Any], signals: list[Any]) -> dict[str, Any]:
+    if not atoms:
+        return {
+            "label": "Empty cluster",
+            "segment": "unknown",
+            "user_role": "unknown",
+            "job_to_be_done": "unknown",
+            "trigger_summary": "",
+            "signal_count": 0,
+            "atom_count": 0,
+            "evidence_quality": 0.0,
+            "summary_json": {},
+        }
+
+    segment = Counter(_value(atom, "segment", "") for atom in atoms if _value(atom, "segment", "")).most_common(1)
+    user_role = Counter(_value(atom, "user_role", "") for atom in atoms if _value(atom, "user_role", "")).most_common(1)
+    job = Counter(_value(atom, "job_to_be_done", "") for atom in atoms if _value(atom, "job_to_be_done", "")).most_common(1)
+    trigger_summary = Counter(_value(atom, "trigger_event", "") for atom in atoms if _value(atom, "trigger_event", "")).most_common(1)
+    dominant_failure = Counter(_value(atom, "failure_mode", "") for atom in atoms if _value(atom, "failure_mode", "")).most_common(1)
+    dominant_workaround = Counter(_value(atom, "current_workaround", "") for atom in atoms if _value(atom, "current_workaround", "")).most_common(1)
+
+    segment_value = segment[0][0] if segment else "operators with recurring workflow pain"
+    user_role_value = user_role[0][0] if user_role else "operator"
+    job_value = job[0][0] if job else "keep a recurring workflow on track"
+    if _is_generic_phrase(job_value) and dominant_failure:
+        job_value = _normalize_problem_fragment(dominant_failure[0][0], fallback=job_value, limit=96)
+    trigger_value = trigger_summary[0][0] if trigger_summary else ""
+    if dominant_failure and (
+        not trigger_value
+        or "audit" in _normalized(trigger_value)
+        or _is_generic_phrase(trigger_value)
+        or len(trigger_value.split()) <= 2
+    ):
+        trigger_value = dominant_failure[0][0]
+    trigger_value = _select_specific_context(trigger_value, dominant_failure[0][0] if dominant_failure else "", limit=88)
+    workaround_value = dominant_workaround[0][0] if dominant_workaround else ""
+
+    source_types = Counter(_value(signal, "source_type", "web") for signal in signals)
+    evidence_quality = clamp(
+        0.26
+        + min(len(atoms), 4) * 0.08
+        + min(len([signal for signal in signals if _value(signal, "quote_text", "")]), 3) * 0.05
+        + min(len(source_types), 3) * 0.07
+        + min(len([atom for atom in atoms if _value(atom, "current_workaround", "")]), 3) * 0.05
+    )
+
+    label = f"{user_role_value} - {job_value}"
+    if trigger_value:
+        label += f" when {trigger_value.lower()}"
+    label = compact_text(label, 130)
+
+    return {
+        "label": label,
+        "segment": segment_value,
+        "user_role": user_role_value,
+        "job_to_be_done": job_value,
+        "trigger_summary": trigger_value,
+        "signal_count": len(signals),
+        "atom_count": len(atoms),
+        "evidence_quality": round(evidence_quality, 4),
+        "summary_json": {
+            "dominant_failure": dominant_failure[0][0] if dominant_failure else "",
+            "dominant_workaround": workaround_value,
+            "source_types": dict(source_types),
+            "cluster_context": trigger_value,
+            "sample_pains": [compact_text(_value(atom, "pain_statement", ""), 120) for atom in atoms[:3]],
+            "sample_failures": [compact_text(_value(atom, "failure_mode", ""), 120) for atom in atoms[:3] if _value(atom, "failure_mode", "")],
+        },
+    }
+
+
+def assess_market_gap(cluster_summary: dict[str, Any], validation_evidence: dict[str, Any]) -> dict[str, Any]:
+    scores = validation_evidence.get("scores", {})
+    solution_gap = float(scores.get("solution_gap_score", 0.0) or 0.0)
+    saturation = float(scores.get("saturation_score", 0.0) or 0.0)
+    recurrence = float(scores.get("problem_score", 0.0) or 0.0)
+    summary = cluster_summary.get("summary_json", {})
+    why_now_text = " ".join(summary.get("sample_failures", [])) + " " + " ".join(summary.get("sample_pains", []))
+    why_now_strength = clamp(0.15 + 0.18 * len(_extract_clues(why_now_text, WHY_NOW_TERMS)))
+    evidence_quality = float(cluster_summary.get("evidence_quality", 0.0) or 0.0)
+
+    if recurrence < 0.18 and evidence_quality < 0.4:
+        gap = "likely_false_signal"
+        recurrence_state = "weak"
+    elif recurrence < 0.45 or evidence_quality < 0.5:
+        gap = "needs_more_recurrence_evidence"
+        recurrence_state = "thin"
+    elif why_now_strength >= 0.55:
+        gap = "newly_emerging_due_to_environment_change"
+        recurrence_state = "supported"
+    elif solution_gap >= 0.6 and saturation <= 0.45:
+        gap = "underserved_edge_case"
+        recurrence_state = "supported"
+    elif solution_gap >= 0.35:
+        gap = "partially_solved"
+        recurrence_state = "supported"
+    else:
+        gap = "already_solved_well"
+        recurrence_state = "supported"
+
+    return {
+        "market_gap": gap,
+        "recurrence_state": recurrence_state,
+        "why_now_strength": round(why_now_strength, 4),
+        "solution_gap_score": solution_gap,
+        "saturation_score": saturation,
+    }
+
+
+def score_opportunity(
+    atom: Any,
+    signal: Any,
+    cluster_summary: dict[str, Any],
+    validation_evidence: dict[str, Any],
+    market_gap: dict[str, Any],
+    *,
+    review_feedback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    scores = validation_evidence.get("scores", {}) or {}
+    evidence = validation_evidence.get("evidence", {}) or {}
+    corroboration = validation_evidence.get("corroboration", {}) or {}
+    market_enrichment = validation_evidence.get("market_enrichment", {}) or {}
+
+    recurrence_score = float(scores.get("problem_score", 0.0) or 0.0)
+    feasibility = float(scores.get("feasibility_score", 0.0) or 0.0)
+    value_score = float(scores.get("value_score", 0.0) or 0.0)
+    recurrence_coverage = float(evidence.get("recurrence_query_coverage", 0.0) or 0.0)
+    recurrence_doc_count = int(evidence.get("recurrence_doc_count", 0) or 0)
+    recurrence_domain_count = int(evidence.get("recurrence_domain_count", 0) or 0)
+    recurrence_results_by_source = evidence.get("recurrence_results_by_source", {}) or {}
+
+    urgency_hits = len([item for item in str(_value(atom, "urgency_clues", "")).split(", ") if item])
+    frequency_hits = len([item for item in str(_value(atom, "frequency_clues", "")).split(", ") if item])
+    why_now_hits = len([item for item in str(_value(atom, "why_now_clues", "")).split(", ") if item])
+    cost_hits = len([item for item in str(_value(atom, "cost_consequence_clues", "")).split(", ") if item])
+    workaround_hits = len([item for item in str(_value(atom, "current_workaround", "")).split(", ") if item])
+    clear_trigger = 1 if _value(atom, "trigger_event", "") else 0
+    clear_failure = 1 if _value(atom, "failure_mode", "") else 0
+    source_type = _value(signal, "source_type", "web")
+    operational_haystack = _normalized(
+        " ".join(
+            [
+                str(_value(atom, "segment", "")),
+                str(_value(atom, "user_role", "")),
+                str(_value(atom, "job_to_be_done", "")),
+                str(_value(atom, "failure_mode", "")),
+                str(_value(atom, "why_now_clues", "")),
+            ]
+        )
+    )
+
+    operational_buyer = float(market_enrichment.get("operational_buyer_score", 0.0) or 0.0)
+    if not operational_buyer:
+        operational_buyer = clamp(
+            0.15
+            + (0.18 if any(term in operational_haystack for term in ["operations", "operator", "seller", "support", "finance", "account", "compliance"]) else 0.0)
+            + (0.14 if any(term in operational_haystack for term in ["billing", "payout", "shipping", "device setup", "evidence", "compliance", "order"]) else 0.0)
+        )
+    compliance_burden = float(market_enrichment.get("compliance_burden_score", 0.0) or 0.0)
+    cost_pressure = float(market_enrichment.get("cost_pressure_score", 0.0) or 0.0)
+    buyer_intent_score = float(market_enrichment.get("buyer_intent_score", 0.0) or 0.0)
+    demand_score = float(market_enrichment.get("demand_score", 0.0) or 0.0)
+    competition_score = float(market_enrichment.get("competition_score", 0.0) or 0.0)
+    trend_score = float(market_enrichment.get("trend_score", 0.0) or 0.0)
+    review_signal_score = float(market_enrichment.get("review_signal_score", 0.0) or 0.0)
+    willingness_to_pay_signal = float(market_enrichment.get("willingness_to_pay_signal", 0.0) or 0.0)
+    wedge_value_lift = float(market_enrichment.get("wedge_value_lift", 0.0) or 0.0)
+    multi_source_value_lift = float(market_enrichment.get("multi_source_value_lift", 0.0) or 0.0)
+    corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
+    evidence_sufficiency_hint = float(corroboration.get("evidence_sufficiency", 0.0) or 0.0)
+    cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
+    source_family_diversity = int(corroboration.get("source_family_diversity", 0) or 0)
+    core_source_family_diversity = int(corroboration.get("core_source_family_diversity", 0) or 0)
+    generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
+    generalizability_penalty = float(corroboration.get("generalizability_penalty", 0.0) or 0.0)
+
+    corroborating_sources = sum(1 for count in recurrence_results_by_source.values() if count)
+
+    pain_severity = clamp(0.32 + float(_value(atom, "emotional_intensity", 0.0)) * 0.38 + cost_hits * 0.08 + urgency_hits * 0.05)
+    frequency_score = clamp(0.24 + recurrence_score * 0.3 + frequency_hits * 0.12 + cross_source_match_score * 0.1)
+    cost_of_inaction = clamp(
+        0.18
+        + value_score * 0.18
+        + cost_hits * 0.12
+        + urgency_hits * 0.05
+        + operational_buyer * 0.14
+        + compliance_burden * 0.16
+        + cost_pressure * 0.22
+        + wedge_value_lift * 0.08
+    )
+    workaround_density = clamp(0.2 + workaround_hits * 0.18 + (0.12 if _value(atom, "current_workaround", "") else 0.0))
+    urgency_score = clamp(0.22 + urgency_hits * 0.12 + float(_value(atom, "emotional_intensity", 0.0)) * 0.18)
+    segment_concentration = clamp(
+        0.28
+        + min(cluster_summary.get("atom_count", 0), 4) * 0.08
+        + min(recurrence_doc_count, 4) * 0.03
+        + core_source_family_diversity / 4.0 * 0.08
+    )
+    reachability = clamp(
+        0.42
+        + (0.16 if source_type in {"forum", "github_issue", "review"} else 0.05)
+        + (0.1 if "small business" in str(_value(atom, "segment", "")).lower() or "seller" in str(_value(atom, "user_role", "")).lower() else 0.0)
+    )
+    timing_shift = clamp(0.18 + why_now_hits * 0.16 + float(market_gap.get("why_now_strength", 0.0) or 0.0) * 0.25 + trend_score * 0.12)
+    buildability = clamp(0.24 + feasibility * 0.5 + (0.08 if "manual" in str(_value(atom, "current_workaround", "")) else 0.0))
+    expansion_potential = clamp(
+        0.22
+        + segment_concentration * 0.16
+        + source_family_diversity / 4.0 * 0.12
+        + (0.12 if "workflow" in str(_value(atom, "job_to_be_done", "")).lower() else 0.0)
+    )
+    willingness_to_pay_proxy = clamp(
+        0.18
+        + operational_buyer * 0.18
+        + compliance_burden * 0.18
+        + cost_of_inaction * 0.18
+        + buyer_intent_score * 0.14
+        + demand_score * 0.08
+        + willingness_to_pay_signal * 0.16
+        + wedge_value_lift * 0.08
+    )
+    education_burden = clamp(0.2 + (0.18 if recurrence_score < 0.45 else 0.0) + (0.12 if not _value(atom, "user_role", "") else 0.0))
+    dependency_risk = clamp(
+        0.14
+        + (0.2 if "github" in source_type or "platform" in str(_value(atom, "why_now_clues", "")).lower() else 0.0)
+        + (0.15 if market_gap["market_gap"] == "already_solved_well" else 0.0)
+        + competition_score * 0.12
+    )
+    adoption_friction = clamp(
+        0.16
+        + (0.12 if len([p for p in str(_value(atom, "current_tools", "")).split(",") if p.strip()]) > 2 else 0.0)
+        + (0.16 if buildability < 0.55 else 0.0)
+    )
+    recurrence_doc_strength = clamp(min(recurrence_doc_count, 6) / 6 * 0.6 + min(recurrence_domain_count, 4) / 4 * 0.4)
+    corroboration_strength = clamp(
+        max(corroboration_score, 0.0) * 0.45
+        + recurrence_score * 0.22
+        + recurrence_coverage * 0.12
+        + recurrence_doc_strength * 0.08
+        + min(corroborating_sources, 4) / 4 * 0.05
+        + cross_source_match_score * 0.05
+        + core_source_family_diversity / 4.0 * 0.03
+    )
+    evidence_sufficiency = clamp(
+        max(evidence_sufficiency_hint, 0.0) * 0.5
+        + recurrence_score * 0.14
+        + recurrence_coverage * 0.08
+        + recurrence_doc_strength * 0.08
+        + corroboration_strength * 0.1
+        + cluster_summary.get("evidence_quality", 0.15) * 0.05
+        - generalizability_penalty * 0.2
+    )
+    problem_plausibility = clamp(
+        pain_severity * 0.24
+        + cost_of_inaction * 0.19
+        + workaround_density * 0.14
+        + urgency_score * 0.1
+        + timing_shift * 0.08
+        + value_score * 0.07
+        + clear_trigger * 0.04
+        + clear_failure * 0.04
+        + generalizability_score * 0.1
+    )
+    operational_value_lift = clamp(
+        operational_buyer * 0.2
+        + compliance_burden * 0.26
+        + cost_pressure * 0.28
+        + cross_source_match_score * 0.08
+        + multi_source_value_lift * 0.18
+    )
+    value_support = clamp(
+        value_score * 0.18
+        + cost_of_inaction * 0.22
+        + willingness_to_pay_proxy * 0.24
+        + buyer_intent_score * 0.12
+        + demand_score * 0.08
+        + trend_score * 0.05
+        + review_signal_score * 0.04
+        + (1.0 - competition_score) * 0.03
+        + wedge_value_lift * 0.04
+        + operational_value_lift * 0.12
+        - generalizability_penalty * 0.2
+    )
+    evidence_quality = clamp(evidence_sufficiency * 0.72 + corroboration_strength * 0.16 + feasibility * 0.06 + generalizability_score * 0.06)
+
+    positive = (
+        pain_severity * 0.14
+        + frequency_score * 0.1
+        + cost_of_inaction * 0.1
+        + workaround_density * 0.08
+        + urgency_score * 0.08
+        + segment_concentration * 0.07
+        + reachability * 0.06
+        + timing_shift * 0.08
+        + buildability * 0.06
+        + expansion_potential * 0.06
+        + value_support * 0.17
+    )
+    penalty = education_burden * 0.12 + dependency_risk * 0.11 + adoption_friction * 0.11
+    evidence_multiplier = 0.6 + evidence_quality * 0.4
+    composite_score = clamp(max(0.0, positive - penalty) * evidence_multiplier)
+    confidence = clamp(0.35 + evidence_quality * 0.4 + float(_value(atom, "confidence", 0.0)) * 0.25)
+
+    review_feedback_count = 0
+    review_feedback_labels: dict[str, int] = {}
+    review_feedback_park_bias = 0.0
+    review_feedback_kill_bias = 0.0
+    if review_feedback:
+        review_feedback_count = int(review_feedback.get("total_reviews", 0) or 0)
+        review_feedback_labels = dict(review_feedback.get("labels", {}) or {})
+        review_feedback_park_bias = float(review_feedback.get("park_bias", 0.0) or 0.0)
+        review_feedback_kill_bias = float(review_feedback.get("kill_bias", 0.0) or 0.0)
+        composite_score = clamp(composite_score + review_feedback_park_bias - review_feedback_kill_bias)
+        value_support = clamp(value_support + max(0.0, review_feedback_park_bias * 0.3) - max(0.0, review_feedback_kill_bias * 0.2))
+
+    return {
+        "pain_severity": round(pain_severity, 4),
+        "frequency_score": round(frequency_score, 4),
+        "cost_of_inaction": round(cost_of_inaction, 4),
+        "workaround_density": round(workaround_density, 4),
+        "urgency_score": round(urgency_score, 4),
+        "segment_concentration": round(segment_concentration, 4),
+        "reachability": round(reachability, 4),
+        "timing_shift": round(timing_shift, 4),
+        "buildability": round(buildability, 4),
+        "expansion_potential": round(expansion_potential, 4),
+        "willingness_to_pay_proxy": round(willingness_to_pay_proxy, 4),
+        "operational_value_lift": round(operational_value_lift, 4),
+        "value_support": round(value_support, 4),
+        "education_burden": round(education_burden, 4),
+        "dependency_risk": round(dependency_risk, 4),
+        "adoption_friction": round(adoption_friction, 4),
+        "corroboration_strength": round(corroboration_strength, 4),
+        "evidence_quality": round(evidence_quality, 4),
+        "evidence_sufficiency": round(evidence_sufficiency, 4),
+        "problem_plausibility": round(problem_plausibility, 4),
+        "composite_score": round(composite_score, 4),
+        "confidence": round(confidence, 4),
+        "evidence_multiplier": round(clamp(evidence_multiplier), 4),
+        "review_feedback_count": review_feedback_count,
+        "review_feedback_labels": review_feedback_labels,
+        "review_feedback_park_bias": round(review_feedback_park_bias, 4),
+        "review_feedback_kill_bias": round(review_feedback_kill_bias, 4),
+    }
+
+
+def build_counterevidence(opportunity_scores: dict[str, Any], market_gap: dict[str, Any]) -> list[dict[str, Any]]:
+    checks = [
+        {
+            "claim": "The pain is rare or isolated.",
+            "status": "contradicted" if opportunity_scores["frequency_score"] >= 0.55 else "supported",
+            "summary": "Recurring source evidence clears the rarity bar." if opportunity_scores["frequency_score"] >= 0.55 else "Recurrence is still too thin.",
+        },
+        {
+            "claim": "The problem is already solved well enough.",
+            "status": "supported" if market_gap["market_gap"] == "already_solved_well" else "contradicted",
+            "summary": "Competitor density is high and the gap looks thin." if market_gap["market_gap"] == "already_solved_well" else "Existing tools still leave a visible gap.",
+        },
+        {
+            "claim": "Users tolerate this instead of acting on it.",
+            "status": "supported" if opportunity_scores["urgency_score"] < 0.5 else "contradicted",
+            "summary": "Urgency is muted." if opportunity_scores["urgency_score"] < 0.5 else "Users are signaling active frustration and urgency.",
+        },
+        {
+            "claim": "The opportunity is too fragmented across segments.",
+            "status": "supported" if opportunity_scores["segment_concentration"] < 0.5 and opportunity_scores.get("corroboration_strength", 0.0) < 0.45 else "contradicted",
+            "summary": "The segment is still diffuse." if opportunity_scores["segment_concentration"] < 0.5 and opportunity_scores.get("corroboration_strength", 0.0) < 0.45 else "Signals are concentrated enough to target.",
+        },
+        {
+            "claim": "The economics are too weak to matter.",
+            "status": "supported" if max(opportunity_scores["cost_of_inaction"], opportunity_scores.get("willingness_to_pay_proxy", 0.0), opportunity_scores.get("value_support", 0.0)) < 0.5 else "contradicted",
+            "summary": "Cost-of-inaction evidence is weak." if max(opportunity_scores["cost_of_inaction"], opportunity_scores.get("willingness_to_pay_proxy", 0.0), opportunity_scores.get("value_support", 0.0)) < 0.5 else "Behavior points to real cost or downside.",
+        },
+    ]
+    return checks
+
+
+def plan_validation_experiment(
+    atom: Any,
+    cluster_summary: dict[str, Any],
+    opportunity_scores: dict[str, Any],
+    market_gap: dict[str, Any],
+) -> dict[str, Any]:
+    if opportunity_scores["frequency_score"] < 0.5 or opportunity_scores["evidence_quality"] < 0.5:
+        test_type = "workflow_walkthrough"
+        smallest_test = "Run 5 workflow walkthroughs with operators who currently manage the workaround."
+        success_signal = "At least 3 participants show the exact workflow and confirm the pain is recurring."
+        failure_signal = "Most participants describe the pain as rare, solved, or low-priority."
+    elif opportunity_scores["reachability"] >= 0.62 and opportunity_scores["cost_of_inaction"] >= 0.6:
+        test_type = "concierge_test"
+        smallest_test = "Offer a manual concierge service that removes the workaround for 2-3 target users this week."
+        success_signal = "Users hand over the workflow and ask for continued help or offer to pay."
+        failure_signal = "Users like the idea but will not share the workflow or do not return after the first run."
+    elif opportunity_scores["segment_concentration"] >= 0.6 and market_gap["market_gap"] != "already_solved_well":
+        test_type = "fake_door"
+        smallest_test = "Launch a narrow landing page for the segment and route interested users to a waitlist plus workflow survey."
+        success_signal = "Qualified users convert and describe the same broken workflow in their own words."
+        failure_signal = "Traffic is noisy or signups do not describe the underlying pain."
+    else:
+        test_type = "problem_interviews"
+        smallest_test = "Run 6 problem interviews focused on trigger, workaround, and cost of inaction."
+        success_signal = "Multiple people report the same trigger, workaround, and downside."
+        failure_signal = "Stories vary too widely to support a concentrated wedge."
+
+    cluster_context = cluster_summary.get("summary_json", {}).get("cluster_context", "")
+    role = str(_value(atom, "user_role", "") or "Operator").title()
+    job = _infer_specific_job(
+        str(_value(atom, "job_to_be_done", "")),
+        _normalize_problem_fragment(str(_value(atom, "job_to_be_done", "")), fallback="keep a recurring workflow on track", limit=72),
+    ).lower()
+    trigger = _summarize_context(cluster_context)
+    if not trigger:
+        trigger = _summarize_context(
+            _select_specific_context(
+                str(_value(atom, "trigger_event", "")),
+                str(_value(atom, "failure_mode", "")),
+                str(_value(atom, "pain_statement", "")),
+                limit=72,
+            )
+        )
+    if not trigger:
+        trigger = _fallback_context_from_atom(atom)
+    trigger = trigger.lower() or "the workflow breaks"
+    workaround = _normalize_workaround_phrase(
+        str(_value(atom, "current_workaround", "")) or cluster_summary.get("summary_json", {}).get("dominant_workaround", ""),
+        fallback="manual workarounds",
+    )
+    cost = _normalize_cost_phrase(str(_value(atom, "cost_consequence_clues", ""))).lower()
+    test_label = {
+        "workflow_walkthrough": "a workflow walkthrough",
+        "concierge_test": "a concierge test",
+        "fake_door": "a fake-door test",
+        "problem_interviews": "a problem interview",
+    }.get(test_type, "a validation test")
+    hypothesis = (
+        f"{role} teams experiencing {trigger} will engage with {test_label} because they currently patch the workflow with {workaround} "
+        f"and risk {cost} while trying to {job}."
+    )
+    return {
+        "test_type": test_type,
+        "hypothesis": compact_text(hypothesis, 320),
+        "falsifier": "Kill the opportunity if most target users describe the issue as rare, already solved, or not important enough to change their current behavior.",
+        "smallest_test": smallest_test,
+        "success_signal": success_signal,
+        "failure_signal": failure_signal,
+        "stage": "research",
+        "build_ready": False,
+        "cluster_label": cluster_summary.get("label", ""),
+    }
+
+
+def stage_decision(
+    opportunity_scores: dict[str, Any],
+    market_gap: dict[str, Any],
+    counterevidence: list[dict[str, Any]],
+    *,
+    promotion_threshold: float = 0.62,
+    park_threshold: float = 0.48,
+    review_feedback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    supported_count = sum(1 for check in counterevidence if check.get("status") == "supported")
+    park_bias = float((review_feedback or {}).get("park_bias", 0.0) or 0.0)
+    kill_bias = float((review_feedback or {}).get("kill_bias", 0.0) or 0.0)
+    composite = float(opportunity_scores.get("composite_score", 0.0) or 0.0) + park_bias - kill_bias
+    plausibility = float(opportunity_scores.get("problem_plausibility", 0.0) or 0.0)
+    sufficiency = float(opportunity_scores.get("evidence_sufficiency", 0.0) or 0.0)
+    value_support = float(opportunity_scores.get("value_support", 0.0) or 0.0)
+    evidence_quality = float(opportunity_scores.get("evidence_quality", 0.0) or 0.0)
+
+    hard_kill = (
+        market_gap.get("market_gap") == "already_solved_well"
+        or supported_count >= 4
+        or (market_gap.get("market_gap") == "likely_false_signal" and plausibility < 0.45)
+        or (composite < park_threshold and plausibility < 0.38 and sufficiency < 0.35)
+        or (kill_bias >= 0.12 and plausibility < 0.45 and sufficiency < 0.32)
+    )
+    if hard_kill:
+        return {
+            "status": "killed",
+            "recommendation": "kill",
+            "reason": "unlikely_or_economically_weak",
+            "decision_reason": "unlikely_or_economically_weak",
+            "park_subreason": "",
+        }
+
+    if composite >= promotion_threshold and plausibility >= 0.6 and evidence_quality >= 0.55 and supported_count <= 1 and value_support >= 0.58:
+        return {
+            "status": "promoted",
+            "recommendation": "promote",
+            "reason": "validated_selection_gate",
+            "decision_reason": "validated_selection_gate",
+            "park_subreason": "",
+        }
+
+    recurrence_short = market_gap.get("market_gap") == "needs_more_recurrence_evidence" or sufficiency < 0.46
+    value_short = value_support < 0.5
+    if recurrence_short and value_short:
+        subreason = "park_both"
+    elif recurrence_short:
+        subreason = "park_recurrence"
+    elif value_short:
+        subreason = "park_value"
+    else:
+        subreason = "plausible_but_unproven"
+
+    if review_feedback:
+        labels = set((review_feedback.get("labels") or {}).keys())
+        if "needs_more_evidence" in labels and subreason == "park_recurrence":
+            subreason = "plausible_but_unproven"
+
+    return {
+        "status": "parked",
+        "recommendation": "park",
+        "reason": subreason,
+        "decision_reason": subreason,
+        "park_subreason": subreason,
+    }
+
+
+class OpportunityEngine:
+    """Wrapper around deterministic weak-signal extraction helpers."""
+
+    def build_raw_signal(
+        self,
+        *,
+        finding_id: int,
+        source: str,
+        source_url: str,
+        title: str,
+        author: str,
+        content_text: str,
+        evidence: dict[str, Any] | None = None,
+        content_hash: str = "",
+    ) -> RawSignal:
+        payload = build_raw_signal_payload(
+            {
+                "source": source,
+                "source_url": source_url,
+                "product_built": title,
+                "entrepreneur": author,
+                "outcome_summary": content_text,
+                "evidence": evidence or {},
+                "finding_kind": "problem_signal",
+            }
+        )
+        return RawSignal(
+            finding_id=finding_id,
+            source_name=payload["source_name"],
+            source_type=payload["source_type"],
+            source_url=payload["source_url"],
+            title=payload["title"],
+            body_excerpt=payload["body_excerpt"],
+            content_hash=content_hash or hashlib.sha1(f"{source}|{source_url}|{title}|{content_text}".encode("utf-8")).hexdigest(),
+            source_class="pain_signal",
+            quote_text=payload.get("quote_text", ""),
+            role_hint=payload["role_hint"],
+            published_at=payload.get("published_at"),
+            timestamp_hint=payload.get("timestamp_hint", ""),
+            metadata={"author": author, **payload.get("metadata_json", {})},
+        )
+
+    def extract_problem_atom(self, signal: RawSignal, *, finding_kind: str) -> ProblemAtom | None:
+        signal_payload = {
+            "source_name": signal.source_name,
+            "source_type": signal.source_type,
+            "source_url": signal.source_url,
+            "title": signal.title,
+            "body_excerpt": signal.body_excerpt,
+            "quote_text": signal.quote_text or signal.title,
+            "role_hint": signal.role_hint,
+            "metadata_json": signal.metadata or {},
+        }
+        finding_data = {
+            "source": signal.source_name,
+            "source_url": signal.source_url,
+            "product_built": signal.title,
+            "tool_used": "",
+            "finding_kind": finding_kind,
+            "outcome_summary": signal.body_excerpt,
+            "source_class": signal.source_class,
+        }
+        payload = build_problem_atom(signal_payload, finding_data)
+        if finding_kind != "pain_point" and payload["confidence"] < 0.55:
+            return None
+        return ProblemAtom(
+            signal_id=signal.id or 0,
+            finding_id=signal.finding_id,
+            raw_signal_id=signal.id or 0,
+            cluster_key=payload["cluster_key"],
+            segment=payload["segment"],
+            user_role=payload["user_role"],
+            job_to_be_done=payload["job_to_be_done"],
+            trigger_event=payload["trigger_event"],
+            pain_statement=payload["pain_statement"],
+            failure_mode=payload["failure_mode"],
+            current_workaround=payload["current_workaround"],
+            current_tools=payload["current_tools"],
+            source_quote=signal.quote_text or payload["pain_statement"],
+            urgency_clues=payload["urgency_clues"],
+            frequency_clues=payload["frequency_clues"],
+            emotional_intensity=payload["emotional_intensity"],
+            cost_consequence_clues=payload["cost_consequence_clues"],
+            why_now_clues=payload["why_now_clues"],
+            confidence=payload["confidence"],
+            confidence_score=payload["confidence"],
+            atom_json=json_dumps(payload["atom_json"]),
+            metadata={"cluster_key": payload["cluster_key"]},
+        )
+
+    def cluster_key_for_atom(self, atom: ProblemAtom) -> str:
+        if atom.metadata and atom.metadata.get("cluster_key"):
+            return atom.metadata["cluster_key"]
+        return infer_recurrence_key(
+            f"{atom.segment} {atom.user_role} {atom.job_to_be_done} {atom.failure_mode} {atom.current_workaround}"
+        )
+
+    def build_cluster(self, atom: ProblemAtom, cluster_atoms: list[ProblemAtom], source_names: list[str]) -> OpportunityCluster:
+        class _Signal:
+            def __init__(self, source_type: str, quote_text: str):
+                self.source_type = source_type
+                self.quote_text = quote_text
+
+        summary = build_cluster_summary(
+            cluster_atoms,
+            [_Signal(name, member.source_quote) for name, member in zip(source_names, cluster_atoms)],
+        )
+        return OpportunityCluster(
+            label=summary["label"],
+            status="candidate",
+            summary=summary["summary_json"],
+            user_role=summary["user_role"],
+            job_to_be_done=summary["job_to_be_done"],
+            metadata={
+                "cluster_key": self.cluster_key_for_atom(atom),
+                "trigger_pattern": summary["trigger_summary"],
+                "workaround_pattern": atom.current_workaround,
+                "failure_pattern": atom.failure_mode,
+                "source_count": len(set(source_names)),
+                "signal_count": summary["signal_count"],
+                "atom_count": summary["atom_count"],
+                "evidence_quality": summary["evidence_quality"],
+            },
+        )
+
+    def map_market_gap(
+        self,
+        *,
+        cluster: OpportunityCluster,
+        recurrence_docs: list[dict[str, Any]],
+        competitor_docs: list[dict[str, Any]],
+        counter_docs: list[dict[str, Any]],
+    ) -> str:
+        validation_evidence = {
+            "scores": {
+                "problem_score": clamp(len(recurrence_docs) / 6.0),
+                "solution_gap_score": clamp(1.0 - len(competitor_docs) / 8.0),
+                "saturation_score": clamp(1.0 - len(competitor_docs) / 10.0),
+            }
+        }
+        market_gap = assess_market_gap(
+            {
+                "label": cluster.label,
+                "evidence_quality": (cluster.metadata or {}).get("evidence_quality", 0.0),
+                "summary_json": cluster.summary or {},
+            },
+            validation_evidence,
+        )
+        if counter_docs and len(counter_docs) >= len(recurrence_docs):
+            return "likely_false_signal"
+        return market_gap["market_gap"]
+
+    def score_opportunity(
+        self,
+        *,
+        cluster: OpportunityCluster,
+        atoms: list[ProblemAtom],
+        recurrence_docs: list[dict[str, Any]],
+        competitor_docs: list[dict[str, Any]],
+        counter_docs: list[dict[str, Any]],
+        market_gap_state: str,
+    ) -> dict[str, Any]:
+        atom = atoms[0]
+        signal = type("Signal", (), {"source_type": "forum"})()
+        validation_evidence = {
+            "scores": {
+                "problem_score": clamp(len(recurrence_docs) / 6.0),
+                "feasibility_score": 0.72 if atom.current_workaround else 0.56,
+                "value_score": clamp(0.25 + 0.15 * len([value for value in atom.cost_consequence_clues.split(", ") if value])),
+                "solution_gap_score": clamp(1.0 - len(competitor_docs) / 8.0),
+                "saturation_score": clamp(1.0 - len(competitor_docs) / 10.0),
+            },
+            "evidence": {
+                "recurrence_query_coverage": clamp(len(recurrence_docs) / 8.0),
+                "recurrence_doc_count": len(recurrence_docs),
+                "recurrence_domain_count": len({urlparse(doc.get("url", "")).netloc for doc in recurrence_docs if doc.get("url")}),
+                "recurrence_results_by_source": {"web": len(recurrence_docs)},
+            },
+        }
+        market_gap = {"market_gap": market_gap_state, "why_now_strength": clamp(0.2 + 0.15 * len([value for value in atom.why_now_clues.split(", ") if value]))}
+        raw_scores = score_opportunity(
+            atom,
+            signal,
+            {
+                "label": cluster.label,
+                "atom_count": (cluster.metadata or {}).get("atom_count", len(atoms)),
+                "evidence_quality": (cluster.metadata or {}).get("evidence_quality", 0.0),
+            },
+            validation_evidence,
+            market_gap,
+        )
+        counterevidence = build_counterevidence(raw_scores, market_gap)
+        if counter_docs:
+            counterevidence.append(
+                {
+                    "claim": "Counterevidence search found likely disconfirming signals.",
+                    "status": "supported",
+                    "summary": f"{len(counter_docs)} contradicting docs were found.",
+                }
+            )
+        decision = stage_decision(raw_scores, market_gap, counterevidence)
+        return {
+            "positive_dimensions": {
+                "pain_severity": raw_scores["pain_severity"],
+                "frequency": raw_scores["frequency_score"],
+                "cost_of_inaction": raw_scores["cost_of_inaction"],
+                "workaround_density": raw_scores["workaround_density"],
+                "urgency": raw_scores["urgency_score"],
+                "segment_concentration": raw_scores["segment_concentration"],
+                "reachability": raw_scores["reachability"],
+                "timing_shift": raw_scores["timing_shift"],
+                "buildability": raw_scores["buildability"],
+                "expansion_potential": raw_scores["expansion_potential"],
+            },
+            "penalties": {
+                "education_burden": raw_scores["education_burden"],
+                "dependency_risk": raw_scores["dependency_risk"],
+                "adoption_friction": raw_scores["adoption_friction"],
+            },
+            "evidence_multiplier": raw_scores["evidence_multiplier"],
+            "recurrence_count": len(recurrence_docs),
+            "competitor_count": len(competitor_docs),
+            "counterevidence_count": len(counter_docs),
+            "total_score": raw_scores["composite_score"],
+            "decision": decision["recommendation"],
+            "value_support": raw_scores["value_support"],
+            "problem_plausibility": raw_scores["problem_plausibility"],
+        }
+
+    def build_experiment_plan(
+        self,
+        *,
+        cluster: OpportunityCluster,
+        scorecard: dict[str, Any],
+        market_gap_state: str,
+    ) -> ValidationExperiment:
+        atom = ProblemAtom(
+            signal_id=0,
+            finding_id=0,
+            cluster_key=(cluster.metadata or {}).get("cluster_key", ""),
+            segment=cluster.metadata.get("segment", "") if cluster.metadata else "",
+            user_role=cluster.user_role,
+            job_to_be_done=cluster.job_to_be_done,
+            trigger_event=(cluster.metadata or {}).get("trigger_pattern", ""),
+            pain_statement=cluster.label,
+            failure_mode=(cluster.metadata or {}).get("failure_pattern", ""),
+            current_workaround=(cluster.metadata or {}).get("workaround_pattern", ""),
+            current_tools="",
+            urgency_clues="",
+            frequency_clues="",
+            emotional_intensity=0.5,
+            cost_consequence_clues="",
+            why_now_clues="",
+            confidence=(cluster.metadata or {}).get("evidence_quality", 0.5),
+        )
+        plan = plan_validation_experiment(
+            atom,
+            {
+                "label": cluster.label,
+                "atom_count": (cluster.metadata or {}).get("atom_count", 1),
+                "evidence_quality": (cluster.metadata or {}).get("evidence_quality", 0.5),
+            },
+            {
+                "frequency_score": scorecard["positive_dimensions"]["frequency"],
+                "evidence_quality": (cluster.metadata or {}).get("evidence_quality", 0.5),
+                "reachability": scorecard["positive_dimensions"]["reachability"],
+                "cost_of_inaction": scorecard["positive_dimensions"]["cost_of_inaction"],
+                "segment_concentration": scorecard["positive_dimensions"]["segment_concentration"],
+            },
+            {"market_gap": market_gap_state},
+        )
+        return ValidationExperiment(
+            opportunity_id=0,
+            cluster_id=cluster.id or 0,
+            test_type=plan["test_type"],
+            hypothesis=plan["hypothesis"],
+            falsifier=plan["falsifier"],
+            smallest_test=plan["smallest_test"],
+            success_signal=plan["success_signal"],
+            failure_signal=plan["failure_signal"],
+        )
+
+    def support_summary(self, atoms: list[ProblemAtom], recurrence_docs: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "quotes": [atom.source_quote for atom in atoms if atom.source_quote][:5],
+            "workarounds": [atom.current_workaround for atom in atoms if atom.current_workaround][:5],
+            "recurrence_docs": recurrence_docs[:5],
+        }
+
+    def counter_summary(self, counter_docs: list[dict[str, Any]], competitor_docs: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "counterevidence_docs": counter_docs[:5],
+            "competitor_docs": competitor_docs[:5],
+        }
+
+    def classify_counter_doc(self, title: str, snippet: str) -> bool:
+        lowered = _normalized(f"{title} {snippet}")
+        return any(term in lowered for term in ["already solved", "good enough", "works fine", "easy workaround"])

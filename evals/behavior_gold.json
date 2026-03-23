@@ -1,0 +1,418 @@
+{
+  "source_policy": [
+    {
+      "name": "promo_mrr_post_is_not_pain_signal",
+      "finding_data": {
+        "source": "reddit-success",
+        "source_url": "https://reddit.com/r/sideproject/comments/1",
+        "product_built": "Finally hit $1k MRR",
+        "outcome_summary": "I launched my AI SaaS and made $750 MRR in the first month.",
+        "finding_kind": "success_signal"
+      },
+      "expected_source_class": "success_signal",
+      "expected_accepted": false
+    },
+    {
+      "name": "manual_workaround_thread_is_pain_signal",
+      "finding_data": {
+        "source": "reddit-problem",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/2",
+        "product_built": "Spreadsheet cleanup every week",
+        "outcome_summary": "We still copy paste payout data into spreadsheets every week because the tool breaks on exceptions.",
+        "finding_kind": "pain_point"
+      },
+      "expected_source_class": "pain_signal",
+      "expected_accepted": true
+    },
+    {
+      "name": "search_trend_signal_is_validation_only",
+      "finding_data": {
+        "source": "google-trends",
+        "source_url": "https://trends.google.com/example",
+        "product_built": "Search volume spike for GDPR automation",
+        "outcome_summary": "Search volume for GDPR compliance automation keeps rising.",
+        "finding_kind": "demand_signal"
+      },
+      "expected_source_class": "demand_signal",
+      "expected_accepted": false
+    },
+    {
+      "name": "competitor_landscape_signal_is_not_atom_eligible",
+      "finding_data": {
+        "source": "competitor-scan",
+        "source_url": "https://example.com/alternatives",
+        "product_built": "Top compliance automation tools",
+        "outcome_summary": "Comparison of SOC 2 automation vendors and pricing.",
+        "finding_kind": "competition_signal"
+      },
+      "expected_source_class": "competition_signal",
+      "expected_accepted": false
+    },
+    {
+      "name": "methodology_discussion_is_meta_guidance",
+      "finding_data": {
+        "source": "reddit-meta",
+        "source_url": "https://reddit.com/r/startups/comments/3",
+        "product_built": "How do you find startup pain points?",
+        "outcome_summary": "A discussion about how to do customer research and find pain points.",
+        "finding_kind": "meta_guidance"
+      },
+      "expected_source_class": "meta_guidance",
+      "expected_accepted": false
+    }
+  ],
+  "cluster_labels": [
+    {
+      "name": "device_setup_label_stays_specific",
+      "atoms": [
+        {
+          "segment": "operations teams",
+          "user_role": "operator",
+          "job_to_be_done": "standardize device setup without manual handoffs",
+          "trigger_event": "during onboarding",
+          "pain_statement": "device setup stays manual",
+          "failure_mode": "device setup stays manual",
+          "current_workaround": "manual workarounds",
+          "confidence": 0.7
+        }
+      ],
+      "signals": [
+        {
+          "source_type": "forum",
+          "title": "Manual device setup",
+          "body_excerpt": "Every new device still gets configured by hand."
+        }
+      ],
+      "label_contains": [
+        "operator",
+        "device setup",
+        "manual"
+      ]
+    },
+    {
+      "name": "compliance_label_stays_specific",
+      "atoms": [
+        {
+          "segment": "compliance teams",
+          "user_role": "compliance lead",
+          "job_to_be_done": "keep multi-framework compliance evidence and monitoring reliable",
+          "trigger_event": "before audits",
+          "pain_statement": "evidence collection stays manual",
+          "failure_mode": "evidence collection stays manual",
+          "current_workaround": "spreadsheets",
+          "confidence": 0.8
+        }
+      ],
+      "signals": [
+        {
+          "source_type": "forum",
+          "title": "Cloud compliance evidence is still manual",
+          "body_excerpt": "We still gather GDPR, HIPAA, and SOC 2 evidence by hand."
+        }
+      ],
+      "label_contains": [
+        "compliance",
+        "evidence collection"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "name": "thin_but_plausible_signal_should_park",
+      "opportunity_scores": {
+        "composite_score": 0.39,
+        "problem_plausibility": 0.58,
+        "evidence_sufficiency": 0.36
+      },
+      "market_gap": {
+        "market_gap": "needs_more_recurrence_evidence"
+      },
+      "counterevidence": [
+        {"status": "contradicted"},
+        {"status": "contradicted"},
+        {"status": "supported"},
+        {"status": "contradicted"},
+        {"status": "contradicted"}
+      ],
+      "expected_recommendation": "park"
+    },
+    {
+      "name": "weak_and_under_evidenced_signal_should_kill",
+      "opportunity_scores": {
+        "composite_score": 0.22,
+        "problem_plausibility": 0.31,
+        "evidence_sufficiency": 0.22
+      },
+      "market_gap": {
+        "market_gap": "likely_false_signal"
+      },
+      "counterevidence": [
+        {"status": "supported"},
+        {"status": "supported"},
+        {"status": "supported"},
+        {"status": "contradicted"},
+        {"status": "supported"}
+      ],
+      "expected_recommendation": "kill"
+    },
+    {
+      "name": "timeout_but_plausible_signal_should_park",
+      "opportunity_scores": {
+        "composite_score": 0.29,
+        "problem_plausibility": 0.57,
+        "evidence_sufficiency": 0.24
+      },
+      "market_gap": {
+        "market_gap": "needs_more_recurrence_evidence"
+      },
+      "counterevidence": [
+        {"status": "contradicted"},
+        {"status": "contradicted"},
+        {"status": "supported"},
+        {"status": "contradicted"},
+        {"status": "contradicted"}
+      ],
+      "expected_recommendation": "park"
+    }
+  ],
+  "feedback_calibration": [
+    {
+      "name": "needs_more_evidence_feedback_keeps_borderline_item_parked",
+      "opportunity_scores": {
+        "composite_score": 0.31,
+        "problem_plausibility": 0.52,
+        "evidence_sufficiency": 0.27,
+        "evidence_quality": 0.32
+      },
+      "market_gap": {
+        "market_gap": "needs_more_recurrence_evidence"
+      },
+      "counterevidence": [
+        {"status": "supported"},
+        {"status": "contradicted"},
+        {"status": "supported"}
+      ],
+      "review_feedback": {
+        "total_reviews": 2,
+        "labels": {
+          "needs_more_evidence": 2
+        },
+        "park_bias": 0.12,
+        "kill_bias": -0.04
+      },
+      "expected_recommendation": "park"
+    },
+    {
+      "name": "false_positive_feedback_pushes_weak_signal_to_kill",
+      "opportunity_scores": {
+        "composite_score": 0.34,
+        "problem_plausibility": 0.41,
+        "evidence_sufficiency": 0.28,
+        "evidence_quality": 0.3
+      },
+      "market_gap": {
+        "market_gap": "needs_more_recurrence_evidence"
+      },
+      "counterevidence": [
+        {"status": "supported"},
+        {"status": "supported"},
+        {"status": "contradicted"}
+      ],
+      "review_feedback": {
+        "total_reviews": 2,
+        "labels": {
+          "false_positive": 1,
+          "should_kill": 1
+        },
+        "park_bias": -0.1,
+        "kill_bias": 0.14
+      },
+      "expected_recommendation": "kill"
+    }
+  ],
+  "scoring_calibration": [
+    {
+      "name": "compliance_burden_lifts_value_signals",
+      "atom": {
+        "segment": "compliance teams",
+        "user_role": "compliance lead",
+        "job_to_be_done": "keep multi-framework compliance evidence and monitoring reliable",
+        "trigger_event": "evidence collection stays manual",
+        "pain_statement": "Audit evidence collection still lives in spreadsheets.",
+        "failure_mode": "evidence collection stays manual",
+        "current_workaround": "spreadsheets, manual work",
+        "current_tools": "Google Sheets",
+        "urgency_clues": "must",
+        "frequency_clues": "every week",
+        "emotional_intensity": 0.25,
+        "cost_consequence_clues": "time, consequence",
+        "why_now_clues": "compliance",
+        "confidence": 0.72
+      },
+      "signal": {
+        "source_type": "forum",
+        "title": "Cloud compliance evidence is still manual",
+        "body_excerpt": "We still gather GDPR, HIPAA, and SOC 2 evidence by hand."
+      },
+      "cluster_summary": {
+        "atom_count": 1,
+        "evidence_quality": 0.46
+      },
+      "validation_evidence": {
+        "scores": {
+          "problem_score": 0.31,
+          "feasibility_score": 0.64,
+          "value_score": 0.4
+        },
+        "evidence": {
+          "recurrence_query_coverage": 0.25,
+          "recurrence_doc_count": 3,
+          "recurrence_domain_count": 1,
+          "recurrence_results_by_source": {
+            "reddit": 3,
+            "web": 0,
+            "github": 0,
+            "stackoverflow": 0,
+            "etsy": 0,
+            "forum_fallback": 0
+          }
+        },
+        "market_enrichment": {
+          "demand_score": 0.42,
+          "buyer_intent_score": 0.53,
+          "competition_score": 0.18,
+          "trend_score": 0.44,
+          "review_signal_score": 0.0,
+          "cost_pressure_score": 0.58,
+          "operational_buyer_score": 0.22,
+          "compliance_burden_score": 0.54,
+          "willingness_to_pay_signal": 0.49
+        }
+      },
+      "market_gap": {
+        "why_now_strength": 0.3,
+        "market_gap": "needs_more_recurrence_evidence"
+      },
+      "min_fields": {
+        "cost_of_inaction": 0.58,
+        "willingness_to_pay_proxy": 0.6
+      }
+    },
+    {
+      "name": "single_source_recurrence_does_not_overstate_evidence",
+      "atom": {
+        "segment": "small business operations",
+        "user_role": "operations lead",
+        "job_to_be_done": "keep operations data in sync without manual cleanup",
+        "trigger_event": "manual data entry piles up",
+        "pain_statement": "manual data entry piles up",
+        "failure_mode": "manual data entry piles up",
+        "current_workaround": "spreadsheets, email routing",
+        "current_tools": "Excel",
+        "urgency_clues": "must",
+        "frequency_clues": "daily",
+        "emotional_intensity": 0.4,
+        "cost_consequence_clues": "time, consequence",
+        "why_now_clues": "",
+        "confidence": 0.72
+      },
+      "signal": {
+        "source_type": "forum",
+        "title": "Manual data entry piles up",
+        "body_excerpt": "We still clean spreadsheets every day."
+      },
+      "cluster_summary": {
+        "atom_count": 1,
+        "evidence_quality": 0.48
+      },
+      "validation_evidence": {
+        "scores": {
+          "problem_score": 0.52,
+          "feasibility_score": 0.62,
+          "value_score": 0.34
+        },
+        "evidence": {
+          "recurrence_query_coverage": 0.75,
+          "recurrence_doc_count": 5,
+          "recurrence_domain_count": 1,
+          "recurrence_results_by_source": {
+            "reddit": 5,
+            "web": 0,
+            "github": 0,
+            "stackoverflow": 0,
+            "etsy": 0,
+            "forum_fallback": 0
+          }
+        },
+        "corroboration": {
+          "corroboration_score": 0.39,
+          "evidence_sufficiency": 0.33
+        }
+      },
+      "market_gap": {
+        "why_now_strength": 0.18,
+        "market_gap": "needs_more_recurrence_evidence"
+      },
+      "max_fields": {
+        "evidence_sufficiency": 0.45
+      }
+    },
+    {
+      "name": "generic_manual_prompt_stays_weak",
+      "atom": {
+        "segment": "small business operators",
+        "user_role": "",
+        "job_to_be_done": "keep a recurring workflow on track",
+        "trigger_event": "",
+        "pain_statement": "manual work keeps piling up",
+        "failure_mode": "manual work keeps piling up",
+        "current_workaround": "",
+        "current_tools": "",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "emotional_intensity": 0.15,
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+        "confidence": 0.61
+      },
+      "signal": {
+        "source_type": "forum",
+        "title": "What manual process would you like to automate?",
+        "body_excerpt": "I am collecting ideas for annoying manual tasks."
+      },
+      "cluster_summary": {
+        "atom_count": 1,
+        "evidence_quality": 0.18
+      },
+      "validation_evidence": {
+        "scores": {
+          "problem_score": 0.08,
+          "feasibility_score": 0.62,
+          "value_score": 0.34
+        },
+        "evidence": {
+          "recurrence_state": "timeout",
+          "recurrence_query_coverage": 0.0,
+          "recurrence_doc_count": 0,
+          "recurrence_domain_count": 0,
+          "recurrence_results_by_source": {
+            "reddit": 0,
+            "web": 0,
+            "github": 0,
+            "stackoverflow": 0,
+            "etsy": 0,
+            "forum_fallback": 0
+          }
+        }
+      },
+      "market_gap": {
+        "why_now_strength": 0.1,
+        "market_gap": "needs_more_recurrence_evidence"
+      },
+      "max_fields": {
+        "composite_score": 0.32,
+        "evidence_quality": 0.3
+      }
+    }
+  ]
+}

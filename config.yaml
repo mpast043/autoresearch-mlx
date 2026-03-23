@@ -1,0 +1,32 @@
+output_dir: output
+
+database:
+  path: data/autoresearch.db
+
+discovery:
+  sources:
+    - reddit
+    - github
+    - wordpress_reviews
+    - shopify_reviews
+
+orchestration:
+  evidence_concurrency: 3
+  run_once_max_wait_seconds: 90
+  auto_ideate_after_validation: false
+
+builder:
+  auto_build: false
+
+validation:
+  promotion_threshold: 0.66
+  park_threshold: 0.42
+
+reddit_bridge:
+  enabled: true
+  mode: bridge_with_fallback
+  base_url: ${REDDIT_BRIDGE_BASE_URL}
+  auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}
+
+reddit_relay:
+  allow_no_auth: false
