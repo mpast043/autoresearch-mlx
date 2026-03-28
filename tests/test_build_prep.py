@@ -55,7 +55,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
             },
             corroboration={
                 "corroboration_score": 0.72,
-                "core_source_family_diversity": 2,
+                "source_family_diversity": 2,
                 "generalizability_class": "reusable_workflow_pain",
             },
             market_enrichment={"wedge_active": True},
@@ -74,7 +74,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
             },
             corroboration={
                 "corroboration_score": 0.41,
-                "core_source_family_diversity": 1,
+                "source_family_diversity": 1,
                 "generalizability_class": "product_specific_issue",
                 "recurrence_state": "timeout",
             },
@@ -95,7 +95,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
             },
             corroboration={
                 "corroboration_score": 0.4215,
-                "core_source_family_diversity": 2,
+                "source_family_diversity": 2,
                 "generalizability_class": "reusable_workflow_pain",
                 "recurrence_state": "thin",
             },
@@ -117,7 +117,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
             },
             corroboration={
                 "corroboration_score": 0.48,
-                "core_source_family_diversity": 2,
+                "source_family_diversity": 2,
                 "generalizability_class": "reusable_workflow_pain",
                 "recurrence_state": "timeout",
             },
@@ -129,6 +129,8 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertIn("prototype_candidate_multifamily_near_miss", gate["reasons"])
 
     def test_selection_gate_allows_exceptional_single_family_prototype_candidate(self):
+        # With source_family_diversity=1, single_family_explore path requires stricter
+        # recurrence (must be supported) and lower thresholds vs multi_family path.
         status, reason, gate = determine_selection_state(
             decision="park",
             scorecard={
@@ -138,18 +140,21 @@ class TestBuildPrepHelpers(unittest.TestCase):
             },
             corroboration={
                 "corroboration_score": 0.534,
-                "core_source_family_diversity": 1,
+                "source_family_diversity": 1,
                 "generalizability_class": "reusable_workflow_pain",
                 "recurrence_state": "supported",
             },
             market_enrichment={"wedge_active": False},
         )
+        # single_family_explore fires with these values -> prototype_candidate
         self.assertEqual(status, "prototype_candidate")
         self.assertEqual(reason, "prototype_candidate_gate")
         self.assertTrue(gate["eligible"])
         self.assertIn("prototype_candidate_single_family_exception", gate["reasons"])
 
     def test_selection_gate_allows_supported_single_family_ops_checkpoint_case(self):
+        # single_family_explore path: source_family_diversity=1, supported recurrence,
+        # below validated gate thresholds but above exploratory thresholds.
         status, reason, gate = determine_selection_state(
             decision="park",
             scorecard={
@@ -159,12 +164,13 @@ class TestBuildPrepHelpers(unittest.TestCase):
             },
             corroboration={
                 "corroboration_score": 0.4569,
-                "core_source_family_diversity": 1,
+                "source_family_diversity": 1,
                 "generalizability_class": "reusable_workflow_pain",
                 "recurrence_state": "supported",
             },
             market_enrichment={"wedge_active": False},
         )
+        # single_family_explore fires -> prototype_candidate
         self.assertEqual(status, "prototype_candidate")
         self.assertEqual(reason, "prototype_candidate_gate")
         self.assertTrue(gate["eligible"])
@@ -192,6 +198,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "source_family_match_counts": {"github": 2, "reddit": 1},
                 "core_source_families": ["github", "reddit"],
                 "core_source_family_diversity": 2,
+                "source_family_diversity": 2,
                 "cross_source_match_score": 0.61,
                 "corroboration_score": 0.88,
                 "generalizability_class": "reusable_workflow_pain",
@@ -226,7 +233,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertEqual(payload["opportunity_id"], 2)
         self.assertEqual(payload["validation_id"], 3)
         self.assertEqual(payload["linked_finding_ids"], [7, 8])
-        self.assertEqual(payload["source_family_corroboration"]["core_source_family_diversity"], 2)
+        self.assertEqual(payload["source_family_corroboration"]["source_family_diversity"], 2)
         self.assertEqual(payload["source_family_corroboration"]["recurrence_gap_reason"], "single_source_confirmation_only")
         self.assertEqual(payload["source_family_corroboration"]["recurrence_failure_class"], "single_source_only")
         self.assertEqual(payload["wedge_profitability_relevance"]["wedge_name"], "backup_restore_reliability")

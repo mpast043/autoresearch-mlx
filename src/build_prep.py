@@ -58,7 +58,10 @@ def determine_selection_state(
         )
 
     corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
-    core_family_diversity = int(corroboration.get("core_source_family_diversity", 0) or 0)
+    # Use source_family_diversity (total unique confirming sources) rather than
+    # core_source_family_diversity (only "core" origin sources). A finding confirmed
+    # by Reddit + Web should count as multi-family support regardless of origin.
+    core_family_diversity = int(corroboration.get("source_family_diversity", 0) or 0)
     generalizability_class = str(corroboration.get("generalizability_class", "") or "")
     recurrence_state = str(corroboration.get("recurrence_state", "") or "")
     evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
@@ -207,7 +210,10 @@ def explain_selection_gate_detail(
     )
 
     corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
-    core_family_diversity = int(corroboration.get("core_source_family_diversity", 0) or 0)
+    # Use source_family_diversity (total unique confirming sources) rather than
+    # core_source_family_diversity (only "core" origin sources). A finding confirmed
+    # by Reddit + Web should count as multi-family support regardless of origin.
+    core_family_diversity = int(corroboration.get("source_family_diversity", 0) or 0)
     generalizability_class = str(corroboration.get("generalizability_class", "") or "")
     recurrence_state = str(corroboration.get("recurrence_state", "") or "")
     evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
@@ -516,6 +522,7 @@ def build_brief_payload(
             "source_family_match_counts": corroboration.get("source_family_match_counts", {}),
             "core_source_families": corroboration.get("core_source_families", []),
             "core_source_family_diversity": corroboration.get("core_source_family_diversity", 0),
+            "source_family_diversity": corroboration.get("source_family_diversity", 0),
             "cross_source_match_score": corroboration.get("cross_source_match_score", 0.0),
             "corroboration_score": corroboration.get("corroboration_score", 0.0),
             "generalizability_class": corroboration.get("generalizability_class", ""),

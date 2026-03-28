@@ -127,11 +127,11 @@ validation:
     recurrence_results: 6
     competitor_results: 8
     evidence_sample: 5
-    recurrence_budget_seconds: 8.0
-    competitor_budget_seconds: 6.0
+    recurrence_budget_seconds: 30.0
+    competitor_budget_seconds: 15.0
     max_results_per_domain: 2
     # DuckDuckGo provider backend: "api" (default) or "duckduckgo" (HTML, may be blocked in some networks)
-    ddgs_backend: duckduckgo
+    ddgs_backend: api
     # Extra results to fetch beyond max_results to allow deduplication headroom
     ddgs_extra_results: 4
     # Result truncation lengths
