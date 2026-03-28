@@ -24,7 +24,7 @@ class FakeDDGS:
         return False
 
     def text(self, query, backend=None, max_results=None):
-        assert backend == "api"
+        assert backend == "duckduckgo"
         return [
             {
                 "title": "Wikipedia result",
@@ -69,7 +69,7 @@ class FakeValidationDDGS:
         return False
 
     def text(self, query, backend=None, max_results=None):
-        assert backend == "api"
+        assert backend == "duckduckgo"
         return [
             {
                 "title": "Workflow Definition",
@@ -99,14 +99,14 @@ class FakeEmptyDDGS:
         return False
 
     def text(self, query, backend=None, max_results=None):
-        assert backend == "api"
+        assert backend == "duckduckgo"
         return []
 
 
 def test_search_web_filters_noise_and_caps_domains(monkeypatch):
     """Search results should drop wiki noise, unwrap redirects, and cap same-domain spam."""
     monkeypatch.setitem(sys.modules, "ddgs", types.SimpleNamespace(DDGS=FakeDDGS))
-    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2}}})
+    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2, "ddgs_backend": "duckduckgo"}}})
 
     docs = asyncio.run(toolkit.search_web("workflow automation", max_results=4))
 
@@ -920,7 +920,7 @@ def test_low_information_atom_does_not_force_cohort_pack():
 def test_search_web_filters_validation_junk_domains(monkeypatch):
     """Validation search should drop dictionaries, hours sites, and keep relevant software results."""
     monkeypatch.setitem(sys.modules, "ddgs", types.SimpleNamespace(DDGS=FakeValidationDDGS))
-    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2}}})
+    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2, "ddgs_backend": "duckduckgo"}}})
 
     docs = asyncio.run(
         toolkit.search_web(
@@ -936,7 +936,7 @@ def test_search_web_filters_validation_junk_domains(monkeypatch):
 def test_validation_recurrence_site_search_can_fall_back_to_bing(monkeypatch):
     monkeypatch.setitem(sys.modules, "ddgs", types.SimpleNamespace(DDGS=FakeEmptyDDGS))
     monkeypatch.setitem(sys.modules, "duckduckgo_search", types.SimpleNamespace(DDGS=FakeEmptyDDGS))
-    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2}}})
+    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2, "ddgs_backend": "duckduckgo"}}})
 
     class FakeResponse:
         def __init__(self, text):
@@ -978,7 +978,7 @@ def test_validation_recurrence_site_search_can_fall_back_to_bing(monkeypatch):
 
 
 def test_validation_recurrence_stackexchange_site_search_returns_docs(monkeypatch):
-    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2}}})
+    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2, "ddgs_backend": "duckduckgo"}}})
 
     class FakeResponse:
         def __init__(self, payload):
