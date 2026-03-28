@@ -1256,15 +1256,24 @@ class ResearchToolkit:
                 return False
             domain = domain_for(normalized_url)
             if not domain or domain in NOISY_SEARCH_DOMAINS or domain in SEARCH_ENGINE_RESULT_DOMAINS:
+                logger.debug(
+                    "[search_dbg] NOISY/ENGINE domain=%s query=%r", domain, query[:60]
+                )
                 return False
-            if not self._is_relevant_search_result(
+            relevant = self._is_relevant_search_result(
                 query=query,
                 title=title,
                 snippet=snippet,
                 domain=domain,
                 url=normalized_url,
                 intent=intent,
-            ):
+            )
+            if not relevant:
+                ov = topical_overlap(query, title, snippet, domain)
+                logger.debug(
+                    "[search_dbg] FILTERED intent=%s overlap=%d domain=%s title=%r query=%r",
+                    intent, ov, domain, title[:60], query[:60],
+                )
                 return False
             if normalized_url in seen_urls or domain_counts[domain] >= self.search_domain_cap:
                 return False
@@ -4025,6 +4034,10 @@ class ResearchToolkit:
                 if any(term in text for term in pool):
                     buckets += 1
         workflow_hits = sum(1 for term in workflow_terms if term in text)
+        logger.debug(
+            "[match_dbg] atom_none=%s sig_hits=%d buckets=%d wf_hits=%d url=%s",
+            atom is None, signature_hits, buckets, workflow_hits, (doc.url or "")[:80],
+        )
         if signature_hits >= 2 and buckets >= 2 and workflow_hits >= 1:
             return "strong"
         if (signature_hits >= 1 and buckets >= 1) or workflow_hits >= 2:
