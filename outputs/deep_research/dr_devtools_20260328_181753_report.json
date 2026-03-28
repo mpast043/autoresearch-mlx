@@ -1,0 +1,12 @@
+{
+  "run_id": "dr_devtools_20260328_181753",
+  "vertical": "devtools",
+  "reddit_signals": 25,
+  "github_signals": 0,
+  "web_signals": 15,
+  "after_dedup": 2,
+  "after_filter": 2,
+  "findings_created": 0,
+  "dispatched_to_validation": 0,
+  "elapsed_s": 11.7
+}

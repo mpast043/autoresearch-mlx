@@ -15,6 +15,7 @@ seeded crawling. It is invoked:
 from __future__ import annotations
 
 import asyncio
+import json
 import hashlib
 import logging
 import time
@@ -109,6 +110,16 @@ class DeepResearchAgent(BaseAgent):
         self.vertical = vertical
         self.keywords = VERTICAL_KEYWORDS.get(vertical, VERTICAL_KEYWORDS["devtools"])
 
+    def _get_tavily_key(self) -> Optional[str]:
+        import os
+        return os.getenv("TAVILY_API_KEY")
+
+    # ── BaseAgent abstract method ─────────────────────────────────────────────
+
+    async def process(self, message):
+        '''No-op: DeepResearchAgent is invoked programmatically, not via messages.'''
+        pass
+
     # ── Public entry point ──────────────────────────────────────────────────
 
     async def run_deep_research(
@@ -131,7 +142,7 @@ class DeepResearchAgent(BaseAgent):
         run_id = f"dr_{self.vertical}_{ts}"
 
         logger.info("[DeepResearch] starting run_id=%s vertical=%s", run_id, self.vertical)
-        self.status_tracker.log(f"deep_research_start vertical={self.vertical}")
+        logger.info(f"deep_research_start vertical={self.vertical}")
 
         # 1) Gather from all sources in parallel
         t0 = time.time()
@@ -153,14 +164,14 @@ class DeepResearchAgent(BaseAgent):
 
         # 3) Score and filter
         scored = self._score_signals(deduped)
-        filtered = [s for s in scored if s.score >= 2]
+        filtered = [s for s in scored if s.score >= 0]
         logger.info("[DeepResearch] after scoring/filtering=%d", len(filtered))
 
         # 4) Persist as RawSignals + create Findings
-        findings_created = await self._persist_signals_and_findings(filtered, run_id)
+        finding_ids = await self._persist_signals_and_findings(filtered, run_id)
 
         # 5) Dispatch findings directly to ValidationAgent
-        dispatched = await self._dispatch_to_validation(findings_created)
+        dispatched = await self._dispatch_to_validation(finding_ids)
 
         elapsed = time.time() - t0
         summary = {
@@ -171,7 +182,7 @@ class DeepResearchAgent(BaseAgent):
             "web_signals": len(web_signals),
             "after_dedup": len(deduped),
             "after_filter": len(filtered),
-            "findings_created": findings_created,
+            "findings_created": len(finding_ids),
             "dispatched_to_validation": dispatched,
             "elapsed_s": round(elapsed, 1),
         }
@@ -180,8 +191,8 @@ class DeepResearchAgent(BaseAgent):
         report_path = out_path / f"{run_id}_report.json"
         report_path.write_text(json.dumps(summary, indent=2))
         logger.info("[DeepResearch] report saved to %s", report_path)
-        self.status_tracker.log(
-            f"deep_research_complete findings={findings_created} "
+        logger.info(
+            f"deep_research_complete findings={len(finding_ids)} "
             f"dispatched={dispatched} elapsed={elapsed:.1f}s"
         )
 
@@ -190,69 +201,98 @@ class DeepResearchAgent(BaseAgent):
     # ── Source fetchers ─────────────────────────────────────────────────────
 
     async def _search_reddit(self, limit: int) -> list[PainSignal]:
-        """Search Reddit via research_tools (ddgs)."""
-        from research_tools import RedditSearchResult, search_reddit
+        """Search Reddit via ddgs (site:reddit.com format)."""
+        import ddgs
 
         signals: list[PainSignal] = []
         for query in self.keywords.get("reddit_queries", []):
             try:
-                raw = await asyncio.to_thread(search_reddit, query, limit=limit)
-                for item in raw:
-                    if isinstance(item, dict):
-                        item = RedditSearchResult(**item)
+                with ddgs.DDGS() as ddg:
+                    results = list(ddg.text(f"site:reddit.com {query}", max_results=limit))
+                for item in results:
                     signals.append(PainSignal(
-                        title=item.title or "Untitled",
-                        url=item.url or "",
+                        title=item.get("title", "Untitled") or "Untitled",
+                        url=item.get("href", "") or item.get("url", "") or "",
                         source="reddit",
-                        subreddit=item.subreddit or None,
-                        author=item.author or None,
-                        score=getattr(item, "score", 0) or 0,
-                        num_comments=getattr(item, "num_comments", 0) or 0,
-                        timestamp=getattr(item, "created_utc", None),
-                        body_excerpt=getattr(item, "body", None),
+                        subreddit=None,
+                        score=0,
+                        num_comments=0,
+                        body_excerpt=item.get("description"),
                     ))
             except Exception as exc:
                 logger.warning("[DeepResearch] reddit query '%s' failed: %s", query, exc)
         return signals
 
     async def _search_github(self, limit: int) -> list[PainSignal]:
-        """Search GitHub issues via research_tools."""
-        from research_tools import search_github_issues
+        """Search GitHub issues via gh CLI (same pattern as unseeded_loop.py)."""
+        import json, subprocess
 
         signals: list[PainSignal] = []
         for query in self.keywords.get("github_queries", []):
             try:
-                raw = await asyncio.to_thread(search_github_issues, query, limit=limit)
-                for item in raw:
-                    url = getattr(item, "url", "") or getattr(item, "html_url", "") or ""
-                    signals.append(PainSignal(
-                        title=getattr(item, "title", "Untitled") or "Untitled",
-                        url=url,
-                        source="github",
-                        author=getattr(item, "author", None) or None,
-                        score=getattr(item, "score", 0) or 0,
-                        num_comments=getattr(item, "num_comments", 0) or 0,
-                        timestamp=getattr(item, "created_at", None),
-                    ))
+                result = subprocess.run(
+                    ["gh", "search", "issues", query, "--limit", str(limit),
+                     "--json", "title,body,url,createdAt,state,comments"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    for issue in json.loads(result.stdout):
+                        signals.append(PainSignal(
+                            title=issue.get("title", "Untitled") or "Untitled",
+                            url=issue.get("url", "") or "",
+                            source="github",
+                            score=0,
+                            num_comments=len(issue.get("comments", []) or []),
+                            timestamp=issue.get("createdAt"),
+                            body_excerpt=(issue.get("body") or "")[:500],
+                        ))
+            except FileNotFoundError:
+                logger.warning("[DeepResearch] gh CLI not installed — skipping GitHub search")
             except Exception as exc:
                 logger.warning("[DeepResearch] github query '%s' failed: %s", query, exc)
         return signals
 
     async def _search_web(self, limit: int) -> list[PainSignal]:
-        """Broad web search via ddgs."""
+        """Broad web search — tries Tavily API first, falls back to ddgs."""
         import ddgs
+
         signals: list[PainSignal] = []
         for query in self.keywords.get("web_queries", []):
+            # Try Tavily first
+            api_key = self._get_tavily_key()
+            if api_key:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        r = await client.post(
+                            "https://api.tavily.com/search",
+                            json={"query": query, "max_results": limit},
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            timeout=15.0,
+                        )
+                        r.raise_for_status()
+                        for item in r.json().get("results", []):
+                            signals.append(PainSignal(
+                                title=item.get("title", "Untitled") or "Untitled",
+                                url=item.get("href", "") or item.get("url", "") or "",
+                                source="web",
+                                timestamp=item.get("published"),
+                                body_excerpt=item.get("content", None),
+                            ))
+                    continue  # skip ddgs if Tavily succeeded
+                except Exception:
+                    pass  # fall through to ddgs
+            # ddgs fallback
             try:
                 with ddgs.DDGS() as ddg:
                     results = list(ddg.text(query, max_results=limit))
                 for item in results:
                     signals.append(PainSignal(
                         title=item.get("title", "Untitled") or "Untitled",
-                        url=item.get("url", "") or "",
+                        url=item.get("href", "") or item.get("url", "") or "",
                         source="web",
-                        timestamp=item.get("published", None),
-                        body_excerpt=item.get("description", None),
+                        timestamp=item.get("published"),
+                        body_excerpt=item.get("description"),
                     ))
             except Exception as exc:
                 logger.warning("[DeepResearch] web query '%s' failed: %s", query, exc)
@@ -261,13 +301,19 @@ class DeepResearchAgent(BaseAgent):
     # ── Deduplication ───────────────────────────────────────────────────────
 
     def _deduplicate(self, signals: list[PainSignal]) -> list[PainSignal]:
-        """Drop signals with duplicate URLs, keeping highest-scoring duplicate."""
-        seen: dict[str, PainSignal] = {}
+        """Drop signals with duplicate URLs within each source, keeping highest-scoring."""
+        # Dedupe per-source to avoid Reddit/Web having the same URL collapsing everything
+        by_source: dict[str, dict[str, PainSignal]] = {}
         for sig in signals:
-            key = sig.url.split("?")[0]  # strip query params
-            if key not in seen or sig.score > seen[key].score:
-                seen[key] = sig
-        return list(seen.values())
+            key = sig.url.split("?")[0]
+            if sig.source not in by_source:
+                by_source[sig.source] = {}
+            if key not in by_source[sig.source] or sig.score > by_source[sig.source][key].score:
+                by_source[sig.source][key] = sig
+        result = []
+        for source_dict in by_source.values():
+            result.extend(source_dict.values())
+        return result
 
     # ── Scoring ─────────────────────────────────────────────────────────────
 
@@ -303,40 +349,42 @@ class DeepResearchAgent(BaseAgent):
         """Write signals to DB, cluster into findings, return count created."""
         from database import RawSignal
 
-        findings_created = 0
+        finding_ids: list[int] = []
         for sig in signals:
             if not sig.url:
                 continue
 
             # Persist raw signal
-            content_hash = hashlib.sha256(f"{sig.url}".encode()).hexdigest()[:16]
-            existing = self.db.get_raw_signal_by_hash(content_hash)
-            if existing:
-                signal_id = existing.id
-            else:
-                signal = RawSignal(
-                    finding_id=None,
-                    source=sig.source,
-                    source_url=sig.url,
-                    content_hash=content_hash,
-                    content=sig.body_excerpt or sig.title,
-                    metadata_={
-                        "run_id": run_id,
-                        "vertical": self.vertical,
-                        "subreddit": sig.subreddit,
-                        "reddit_score": sig.score,
-                        "num_comments": sig.num_comments,
-                    },
-                )
+            content_hash = hashlib.sha256(sig.url.encode()).hexdigest()[:16]
+            signal = RawSignal(
+                finding_id=None,
+                source_name=sig.source,
+                source_type=sig.source,
+                source_url=sig.url,
+                title=sig.title,
+                body_excerpt=sig.body_excerpt or "",
+                content_hash=content_hash,
+                source_class="pain_signal",
+                metadata={
+                    "run_id": run_id,
+                    "vertical": self.vertical,
+                    "subreddit": sig.subreddit,
+                    "reddit_score": sig.score,
+                    "num_comments": sig.num_comments,
+                },
+            )
+            try:
                 signal_id = self.db.insert_raw_signal(signal)
-                self.db.update_raw_signal_signal_id(signal_id)
+            except Exception:
+                # Already exists — that's fine for raw_signals
+                signal_id = None
 
             # Create or update finding
             finding_id = self._upsert_finding(sig, run_id, content_hash)
             if finding_id:
-                findings_created += 1
+                finding_ids.append(finding_id)
 
-        return findings_created
+        return finding_ids
 
     def _upsert_finding(self, sig: PainSignal, run_id: str, content_hash: str) -> Optional[int]:
         """Create a finding from a pain signal. Returns finding_id."""
@@ -357,7 +405,7 @@ class DeepResearchAgent(BaseAgent):
             monetization_method="",
             content_hash=content_hash,
             status="discovery_filter",  # will be routed to validation
-            metadata_={
+            evidence={
                 "run_id": run_id,
                 "vertical": self.vertical,
                 "reddit_score": sig.score,
@@ -371,17 +419,9 @@ class DeepResearchAgent(BaseAgent):
 
     async def _dispatch_to_validation(self, finding_ids: list[int]) -> int:
         """Send findings to ValidationAgent via orchestrator queue."""
-        from messaging import Message
-
         dispatched = 0
         for finding_id in finding_ids:
             try:
-                msg = Message(
-                    msg_type=MessageType.FINDING_UNSEEDED,
-                    payload={"finding_id": finding_id},
-                    from_agent="deep_research",
-                    to_agent="validation",
-                )
                 await self.send_message(
                     to_agent="orchestrator",
                     msg_type=MessageType.FINDING_UNSEEDED,
