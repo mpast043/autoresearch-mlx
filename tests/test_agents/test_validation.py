@@ -75,6 +75,15 @@ def test_decision_thresholds_follow_validation_config(temp_db):
     assert agent.park_threshold == 0.5
 
 
+def test_top_level_validation_promotion_threshold_used(temp_db):
+    agent = ValidationAgent(
+        temp_db,
+        config={"validation": {"promotion_threshold": 0.66, "park_threshold": 0.42}},
+    )
+    assert agent.promotion_threshold == 0.66
+    assert agent.park_threshold == 0.42
+
+
 def test_validate_finding_fails_when_missing_finding_id(temp_db):
     agent = ValidationAgent(temp_db, MessageQueue())
 

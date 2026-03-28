@@ -124,6 +124,8 @@ class AutoResearcher:
             self.status_tracker,
             auto_build=auto_build,
             auto_ideate=auto_ideate,
+            shutdown_event=self.shutdown_event,
+            stop_on_hit_config=orchestration_config.get("stop_on_hit") or {},
         )
 
         await self._create_agents()
@@ -166,6 +168,20 @@ class AutoResearcher:
         signal.signal(signal.SIGINT, _handle_shutdown)
         signal.signal(signal.SIGTERM, _handle_shutdown)
 
+    async def _wait_for_pipeline_drained(self, max_wait_seconds: float) -> bool:
+        """Block until queue/agents idle or deadline. Returns True if drained, False on timeout."""
+        deadline = asyncio.get_running_loop().time() + max(5.0, max_wait_seconds)
+        quiet_cycles = 0
+        while asyncio.get_running_loop().time() < deadline and not self.shutdown_event.is_set():
+            if self.completion_state().get("drained"):
+                quiet_cycles += 1
+                if quiet_cycles >= 5:
+                    return True
+            else:
+                quiet_cycles = 0
+            await asyncio.sleep(0.1)
+        return bool(self.completion_state().get("drained"))
+
     async def run(self) -> None:
         await self.initialize()
         assert self.orchestrator is not None
@@ -174,8 +190,65 @@ class AutoResearcher:
         self.status_tracker.start_run(self.current_run_id)
         self.status_tracker.set_stage("discovery")
         self.status_tracker.update(status="running")
-        await self.agents["discovery"]._discover_once()
-        await self.shutdown_event.wait()
+
+        orch = self.config.get("orchestration", {})
+        stop_cfg = orch.get("stop_on_hit") or {}
+        stop_enabled = bool(stop_cfg.get("enabled", False))
+        continuous_waves = bool(orch.get("continuous_waves", False))
+        wave_loop_enabled = stop_enabled or continuous_waves
+        max_wait = float(orch.get("run_once_max_wait_seconds", 180))
+        retry_interval = float(stop_cfg.get("retry_interval_seconds", 60))
+
+        wave_index = 0
+        while not self.shutdown_event.is_set():
+            wave_index += 1
+            logger.info(
+                "run: discovery wave %s starting (continuous_waves=%s, retry_interval_seconds=%s)",
+                wave_index,
+                continuous_waves,
+                retry_interval,
+            )
+            await self.agents["discovery"]._discover_once()
+            drained_ok = await self._wait_for_pipeline_drained(max_wait)
+            if not drained_ok and not self.shutdown_event.is_set():
+                logger.warning(
+                    "run: pipeline not fully drained after wait: %s",
+                    self.completion_state(),
+                )
+            if self.shutdown_event.is_set():
+                break
+            if not wave_loop_enabled:
+                logger.info("run: single discovery wave complete; waiting for SIGINT/SIGTERM (stop_on_hit disabled)")
+                await self.shutdown_event.wait()
+                break
+            if retry_interval <= 0:
+                if continuous_waves and not stop_enabled:
+                    logger.info(
+                        "continuous_waves: wave %s done; no sleep before next wave (retry_interval_seconds=0)",
+                        wave_index,
+                    )
+                else:
+                    logger.info(
+                        "stop_on_hit loop: wave %s done; no sleep (retry_interval_seconds=0)",
+                        wave_index,
+                    )
+                await asyncio.sleep(0)
+            else:
+                if continuous_waves and not stop_enabled:
+                    logger.info(
+                        "continuous_waves: sleeping %ss before next discovery wave (Ctrl+C to exit)",
+                        retry_interval,
+                    )
+                else:
+                    logger.info(
+                        "stop_on_hit: no matching hit yet; sleeping %ss before next discovery wave (Ctrl+C to exit)",
+                        retry_interval,
+                    )
+                try:
+                    await asyncio.wait_for(self.shutdown_event.wait(), timeout=retry_interval)
+                except asyncio.TimeoutError:
+                    pass
+
         await self.shutdown()
 
     async def run_once(self) -> dict[str, Any]:
@@ -190,25 +263,11 @@ class AutoResearcher:
 
         backlog_ids = await self._dispatch_open_qualified_findings()
         discovery_ids = await self.agents["discovery"]._discover_once()
-        quiet_cycles = 0
         max_wait_seconds = float(self.config.get("orchestration", {}).get("run_once_max_wait_seconds", 60))
-        deadline = asyncio.get_running_loop().time() + max(5.0, max_wait_seconds)
-
-        while asyncio.get_running_loop().time() < deadline:
-            queue_empty = self.orchestrator._message_queue.empty()
-            open_qualified = self._count_actionable_qualified_findings()
-            if queue_empty and open_qualified == 0:
-                quiet_cycles += 1
-                if quiet_cycles >= 5:
-                    break
-            else:
-                quiet_cycles = 0
-            await asyncio.sleep(0.1)
-        else:
+        if not await self._wait_for_pipeline_drained(max_wait_seconds):
             logger.warning(
-                "run_once reached max wait with outstanding work queue_empty=%s open_qualified=%s",
-                self.orchestrator._message_queue.empty(),
-                self._count_actionable_qualified_findings(),
+                "run_once reached max wait with pipeline not drained: %s",
+                self.completion_state(),
             )
 
         await asyncio.sleep(0.2)
@@ -219,6 +278,75 @@ class AutoResearcher:
         return summary
 
     async def _dispatch_open_qualified_findings(self) -> list[int]:
+        assert self.db is not None
+        assert self.orchestrator is not None
+
+        backlog_ids: list[int] = []
+        for finding in self.db.get_findings(limit=500):
+            if finding.status != "qualified" or finding.source_class != "pain_signal":
+                continue
+            signal_rows = self.db.get_raw_signals_by_finding(finding.id or 0)
+            atom_rows = self.db.get_problem_atoms_by_finding(finding.id or 0)
+            if not signal_rows or not atom_rows:
+                continue
+            backlog_ids.append(int(finding.id))
+            await self.orchestrator.send_message(
+                to_agent="orchestrator",
+                msg_type=MessageType.FINDING,
+                payload={
+                    "finding_id": int(finding.id),
+                    "source": finding.source,
+                    "source_url": finding.source_url,
+                    "content_hash": finding.content_hash,
+                    "finding_kind": finding.finding_kind,
+                    "source_class": finding.source_class,
+                    "title": finding.product_built,
+                    "summary": finding.outcome_summary,
+                    "signal_id": int(signal_rows[0].id),
+                    "problem_atom_ids": [int(atom.id) for atom in atom_rows if atom.id is not None],
+                    "backlog_requeue": True,
+                },
+                priority=2,
+            )
+        if backlog_ids:
+            logger.info("requeued %s qualified findings for evidence", len(backlog_ids))
+            self.status_tracker.log(f"requeued_qualified findings={len(backlog_ids)}")
+        return backlog_ids
+
+    def _count_actionable_qualified_findings(self) -> int:
+        assert self.db is not None
+        count = 0
+        for finding in self.db.get_findings(limit=500):
+            if finding.status != "qualified" or finding.source_class != "pain_signal":
+                continue
+            signal_rows = self.db.get_raw_signals_by_finding(finding.id or 0)
+            atom_rows = self.db.get_problem_atoms_by_finding(finding.id or 0)
+            if signal_rows and atom_rows:
+                count += 1
+        return count
+
+    async def run_unseeded(
+        self,
+        vertical: str = "devtools",
+        max_findings: int = 20,
+    ) -> dict[str, Any]:
+        """
+        Cold-start discovery loop: no DB seeding required.
+
+        Searches Reddit, GitHub, and the web for weak signals in the given
+        vertical, creates finding records, and routes them directly to
+        ValidationAgent (skipping the EvidenceAgent stage).
+        """
+        from src.unseeded_loop import run_unseeded
+
+        assert self.db is not None
+        summary = await run_unseeded(
+            vertical=vertical,
+            config=self.config,
+            db=self.db,
+            max_findings=max_findings,
+        )
+        return summary
         assert self.db is not None
         assert self.orchestrator is not None
 
@@ -367,9 +495,11 @@ class AutoResearcher:
             "recent_logs": self.status_tracker.status.get("logs", [])[-12:],
         }
 
-    def summary_counts(self) -> dict[str, int]:
+    def summary_counts(self) -> dict[str, Any]:
         if not self.db:
             return {}
+        # Most entity totals are DB-wide; validations / build artifacts below use current_run_id when set.
+        run_id = self.current_run_id or ""
         return {
             "findings": len(self.db.get_findings(limit=1000)),
             "raw_signals": len(self.db.get_raw_signals(limit=1000)),
@@ -380,6 +510,18 @@ class AutoResearcher:
             "validations": len(self.validation_report(limit=1000)),
             "build_briefs": len(self.db.list_build_briefs(run_id=self.current_run_id, limit=1000)) if hasattr(self.db, "list_build_briefs") else 0,
             "build_prep_outputs": len(self.db.list_build_prep_outputs(run_id=self.current_run_id, limit=1000)) if hasattr(self.db, "list_build_prep_outputs") else 0,
+            "current_run_id": run_id,
+            "count_semantics": {
+                "db_wide_totals": [
+                    "findings",
+                    "raw_signals",
+                    "problem_atoms",
+                    "clusters",
+                    "opportunities",
+                    "experiments",
+                ],
+                "scoped_to_current_run": ["validations", "build_briefs", "build_prep_outputs"],
+            },
         }
 
     def review_report(self, limit: int = 25) -> list[dict[str, Any]]:

@@ -310,6 +310,21 @@ def _match_rule(text: str, rules: list[tuple[str, str]], fallback: str) -> str:
     return fallback
 
 
+def _segment_inference_context(finding_data: dict[str, Any], signal_text: str) -> str:
+    """Context string for SEGMENT_RULES.
+
+    Reddit discovery encodes the subreddit in ``source`` (e.g. ``reddit-problem/sysadmin``). Including
+    that label can skew ``segment`` so the same recurring pain in different communities gets
+    different ``cluster_key`` values. For Reddit we match segments on post text only; Shopify /
+    WordPress / GitHub findings still pass source/URL hints for vertical rules.
+    """
+    source = str(finding_data.get("source", "") or "")
+    url = str(finding_data.get("source_url", "") or "")
+    if "reddit.com" in url.lower() or source.lower().startswith("reddit-problem"):
+        return signal_text
+    return f"{source} {url} {signal_text}"
+
+
 def _extract_workarounds(text: str) -> list[str]:
     lowered = _normalized(text)
     hits: list[str] = []
@@ -507,7 +522,7 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
     cleaned_body_text = _strip_title_prefix(title_text, body_text)
     text = compact_text(f"{title_text}. {body_text}", 1800)
     segment = _match_rule(
-        f"{finding_data.get('source', '')} {finding_data.get('source_url', '')} {text}",
+        _segment_inference_context(finding_data, text),
         SEGMENT_RULES,
         "operators with recurring workflow pain",
     )
@@ -1337,6 +1352,103 @@ def stage_decision(
         "reason": subreason,
         "decision_reason": subreason,
         "park_subreason": subreason,
+    }
+
+
+def diagnose_stage_decision(
+    opportunity_scores: dict[str, Any],
+    market_gap: dict[str, Any],
+    counterevidence: list[dict[str, Any]],
+    *,
+    promotion_threshold: float = 0.62,
+    park_threshold: float = 0.48,
+    review_feedback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Human-readable breakdown of ``stage_decision`` inputs vs floors (for gate debugging)."""
+    supported_count = sum(1 for check in counterevidence if check.get("status") == "supported")
+    park_bias = float((review_feedback or {}).get("park_bias", 0.0) or 0.0)
+    kill_bias = float((review_feedback or {}).get("kill_bias", 0.0) or 0.0)
+    composite_raw = float(opportunity_scores.get("composite_score", 0.0) or 0.0)
+    composite = composite_raw + park_bias - kill_bias
+    plausibility = float(opportunity_scores.get("problem_plausibility", 0.0) or 0.0)
+    sufficiency = float(opportunity_scores.get("evidence_sufficiency", 0.0) or 0.0)
+    value_support = float(opportunity_scores.get("value_support", 0.0) or 0.0)
+    evidence_quality = float(opportunity_scores.get("evidence_quality", 0.0) or 0.0)
+
+    decision = stage_decision(
+        opportunity_scores,
+        market_gap,
+        counterevidence,
+        promotion_threshold=promotion_threshold,
+        park_threshold=park_threshold,
+        review_feedback=review_feedback,
+    )
+
+    hard_kill_reasons: list[str] = []
+    if market_gap.get("market_gap") == "already_solved_well":
+        hard_kill_reasons.append("market_gap=already_solved_well")
+    if supported_count >= 4:
+        hard_kill_reasons.append(f"counterevidence_supported_count>={supported_count} (>=4)")
+    if market_gap.get("market_gap") == "likely_false_signal" and plausibility < 0.45:
+        hard_kill_reasons.append("likely_false_signal_and_plausibility<0.45")
+    if composite < park_threshold and plausibility < 0.38 and sufficiency < 0.35:
+        hard_kill_reasons.append(
+            f"weak_triple: composite({composite:.3f})<{park_threshold} & plausibility<0.38 & sufficiency<0.35"
+        )
+    if kill_bias >= 0.12 and plausibility < 0.45 and sufficiency < 0.32:
+        hard_kill_reasons.append("operator_kill_bias_heavy")
+
+    promote_checks: list[dict[str, Any]] = [
+        {
+            "id": "composite_vs_promotion_threshold",
+            "pass": composite >= promotion_threshold,
+            "actual": round(composite, 4),
+            "floor": promotion_threshold,
+            "note": "composite uses scorecard.composite_score ± review biases",
+        },
+        {
+            "id": "problem_plausibility",
+            "pass": plausibility >= 0.6,
+            "actual": round(plausibility, 4),
+            "floor": 0.6,
+        },
+        {
+            "id": "evidence_quality",
+            "pass": evidence_quality >= 0.55,
+            "actual": round(evidence_quality, 4),
+            "floor": 0.55,
+        },
+        {
+            "id": "counterevidence_supported_count",
+            "pass": supported_count <= 1,
+            "actual": supported_count,
+            "ceiling": 1,
+        },
+        {
+            "id": "value_support",
+            "pass": value_support >= 0.58,
+            "actual": round(value_support, 4),
+            "floor": 0.58,
+        },
+    ]
+
+    all_promotion_numeric_gates_pass = all(check["pass"] for check in promote_checks)
+
+    return {
+        "decision": decision,
+        "inputs": {
+            "composite_raw": round(composite_raw, 4),
+            "park_bias": round(park_bias, 4),
+            "kill_bias": round(kill_bias, 4),
+            "composite_effective": round(composite, 4),
+            "supported_counterevidence_hits": supported_count,
+            "promotion_threshold": promotion_threshold,
+            "park_threshold": park_threshold,
+        },
+        "hard_kill_reasons": hard_kill_reasons,
+        "promote_checks": promote_checks,
+        "all_promotion_numeric_gates_pass": all_promotion_numeric_gates_pass,
+        "park_subreason_if_parked": decision.get("park_subreason") if decision.get("recommendation") == "park" else "",
     }
 
 

@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 class MessageType(Enum):
     FINDING = "FINDING"
+    FINDING_UNSEEDED = "FINDING_UNSEEDED"  # skip evidence stage, route to validation directly
     EVIDENCE = "EVIDENCE"
     VALIDATION = "VALIDATION"
     BUILD_BRIEF = "BUILD_BRIEF"

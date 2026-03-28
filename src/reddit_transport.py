@@ -47,7 +47,7 @@ class RedditTransport:
         self._normalize_query = normalize_query
         self._request_get = request_get
         self._logger = logger
-        self.search_cache: dict[tuple[str, str, int, str], list[SearchDocument]] = {}
+        self.search_cache: dict[tuple[str, str, int, str, str], list[SearchDocument]] = {}
         self.thread_cache: dict[str, dict[str, Any]] = {}
         self.metrics = {
             "reddit_mode": self.reddit_mode,
@@ -62,6 +62,14 @@ class RedditTransport:
             "reddit_validation_seed_uncovered_after": 0,
         }
         self.validation_seeded_pairs: set[tuple[str, str]] = set()
+
+    def _reddit_search_time_filter(self) -> str:
+        """Reddit JSON search ``t`` param: hour|day|week|month|year|all."""
+        raw = str(
+            (self.config.get("discovery") or {}).get("reddit", {}).get("search_time_filter", "year") or "year"
+        ).lower()
+        allowed = {"hour", "day", "week", "month", "year", "all"}
+        return raw if raw in allowed else "year"
 
     async def close(self) -> None:
         await self.reddit_bridge.close()
@@ -163,7 +171,8 @@ class RedditTransport:
         limit: int = 2,
         sort: str = "relevance",
     ) -> list[SearchDocument]:
-        cache_key = (subreddit, query, limit, sort)
+        time_filter = self._reddit_search_time_filter()
+        cache_key = (subreddit, query, limit, sort, time_filter)
         if cache_key in self.search_cache:
             return list(self.search_cache[cache_key])
 
@@ -176,8 +185,11 @@ class RedditTransport:
                     query,
                     self.reddit_mode,
                 )
-                self.search_cache[cache_key] = []
-                return []
+                if self.reddit_mode == "bridge_only":
+                    self.search_cache[cache_key] = []
+                    return []
+                # bridge_with_fallback should continue to legacy/public paths when the bridge
+                # is not configured in the current environment (e.g. Codespaces).
             try:
                 bridge_posts, _next_cursor = await self.reddit_bridge.search_posts(
                     subreddit=subreddit,
@@ -271,7 +283,7 @@ class RedditTransport:
                     "q": query,
                     "restrict_sr": "on",
                     "sort": sort,
-                    "t": "year",
+                    "t": time_filter,
                     "limit": limit,
                 },
                 timeout=15,
@@ -315,8 +327,11 @@ class RedditTransport:
             if not self.reddit_bridge.enabled:
                 self.metrics["reddit_bridge_misses"] += 1
                 self._logger.info("reddit_thread_context bridge unavailable url=%s mode=%s", url, self.reddit_mode)
-                self.thread_cache[url] = {}
-                return {}
+                if self.reddit_mode == "bridge_only":
+                    self.thread_cache[url] = {}
+                    return {}
+                # bridge_with_fallback should continue to legacy/public paths when the bridge
+                # is not configured in the current environment (e.g. Codespaces).
             try:
                 payload = await self.reddit_bridge.get_post_thread(url=url, comment_limit=8, depth=4)
                 comments = [item.get("body", "") for item in payload.get("comments", []) if item.get("body")]

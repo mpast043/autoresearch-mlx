@@ -10,10 +10,47 @@ from database import ProblemAtom, RawSignal
 from opportunity_engine import (
     OpportunityEngine,
     build_cluster_summary,
+    build_problem_atom,
     plan_validation_experiment,
     qualify_problem_signal,
     score_opportunity,
 )
+
+
+def test_reddit_cluster_key_matches_across_subreddits_for_same_text():
+    """Segment / cluster_key should not split by r/subreddit label in source."""
+    body = (
+        "We merge payouts manually in Excel every week. "
+        "Spreadsheet reconciliation is breaking after the pricing change."
+    )
+    payload = {
+        "source_name": "reddit-problem",
+        "source_type": "forum",
+        "source_url": "https://reddit.com/r/any/comments/abc/thread",
+        "title": "Manual payout reconciliation",
+        "body_excerpt": body,
+        "quote_text": body[:120],
+        "role_hint": "operator",
+        "metadata_json": {},
+    }
+    finding_a = {
+        "source": "reddit-problem/smallbusiness",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/a/x",
+        "product_built": "Manual payout reconciliation",
+        "outcome_summary": body,
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+        "tool_used": "",
+    }
+    finding_b = {
+        **finding_a,
+        "source": "reddit-problem/sysadmin",
+        "source_url": "https://reddit.com/r/sysadmin/comments/b/y",
+    }
+    atom_a = build_problem_atom(payload, finding_a)
+    atom_b = build_problem_atom(payload, finding_b)
+    assert atom_a["cluster_key"] == atom_b["cluster_key"]
+    assert atom_a["segment"] == atom_b["segment"]
 
 
 def test_extract_problem_atom_captures_workaround_and_why_now():

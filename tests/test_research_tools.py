@@ -1202,6 +1202,54 @@ def test_discover_reddit_problem_threads_uses_bounded_concurrency():
     assert elapsed < 0.28
 
 
+def test_discover_reddit_problem_threads_queries_multiple_sort_modes():
+    toolkit = ResearchToolkit(
+        {
+            "discovery": {
+                "reddit": {
+                    "search_sorts": ["relevance", "new", "top", "comments"],
+                    "per_sort_limit": 1,
+                    "max_docs_per_pair": 4,
+                }
+            }
+        }
+    )
+    seen_sorts: list[str] = []
+
+    async def fake_reddit_search(subreddit, query, limit=2, sort="relevance"):
+        seen_sorts.append(sort)
+        return [
+            SearchDocument(
+                title=f"{subreddit} {query} {sort}",
+                url=f"https://reddit.com/{subreddit}/{query.replace(' ', '-')}/{sort}",
+                snippet="manual reconciliation keeps breaking every week",
+                source=f"reddit/{subreddit}",
+            )
+        ]
+
+    async def fake_thread_context(url):
+        return {
+            "title": "workflow breaks",
+            "text": "manual reconciliation keeps breaking every week and teams fall back to spreadsheets",
+            "description": "manual reconciliation keeps breaking every week",
+            "comments": [],
+        }
+
+    toolkit.reddit_search = fake_reddit_search
+    toolkit.reddit_thread_context = fake_thread_context
+
+    findings = asyncio.run(
+        toolkit._discover_reddit_problem_threads(
+            subreddits=["ops"],
+            queries=["manual reconciliation"],
+        )
+    )
+
+    assert len(findings) == 4
+    assert set(seen_sorts) == {"relevance", "new", "top", "comments"}
+    assert {item["evidence"]["discovery_sort"] for item in findings} == {"relevance", "new", "top", "comments"}
+
+
 class DummyRedditResponse:
     def __init__(self, children):
         self._children = children

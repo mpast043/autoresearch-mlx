@@ -41,6 +41,37 @@ class TestDatabase(unittest.TestCase):
             os.remove(self.db_path)
         os.rmdir(self.temp_dir)
 
+    def test_foreign_keys_pragma_enabled(self) -> None:
+        conn = self.db._get_connection()
+        self.assertEqual(conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+
+    def test_evidence_ledger_upsert_idempotent(self) -> None:
+        finding_id = self.db.insert_finding(
+            Finding(source="t", source_url="https://example.com/l", content_hash="ledger-upsert")
+        )
+        eid1 = self.db.insert_ledger_entry(
+            EvidenceLedgerEntry(
+                entity_type="finding",
+                entity_id=finding_id,
+                entry_kind="note",
+                summary="first",
+                run_id="test-run",
+            )
+        )
+        eid2 = self.db.insert_ledger_entry(
+            EvidenceLedgerEntry(
+                entity_type="finding",
+                entity_id=finding_id,
+                entry_kind="note",
+                summary="second",
+                run_id="test-run",
+            )
+        )
+        self.assertEqual(eid1, eid2)
+        rows = self.db.list_ledger_entries(entity_type="finding", entity_id=finding_id)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0].entry_json or {}).get("summary"), "second")
+
     def test_init_schema_creates_expected_tables(self) -> None:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -261,11 +292,51 @@ class TestDatabase(unittest.TestCase):
                 run_id="test-run",
             )
         )
+        cluster_id = self.db.upsert_cluster(
+            OpportunityCluster(
+                cluster_key="workbench-prototype-cluster",
+                label="Workbench prototype cluster",
+                segment="ops",
+                user_role="ops",
+                job_to_be_done="keep spreadsheets from breaking",
+                trigger_summary="daily ops",
+                signal_count=1,
+                atom_count=1,
+                evidence_quality=0.7,
+                summary={},
+            )
+        )
+        opportunity_id = self.db.upsert_opportunity(
+            Opportunity(
+                cluster_id=cluster_id,
+                title="Workbench prototype opportunity",
+                market_gap="underserved",
+                recommendation="park",
+                status="parked",
+                pain_severity=0.6,
+                frequency_score=0.6,
+                cost_of_inaction=0.5,
+                workaround_density=0.7,
+                urgency_score=0.5,
+                segment_concentration=0.5,
+                reachability=0.5,
+                timing_shift=0.5,
+                buildability=0.5,
+                expansion_potential=0.5,
+                education_burden=0.3,
+                dependency_risk=0.3,
+                adoption_friction=0.3,
+                evidence_quality=0.7,
+                composite_score=0.65,
+                confidence=0.65,
+                notes={},
+            )
+        )
         self.db.upsert_build_brief(
             BuildBrief(
-                opportunity_id=101,
+                opportunity_id=opportunity_id,
                 validation_id=prototype_validation_id,
-                cluster_id=11,
+                cluster_id=cluster_id,
                 run_id="test-run",
                 status="prototype_candidate",
                 recommended_output_type="workflow_reliability_assistant",

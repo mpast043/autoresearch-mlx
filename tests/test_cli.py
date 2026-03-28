@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from cli import build_verbose_report, render_watch_snapshot
+from cli import build_discovery_sort_diagnostics, build_verbose_report, render_watch_snapshot
 
 
 class DummyStatusTracker:
@@ -46,6 +46,21 @@ class DummyDB:
                 "build_brief_present": True,
                 "next_recommended_action": "prototype_now",
             }
+        ]
+
+    def get_findings(self, limit=100):
+        class _F:
+            def __init__(self, source, status, evidence):
+                self.source = source
+                self.status = status
+                self.evidence = evidence
+
+        return [
+            _F("reddit-problem/smallbusiness", "qualified", {"discovery_sort": "new", "run_id": "run-1"}),
+            _F("reddit-problem/smallbusiness", "parked", {"discovery_sort": "top", "run_id": "run-1"}),
+            _F("reddit-problem/webdev", "qualified", {"discovery_sort": "new", "run_id": "run-1"}),
+            _F("reddit-problem/webdev", "killed", {"discovery_sort": "comments", "run_id": "run-2"}),
+            _F("github-problem", "qualified", {"run_id": "run-1"}),
         ]
 
 
@@ -138,6 +153,17 @@ def test_render_watch_snapshot_shows_runtime_and_live_counts():
     assert "raw_signals=2" in rendered
     assert "db_path" in rendered
     assert "decision=park" in rendered
+
+
+def test_build_discovery_sort_diagnostics_groups_by_sort_and_status():
+    db = DummyDB()
+    report = build_discovery_sort_diagnostics(db, run_id="run-1")
+
+    assert report["rows_examined"] == 3
+    assert report["sort_counts"]["new"] == 2
+    assert report["sort_counts"]["top"] == 1
+    assert report["sort_status_counts"]["new"]["qualified"] == 2
+    assert report["top_subreddits"][0]["subreddit"] == "smallbusiness"
 
 
 def test_cli_eval_runs_from_another_cwd_via_absolute_path():

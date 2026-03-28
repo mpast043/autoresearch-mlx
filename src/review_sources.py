@@ -419,7 +419,7 @@ class ShopifyAppReview:
 
 
 class ShopifyAppReviewAdapter:
-    """Fetches explicit review records from public Shopify App Store pages."""
+    """HTTP scrape of public Shopify App Store listing + reviews HTML — not the Shopify Admin API."""
 
     SITEMAP_URL = "https://apps.shopify.com/sitemap.xml"
     LISTING_BASE_URL = "https://apps.shopify.com/"

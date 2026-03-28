@@ -10,7 +10,11 @@ from typing import Any, Dict, Optional
 
 from agents.base import AgentStatus, BaseAgent
 from database import Database, Finding, ProblemAtom, RawSignal
-from discovery_queries import reddit_problem_keywords, reddit_problem_subreddits, reddit_success_keywords
+from discovery_queries import (
+    reddit_discovery_subreddits,
+    reddit_problem_keywords,
+    reddit_success_keywords,
+)
 from messaging import MessageQueue, MessageType
 from opportunity_engine import (
     build_problem_atom,
@@ -173,7 +177,7 @@ class DiscoveryAgent(BaseAgent):
             )
             return await self.toolkit._discover_youtube_successes(keywords=queries, observer=observer)
         if normalized == "reddit":
-            reddit_subreddits = reddit_problem_subreddits(self.config)
+            reddit_subreddits = reddit_discovery_subreddits(self.config)
             success_candidates = reddit_success_keywords(self.config)
             success_queries = (
                 self._plan_queries("reddit-success", success_candidates, default_limit=3)
@@ -293,6 +297,10 @@ class DiscoveryAgent(BaseAgent):
                 observer=observer,
             )
             return success_findings + problem_findings + web_problem_findings
+        if normalized == "wordpress_reviews":
+            return await self.toolkit._discover_wordpress_review_threads(observer=observer)
+        if normalized == "shopify_reviews":
+            return await self.toolkit._discover_shopify_review_threads(observer=observer)
         return []
 
     async def _prime_reddit_relay(self) -> None:
@@ -305,7 +313,7 @@ class DiscoveryAgent(BaseAgent):
         if not relay_config.get("auto_seed_on_discovery", True):
             return
 
-        subreddits = reddit_problem_subreddits(self.config)
+        subreddits = reddit_discovery_subreddits(self.config)
         queries = self._plan_queries(
             "reddit-relay-seed",
             reddit_problem_keywords(self.config),

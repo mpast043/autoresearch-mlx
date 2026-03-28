@@ -13,13 +13,13 @@ try:
     from reddit_relay import RedditRelayStore
     from research_tools import ResearchToolkit
     from search_models import SearchDocument
-    from discovery_queries import reddit_problem_keywords, reddit_problem_subreddits
+    from discovery_queries import reddit_discovery_subreddits, reddit_problem_keywords
     from runtime.paths import resolve_project_path
 except Exception:  # pragma: no cover - supports package and direct module usage
     from src.reddit_relay import RedditRelayStore
     from src.research_tools import ResearchToolkit
     from src.search_models import SearchDocument
-    from src.discovery_queries import reddit_problem_keywords, reddit_problem_subreddits
+    from src.discovery_queries import reddit_discovery_subreddits, reddit_problem_keywords
     from src.runtime.paths import resolve_project_path
 
 
@@ -138,7 +138,7 @@ class RedditSeeder:
         subreddits: list[str] | None = None,
         queries: list[str] | None = None,
     ) -> list[tuple[str, str]]:
-        subreddits = subreddits or reddit_problem_subreddits(self.config)
+        subreddits = subreddits or reddit_discovery_subreddits(self.config)
         keywords = queries or reddit_problem_keywords(self.config)
         pairs: list[tuple[str, str]] = []
         for subreddit in subreddits:

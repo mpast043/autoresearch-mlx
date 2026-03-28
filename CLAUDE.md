@@ -6,12 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AutoResearch MLX is an evidence-first weak-signal problem discovery and validation pipeline. It harvests raw pain signals from multiple sources (Reddit, GitHub, WordPress Plugin Directory, Shopify App Store, YouTube, web search), screens and classifies them, extracts structured problem atoms, clusters recurring patterns, scores market opportunities, plans falsifiable experiments, and gates validated opportunities toward build briefs.
 
-The default pipeline path is: `discovery -> evidence -> validation -> build_prep`. Auto-ideate and auto-build are disabled by default.
+The default pipeline path is: `discovery -> evidence -> validation -> build_prep`. **Auto-ideate** can be enabled in `config.yaml` (`orchestration.auto_ideate_after_validation`); it runs on **promote** (`passed`) or on **prototype_candidate** when a **build brief** exists (see `docs/PRODUCT_LOOP.md`). **Auto-build** remains off by default (`builder.auto_build`).
 
 ## Commands
 
 ```bash
 # Run the pipeline
+python cli.py run                    # discovery waves until SIGINT; optional stop_on_hit (see config)
 python cli.py run-once              # single discovery run
 python cli.py run-once --verbose    # verbose output with artifact counts and decision logs
 python cli.py watch                  # continuous watch mode (renders pipeline_status.json)
@@ -24,8 +25,13 @@ python cli.py review-queue           # shows borderline parked/killed cases
 python cli.py review-mark --finding-id 10 --label needs_more_evidence --note "plausible but thin"
 
 # Reddit relay
+python cli.py check-bridge         # hosted relay health (Render URL + token from .env)
+python cli.py backup-db            # copy data/autoresearch.db → data/backups/ (see docs/RECOVERY.md)
+python cli.py suggest-discovery [--min-atoms N] [--limit N]   # JSON hints for discovery.reddit keywords/subs from DB
 python cli.py reddit-relay --host 127.0.0.1 --port 8787
 python cli.py reddit-seed
+
+# End-to-end loop (discovery → validation) — see docs/LOOP.md
 
 # Data inspection
 python cli.py findings
@@ -38,6 +44,8 @@ python cli.py ledger
 python cli.py build-briefs
 python cli.py build-prep
 python cli.py report     # includes run_diff, decision_reason_mix, corroboration_depth, wedge provenance
+python cli.py gate-diagnostics   # why promote/park/kill + selection_status (see docs/gates.md)
+python cli.py pipeline-health      # why run_once may show 0 new validations (backlog + dedupe)
 
 # Dashboard (Next.js, port 3001)
 cd dashboard/
@@ -93,6 +101,8 @@ The authoritative schema is in `src/database.py`. Key runtime tables:
 
 State model documentation: `docs/state-model.md`
 
+Full architecture / DB alignment review: `docs/CODE_REVIEW_FULL.md`
+
 ## Configuration
 
 All settings are in `config.yaml`. Adding a source to `discovery.sources` activates it:
@@ -105,13 +115,19 @@ discovery:
     - "shopify_reviews"
 ```
 
-Stage gates in `config.yaml`:
-- `signal_min_confidence: 0.35` — minimum confidence to persist a signal
-- `cluster_min_atoms: 2` — minimum atoms to form a cluster
-- `promote_min_score: 0.66` — gate to `prototype_candidate`
-- `park_min_score: 0.42` — gate to `parked`
+Supported `discovery.sources` values are implemented in `DiscoveryAgent._check_source` (`reddit`, `github`, `youtube`, `web`, `wordpress_reviews`, `shopify_reviews`). **`web`** runs DuckDuckGo-style web discovery (success + problem queries) and marketplace problem threads; tune optional `discovery.web.keywords`. **`wordpress_reviews`** / **`shopify_reviews`** are explicit review-only lanes (1–2★ pain). Reddit: **`discovery.reddit.search_time_filter`** (`all`, `year`, …) for historic search; **`discovery.reddit.use_r_all`** to search **r/all** instead of only `problem_subreddits`. **`max_subreddits_per_wave`** / **`max_keywords_per_wave`**: cap sub×query pairs per wave; use **`0`** for **no cap** (every sub × every keyword in config). Tune **`pair_concurrency`** if rate-limited.
 
-Validation weights: `market: 0.40, technical: 0.35, distribution: 0.25`
+Gates span discovery filtering, `stage_decision` (composite vs promotion/park thresholds), and build-prep `determine_selection_state`. **Authoritative reference:** `docs/gates.md`.
+
+`config.yaml` examples:
+- `discovery.candidate_filter` — discovery-time heuristic (not validation composite)
+- `validation.promotion_threshold` / `validation.park_threshold` — passed to `stage_decision` (see `src/validation_thresholds.py` for resolution order vs `validation.decisions.*` and `orchestration.*`)
+
+Default validation weights (if unset): `market: 0.40, technical: 0.35, distribution: 0.25`
+
+**Continuous waves (`orchestration.continuous_waves`):** set `true` so `python cli.py run` repeats discovery after each drained pass. `stop_on_hit.retry_interval_seconds` sets the pause between waves — use **`0`** for immediate next wave (only the pipeline drain wait applies). Ctrl+C stops anytime. Does not require `stop_on_hit.enabled`.
+
+**Stop after a “hit” (`orchestration.stop_on_hit`):** set `enabled: true` to exit `python cli.py run` when validation reports a matching `selection_status` (default includes `prototype_candidate`) or `decision` (default includes `promote`). Set `exit_on_hit: false` to log matches but keep running (useful with `continuous_waves`). Between waves, `retry_interval_seconds` sleeps before the next discovery pass.
 
 API keys use `${ENV_VAR}` syntax and are loaded from `.env` at startup via `load_local_env()` in `run.py`.
 

@@ -83,3 +83,78 @@ def test_orchestrator_routes_prototype_candidate_to_solution_framing(temp_db):
     assert queued is not None
     assert queued.msg_type == MessageType.BUILD_BRIEF
     assert queued.payload["build_brief_id"] == 7
+
+
+def test_stop_on_hit_matches_defaults():
+    cfg = {"enabled": True}
+    assert Orchestrator.stop_on_hit_matches(
+        cfg,
+        {"selection_status": "prototype_candidate", "decision": "park"},
+    )
+    assert Orchestrator.stop_on_hit_matches(
+        cfg,
+        {"selection_status": "research_more", "decision": "promote"},
+    )
+    assert not Orchestrator.stop_on_hit_matches(
+        cfg,
+        {"selection_status": "research_more", "decision": "park"},
+    )
+    assert not Orchestrator.stop_on_hit_matches(
+        {"enabled": False},
+        {"selection_status": "prototype_candidate", "decision": "promote"},
+    )
+
+
+def test_stop_on_hit_sets_shutdown_event(temp_db):
+    ev = asyncio.Event()
+    orch = Orchestrator(
+        temp_db,
+        shutdown_event=ev,
+        stop_on_hit_config={
+            "enabled": True,
+            "selection_status_any": ["prototype_candidate"],
+            "decision_any": [],
+        },
+    )
+    msg = create_message(
+        from_agent="validation",
+        to_agent="orchestrator",
+        msg_type=MessageType.VALIDATION,
+        payload={
+            "finding_id": 1,
+            "decision": "park",
+            "selection_status": "prototype_candidate",
+            "build_brief_id": 0,
+            "opportunity_id": 9,
+        },
+    )
+    asyncio.run(orch._handle_orchestrator_message(msg))
+    assert ev.is_set()
+
+
+def test_stop_on_hit_exit_on_hit_false_does_not_shutdown(temp_db):
+    ev = asyncio.Event()
+    orch = Orchestrator(
+        temp_db,
+        shutdown_event=ev,
+        stop_on_hit_config={
+            "enabled": True,
+            "exit_on_hit": False,
+            "selection_status_any": ["prototype_candidate"],
+            "decision_any": [],
+        },
+    )
+    msg = create_message(
+        from_agent="validation",
+        to_agent="orchestrator",
+        msg_type=MessageType.VALIDATION,
+        payload={
+            "finding_id": 1,
+            "decision": "park",
+            "selection_status": "prototype_candidate",
+            "build_brief_id": 0,
+            "opportunity_id": 9,
+        },
+    )
+    asyncio.run(orch._handle_orchestrator_message(msg))
+    assert not ev.is_set()

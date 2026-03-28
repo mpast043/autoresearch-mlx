@@ -116,21 +116,33 @@ def determine_selection_state(
         and composite_score >= 0.5
     )
 
+    # Timeout can happen in constrained environments (e.g. bridge/auth failures or strict budgets),
+    # but we only treat timeout as exploratory-eligible under stronger evidence conditions.
+    exploratory_recurrence_ok = recurrence_state in {"thin", "supported", "strong"}
+    timeout_checkpoint_candidate = (
+        recurrence_state == "timeout"
+        and core_family_diversity >= 2
+        and corroboration_score >= 0.45
+        and value_support >= 0.6
+        and evidence_quality >= 0.5
+        and composite_score >= 0.4
+    )
+
     exploratory_candidate = (
         generalizability_class == "reusable_workflow_pain"
         and (
             (
                 core_family_diversity >= 2
-                and recurrence_state in {"thin", "supported", "strong"}
-                and corroboration_score >= 0.4
+                and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
+                and corroboration_score >= 0.25
                 and value_support >= 0.55
                 and evidence_quality >= 0.45
                 and composite_score >= 0.34
             )
             or (
                 core_family_diversity == 1
-                and recurrence_state in {"supported", "strong"}
-                and corroboration_score >= 0.45
+                and exploratory_recurrence_ok
+                and corroboration_score >= 0.3
                 and value_support >= 0.5
                 and evidence_quality >= 0.49
                 and composite_score >= 0.39
@@ -177,6 +189,144 @@ def determine_selection_state(
             "blocked_by": blocked_by,
         },
     )
+
+
+def explain_selection_gate_detail(
+    *,
+    decision: str,
+    scorecard: dict[str, Any],
+    corroboration: dict[str, Any],
+    market_enrichment: dict[str, Any],
+) -> dict[str, Any]:
+    """Structured mirror of ``determine_selection_state`` thresholds for operator debugging."""
+    status, reason, gate = determine_selection_state(
+        decision=decision,
+        scorecard=scorecard,
+        corroboration=corroboration,
+        market_enrichment=market_enrichment,
+    )
+
+    corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
+    core_family_diversity = int(corroboration.get("core_source_family_diversity", 0) or 0)
+    generalizability_class = str(corroboration.get("generalizability_class", "") or "")
+    recurrence_state = str(corroboration.get("recurrence_state", "") or "")
+    evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
+    value_support = float(scorecard.get("value_support", 0.0) or 0.0)
+    composite_score = float(scorecard.get("composite_score", 0.0) or 0.0)
+    wedge_active = bool(market_enrichment.get("wedge_active"))
+
+    exploratory_recurrence_ok = recurrence_state in {"thin", "supported", "strong"}
+    timeout_checkpoint_candidate = (
+        recurrence_state == "timeout"
+        and core_family_diversity >= 2
+        and corroboration_score >= 0.45
+        and value_support >= 0.6
+        and evidence_quality >= 0.5
+        and composite_score >= 0.4
+    )
+
+    strict_checks: list[dict[str, Any]] = [
+        {
+            "id": "generalizability_class",
+            "pass": generalizability_class == "reusable_workflow_pain",
+            "actual": generalizability_class,
+            "need": "reusable_workflow_pain",
+        },
+        {
+            "id": "core_source_family_diversity",
+            "pass": core_family_diversity >= 2,
+            "actual": core_family_diversity,
+            "need": ">= 2",
+        },
+        {
+            "id": "corroboration_score",
+            "pass": corroboration_score >= 0.6,
+            "actual": round(corroboration_score, 4),
+            "need": ">= 0.6",
+        },
+        {
+            "id": "value_support",
+            "pass": value_support >= 0.55,
+            "actual": round(value_support, 4),
+            "need": ">= 0.55",
+        },
+        {
+            "id": "evidence_quality",
+            "pass": evidence_quality >= 0.6,
+            "actual": round(evidence_quality, 4),
+            "need": ">= 0.6",
+        },
+        {
+            "id": "composite_score",
+            "pass": composite_score >= 0.5,
+            "actual": round(composite_score, 4),
+            "need": ">= 0.5",
+        },
+    ]
+
+    multifamily_explore = (
+        core_family_diversity >= 2
+        and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
+        and corroboration_score >= 0.25
+        and value_support >= 0.55
+        and evidence_quality >= 0.45
+        and composite_score >= 0.34
+    )
+    single_family_explore = (
+        core_family_diversity == 1
+        and exploratory_recurrence_ok
+        and corroboration_score >= 0.3
+        and value_support >= 0.5
+        and evidence_quality >= 0.49
+        and composite_score >= 0.39
+    )
+
+    exploratory_checks: list[dict[str, Any]] = [
+        {
+            "id": "exploratory_base_generalizability",
+            "pass": generalizability_class == "reusable_workflow_pain",
+            "actual": generalizability_class,
+            "need": "reusable_workflow_pain",
+        },
+        {
+            "id": "exploratory_multifamily_branch",
+            "pass": multifamily_explore,
+            "detail": {
+                "recurrence_ok_or_timeout_checkpoint": exploratory_recurrence_ok or timeout_checkpoint_candidate,
+                "timeout_checkpoint_candidate": timeout_checkpoint_candidate,
+                "corroboration_floor": 0.25,
+                "value_support_floor": 0.55,
+                "evidence_quality_floor": 0.45,
+                "composite_floor": 0.34,
+            },
+        },
+        {
+            "id": "exploratory_single_family_branch",
+            "pass": single_family_explore,
+            "detail": {
+                "requires_recurrence_ok_not_timeout_only": exploratory_recurrence_ok,
+                "corroboration_floor": 0.3,
+                "value_support_floor": 0.5,
+                "evidence_quality_floor": 0.49,
+                "composite_floor": 0.39,
+            },
+        },
+    ]
+
+    return {
+        "resolved_selection_status": status,
+        "resolved_selection_reason": reason,
+        "selection_gate": gate,
+        "recurrence_state": recurrence_state,
+        "strict_path_checks": strict_checks,
+        "exploratory_path_checks": exploratory_checks,
+        "wedge_active": wedge_active,
+        "hints": [
+            "If decision is park/kill, prototype_candidate is never selected regardless of corroboration.",
+            "timeout + multi-family can still reach prototype_candidate via timeout_checkpoint_candidate floors.",
+            "Strict numeric gates ignore recurrence_state; timeout still adds blocked_by labels in the gate payload.",
+        ],
+    }
 
 
 def determine_narrow_output_type(

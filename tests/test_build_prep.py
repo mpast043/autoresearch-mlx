@@ -107,6 +107,27 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertEqual(gate["gate_version"], "prototype_candidate_v1")
         self.assertIn("prototype_candidate_multifamily_near_miss", gate["reasons"])
 
+    def test_selection_gate_allows_timeout_multifamily_checkpoint_candidate(self):
+        status, reason, gate = determine_selection_state(
+            decision="park",
+            scorecard={
+                "evidence_quality": 0.53,
+                "value_support": 0.64,
+                "composite_score": 0.43,
+            },
+            corroboration={
+                "corroboration_score": 0.48,
+                "core_source_family_diversity": 2,
+                "generalizability_class": "reusable_workflow_pain",
+                "recurrence_state": "timeout",
+            },
+            market_enrichment={"wedge_active": False},
+        )
+        self.assertEqual(status, "prototype_candidate")
+        self.assertEqual(reason, "prototype_candidate_gate")
+        self.assertTrue(gate["eligible"])
+        self.assertIn("prototype_candidate_multifamily_near_miss", gate["reasons"])
+
     def test_selection_gate_allows_exceptional_single_family_prototype_candidate(self):
         status, reason, gate = determine_selection_state(
             decision="park",

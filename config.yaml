@@ -4,16 +4,116 @@ database:
   path: data/autoresearch.db
 
 discovery:
+  # `web` = broad web search + marketplace pain threads (see DiscoveryAgent._check_source).
   sources:
     - reddit
+    - web
     - github
     - wordpress_reviews
     - shopify_reviews
+  candidate_filter:
+    min_score: 2
+    behavioral_min_signals: 1
+    behavioral_penalty: 1
+  # App/plugin review lanes (1–2 star pain). Tune slugs/handles to niches you care about.
+  shopify_reviews:
+    # Public storefront HTML scrape (no Shopify Partner/Admin API). Slugs: https://apps.shopify.com/<handle>
+    app_handles:
+      - backup-and-sync
+      - parcel-intelligence
+    max_apps: 2
+    reviews_per_app: 3
+    rating_filters: [1, 2]
+    sort_by: newest
+  wordpress_reviews:
+    plugin_slugs:
+      - woocommerce
+      - elementor
+      - wordfence
+    reviews_per_plugin: 3
+    star_filters: [1, 2]
+
+  # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
+  reddit:
+    # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
+    search_time_filter: all
+    # true = search r/all for each keyword (widest Reddit reach; noisier). false = only problem_subreddits below.
+    use_r_all: false
+    # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
+    max_subreddits_per_wave: 0
+    max_keywords_per_wave: 0
+    # For each sub×keyword pair, run these Reddit sort modes (all/recent/top/comments).
+    search_sorts: ["relevance", "new", "top", "comments"]
+    # Per sort mode result limit and hard cap per sub×keyword pair after URL dedupe.
+    per_sort_limit: 2
+    max_docs_per_pair: 6
+    problem_subreddits:
+      - smallbusiness
+      - EtsySellers
+      - sysadmin
+      - webdev
+      - Entrepreneur
+      - indiehackers
+      - SaaS
+      - startups
+      - ecommerce
+      - msp
+      - devops
+      - selfhosted
+      - excel
+      - shopify
+      - sales
+      - freelance
+      - productivity
+    problem_keywords:
+      - "annoying manual task"
+      - "manual process"
+      - "held together by spreadsheets"
+      - "merging reports manually"
+      - "spreadsheet workaround"
+      - "manual reconciliation"
+      - "workaround"
+      - "copy paste workflow"
+      - "wish there was a tool"
+      - "too many manual steps"
+      - "can't keep track spreadsheet"
+    # Optional buckets for suggest-discovery to return per-theme keyword hints.
+    theme_keywords:
+      saas:
+        - "subscription billing"
+        - "customer onboarding"
+        - "support queue"
+      money:
+        - "cash flow"
+        - "manual reconciliation"
+        - "invoice mismatch"
+      build:
+        - "deployment pain"
+        - "release checklist"
+        - "integration breakage"
 
 orchestration:
   evidence_concurrency: 3
-  run_once_max_wait_seconds: 90
-  auto_ideate_after_validation: false
+  run_once_max_wait_seconds: 180
+  evidence_timeout_seconds: 120
+  # After validation: generate SaaS/product ideas when decision is promote OR selection_status is prototype_candidate.
+  auto_ideate_after_validation: true
+  # `python cli.py run`: repeat discovery waves after each drain (sleep retry_interval_seconds).
+  # Use this for long-running sessions without tying loops to stop_on_hit.
+  continuous_waves: true
+  # When enabled, `python cli.py run` can stop after a validation "hit"
+  # (default: prototype_candidate OR promote). See orchestrator.stop_on_hit_matches.
+  # Set exit_on_hit: false to keep running after a hit while continuous_waves is on.
+  stop_on_hit:
+    enabled: false
+    exit_on_hit: true
+    selection_status_any:
+      - prototype_candidate
+    decision_any:
+      - promote
+    # Pause between discovery waves when looping. Use 0 for back-to-back waves (only the
+    # pipeline drain wait applies). Increase if you need to ease API rate limits.
+    retry_interval_seconds: 0
 
 builder:
   auto_build: false

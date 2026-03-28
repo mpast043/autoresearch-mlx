@@ -17,7 +17,7 @@ Why this is the best default:
 When the Codespace opens:
 
 1. Let the devcontainer build finish.
-2. The post-create step installs [requirements-dev.txt](/Users/meganpastore/Projects/autoresearch-mlx/requirements-dev.txt).
+2. The post-create step installs [requirements-dev.txt](../requirements-dev.txt).
 3. Copy the example environment file:
 
 ```bash

@@ -32,6 +32,7 @@ from opportunity_engine import (
 )
 from research_tools import ResearchToolkit
 from source_policy import atom_generation_allowed
+from validation_thresholds import resolve_promotion_park_thresholds
 
 
 class ValidationAgent(BaseAgent):
@@ -58,16 +59,7 @@ class ValidationAgent(BaseAgent):
         self.gate_threshold = thresholds.get("gate", 0.6)
         self.overall_threshold = thresholds.get("overall", 0.7)
 
-        decision_config = validation_config.get("decisions", {})
-        orchestration = self.config.get("orchestration", {})
-        self.promotion_threshold = decision_config.get(
-            "promote_score",
-            orchestration.get("promotion_threshold", 0.62),
-        )
-        self.park_threshold = decision_config.get(
-            "park_score",
-            orchestration.get("park_threshold", 0.48),
-        )
+        self.promotion_threshold, self.park_threshold = resolve_promotion_park_thresholds(self.config)
 
     async def process(self, message) -> Dict[str, Any]:
         if message.msg_type in (MessageType.FINDING, MessageType.EVIDENCE):

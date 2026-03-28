@@ -1,6 +1,6 @@
 # Render Deploy
 
-This repo now includes a Render Blueprint at [render.yaml](/Users/meganpastore/Projects/autoresearch-mlx/render.yaml).
+This repo now includes a Render Blueprint at [render.yaml](../render.yaml).
 
 ## Service
 
@@ -30,7 +30,7 @@ Locally, point the pipeline at the hosted relay:
 
 1. Push this branch to GitHub.
 2. In Render, create a new Blueprint from this repository.
-3. Select [render.yaml](/Users/meganpastore/Projects/autoresearch-mlx/render.yaml).
+3. Select [render.yaml](../render.yaml).
 4. Review the single relay service and create the Blueprint instance.
 5. Set `REDDIT_RELAY_AUTH_TOKEN` on the Render service.
 6. Locally, export:

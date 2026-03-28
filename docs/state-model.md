@@ -15,7 +15,7 @@ The live pipeline flow is:
 
 ## Source Policy
 
-The first-class source policy is implemented in [`src/source_policy.py`](/Users/meganpastore/Projects/autoresearch-mlx/src/source_policy.py).
+The first-class source policy is implemented in [`src/source_policy.py`](../src/source_policy.py).
 
 Supported source classes:
 
@@ -35,7 +35,7 @@ Routing rules:
 - `meta_guidance`: excluded from active discovery, used for prompt/eval improvement only
 - `low_signal_summary`: excluded from the active path
 
-The explicit review lanes currently use WordPress Plugin Directory reviews and Shopify App Store reviews through [`src/review_sources.py`](/Users/meganpastore/Projects/autoresearch-mlx/src/review_sources.py):
+The explicit review lanes currently use WordPress Plugin Directory reviews and Shopify App Store reviews through [`src/review_sources.py`](../src/review_sources.py):
 
 - detailed review text can become `pain_signal`
 - vague review praise stays `low_signal_summary`
@@ -45,7 +45,7 @@ The explicit review lanes currently use WordPress Plugin Directory reviews and S
   - install counts are not public, so the lane uses bounded popularity proxies when available
   - review titles are often absent, so a compact derived title may be used for the finding record while raw review text remains the actual evidence body
 
-The first explicit technical issue lane currently uses GitHub issues/discussions through [`src/github_sources.py`](/Users/meganpastore/Projects/autoresearch-mlx/src/github_sources.py):
+The first explicit technical issue lane currently uses GitHub issues/discussions through [`src/github_sources.py`](../src/github_sources.py):
 
 - issue/discussion text can become `pain_signal` when it includes enough workflow detail
 - generic feature wishlists and thin product-specific issue noise are routed to `low_signal_summary`
@@ -256,7 +256,7 @@ The runtime assigns a `run_id` at startup. Repeated writes in the same run updat
 
 Wedge assignment is default-off.
 
-The active wedge path currently uses a guarded backup/restore profile in [`src/agents/evidence.py`](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/evidence.py):
+The active wedge path currently uses a guarded backup/restore profile in [`src/agents/evidence.py`](../src/agents/evidence.py):
 
 1. candidate detection
 2. fit validation

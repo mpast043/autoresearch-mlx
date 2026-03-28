@@ -45,9 +45,19 @@ except Exception:  # pragma: no cover - supports package and direct module usage
     from src.search_models import SearchDocument
 
 try:
-    from discovery_queries import reddit_problem_keywords, reddit_problem_subreddits, reddit_success_keywords
+    from discovery_queries import (
+        reddit_discovery_subreddits,
+        reddit_problem_keywords,
+        reddit_problem_subreddits,
+        reddit_success_keywords,
+    )
 except Exception:  # pragma: no cover - supports package and direct module usage
-    from src.discovery_queries import reddit_problem_keywords, reddit_problem_subreddits, reddit_success_keywords
+    from src.discovery_queries import (
+        reddit_discovery_subreddits,
+        reddit_problem_keywords,
+        reddit_problem_subreddits,
+        reddit_success_keywords,
+    )
 
 try:
     from github_sources import GitHubIssueAdapter
@@ -1024,24 +1034,36 @@ class ResearchToolkit:
         return False
 
     def _is_problem_candidate(self, title: str, body: str, *, source_url: str = "") -> bool:
+        """Lightweight heuristic gate used at discovery time.
+
+        This should be permissive enough to emit candidates for downstream policy screening,
+        while still filtering obvious non-problems.
+        """
         haystack = compact_text(f"{title} {body} {source_url}".lower(), 1600)
         if any(pattern in haystack for pattern in NON_PROBLEM_DISCOVERY_PATTERNS):
             return False
+
+        discovery_cfg = (self.config.get("discovery") or {}).get("candidate_filter") or {}
+        min_score = int(discovery_cfg.get("min_score", 2))
+        behavioral_min = int(discovery_cfg.get("behavioral_min_signals", 1))
+        behavioral_penalty = int(discovery_cfg.get("behavioral_penalty", 1))
+
         score = 0
         score += sum(1 for term in PAIN_KEYWORDS if contains_keyword(haystack, term))
         score += sum(1 for term in WORKAROUND_SIGNAL_TERMS if contains_keyword(haystack, term))
         score += sum(1 for term in FREQUENCY_SIGNAL_TERMS if contains_keyword(haystack, term))
         score += sum(1 for term in COST_SIGNAL_TERMS if contains_keyword(haystack, term))
+
         behavioral = sum(
             1
             for terms in [WORKAROUND_SIGNAL_TERMS, FREQUENCY_SIGNAL_TERMS, COST_SIGNAL_TERMS]
             if self._has_any_term(haystack, terms)
         )
-        if behavioral < 2:
-            score -= 3
+        if behavioral < behavioral_min:
+            score -= behavioral_penalty
         if "?" in title and not self._has_any_term(haystack, WORKAROUND_SIGNAL_TERMS):
             score -= 1
-        return score >= 3
+        return score >= min_score
 
     def _extract_validation_phrases(self, text: str) -> list[str]:
         lowered = compact_text(text.lower(), 500)
@@ -1588,11 +1610,32 @@ class ResearchToolkit:
             return []
         docs: list[tuple[str, SearchDocument]] = []
         seen_urls: set[str] = set()
+        discovery_reddit_cfg = (self.config.get("discovery", {}) or {}).get("reddit", {}) or {}
+        configured_sorts = discovery_reddit_cfg.get("search_sorts") or ["relevance", "new", "top", "comments"]
+        allowed_sorts = {"relevance", "new", "top", "comments"}
+        search_sorts = [str(item).strip().lower() for item in configured_sorts if str(item).strip().lower() in allowed_sorts]
+        if not search_sorts:
+            search_sorts = ["relevance", "new", "top", "comments"]
+        per_sort_limit = max(1, int(discovery_reddit_cfg.get("per_sort_limit", 2)))
+        max_docs_per_pair = max(1, int(discovery_reddit_cfg.get("max_docs_per_pair", 6)))
+
         for subreddit in subreddits[:4]:
             for keyword in keywords[:3]:
                 started = asyncio.get_running_loop().time()
                 docs_seen = 0
-                for doc in await self.reddit_search(subreddit, keyword, limit=2):
+                pair_docs: list[SearchDocument] = []
+                pair_seen: set[str] = set()
+                for sort_mode in search_sorts:
+                    for doc in await self.reddit_search(subreddit, keyword, limit=per_sort_limit, sort=sort_mode):
+                        if not doc.url or doc.url in pair_seen:
+                            continue
+                        pair_seen.add(doc.url)
+                        pair_docs.append(doc)
+                        if len(pair_docs) >= max_docs_per_pair:
+                            break
+                    if len(pair_docs) >= max_docs_per_pair:
+                        break
+                for doc in pair_docs:
                     if doc.url and doc.url not in seen_urls:
                         seen_urls.add(doc.url)
                         docs.append((keyword, doc))
@@ -1705,33 +1748,70 @@ class ResearchToolkit:
         queries: Optional[list[str]] = None,
         observer: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> list[dict[str, Any]]:
-        subreddits = subreddits or reddit_problem_subreddits(self.config)
+        subreddits = subreddits or reddit_discovery_subreddits(self.config)
         queries = queries or reddit_problem_keywords(self.config)
         findings: list[dict[str, Any]] = []
         seen_urls: set[str] = set()
         discovery_config = self.config.get("discovery", {}).get("reddit", {})
+        # max_* 0 or negative = use entire configured list (no artificial cap).
+        _ms = discovery_config.get("max_subreddits_per_wave", 6)
+        _mk = discovery_config.get("max_keywords_per_wave", 4)
+        try:
+            max_subs_raw = int(_ms)
+        except (TypeError, ValueError):
+            max_subs_raw = 6
+        try:
+            max_kw_raw = int(_mk)
+        except (TypeError, ValueError):
+            max_kw_raw = 4
+        max_subs_wave = len(subreddits) if max_subs_raw <= 0 else min(len(subreddits), max(1, max_subs_raw))
+        max_kw_wave = len(queries) if max_kw_raw <= 0 else min(len(queries), max(1, max_kw_raw))
         pair_concurrency = max(1, int(discovery_config.get("pair_concurrency", 6)))
         context_concurrency = max(1, int(discovery_config.get("context_concurrency", 6)))
+        configured_sorts = discovery_config.get("search_sorts") or ["relevance", "new", "top", "comments"]
+        allowed_sorts = {"relevance", "new", "top", "comments"}
+        search_sorts = [str(item).strip().lower() for item in configured_sorts if str(item).strip().lower() in allowed_sorts]
+        if not search_sorts:
+            search_sorts = ["relevance", "new", "top", "comments"]
+        per_sort_limit = max(1, int(discovery_config.get("per_sort_limit", 2)))
+        max_docs_per_pair = max(1, int(discovery_config.get("max_docs_per_pair", 6)))
         pair_sem = asyncio.Semaphore(pair_concurrency)
         context_sem = asyncio.Semaphore(context_concurrency)
 
-        async def _fetch_pair(subreddit: str, query: str) -> tuple[str, str, list[SearchDocument]]:
+        async def _fetch_pair(subreddit: str, query: str) -> tuple[str, str, list[tuple[str, SearchDocument]]]:
             started = asyncio.get_running_loop().time()
             status = "ok"
             error = ""
             docs_seen = 0
             try:
                 async with pair_sem:
-                    direct_docs = await self.reddit_search(subreddit, query, limit=2)
+                    pair_docs: list[tuple[str, SearchDocument]] = []
+                    pair_seen: set[str] = set()
+                    for sort_mode in search_sorts:
+                        direct_docs = await self.reddit_search(
+                            subreddit,
+                            query,
+                            limit=per_sort_limit,
+                            sort=sort_mode,
+                        )
+                        for doc in direct_docs:
+                            if not doc.url or doc.url in pair_seen:
+                                continue
+                            pair_seen.add(doc.url)
+                            pair_docs.append((sort_mode, doc))
+                            if len(pair_docs) >= max_docs_per_pair:
+                                break
+                        if len(pair_docs) >= max_docs_per_pair:
+                            break
             except Exception as exc:
-                direct_docs = []
+                pair_docs = []
                 status = "error"
                 error = str(exc)
 
-            docs: list[SearchDocument] = []
-            for doc in direct_docs:
+            docs: list[tuple[str, SearchDocument]] = []
+            for sort_mode, doc in pair_docs:
                 if doc.url and doc.url not in seen_urls:
-                    docs.append(doc)
+                    docs.append((sort_mode, doc))
                     seen_urls.add(doc.url)
                     docs_seen += 1
             if observer:
@@ -1750,12 +1830,12 @@ class ResearchToolkit:
         pair_results = await asyncio.gather(
             *[
                 _fetch_pair(subreddit, query)
-                for subreddit in subreddits[:6]
-                for query in queries[:4]
+                for subreddit in subreddits[:max_subs_wave]
+                for query in queries[:max_kw_wave]
             ]
         )
 
-        async def _build_finding(subreddit: str, query: str, doc: SearchDocument) -> Optional[dict[str, Any]]:
+        async def _build_finding(subreddit: str, query: str, sort_mode: str, doc: SearchDocument) -> Optional[dict[str, Any]]:
             async with context_sem:
                 content = await self.reddit_thread_context(doc.url)
             full_text = compact_text(f"{doc.title} {doc.snippet} {content.get('text', '')}", 2400)
@@ -1774,6 +1854,7 @@ class ResearchToolkit:
                 "evidence": {
                     "source_plan": "reddit-problem",
                     "discovery_query": query,
+                    "discovery_sort": sort_mode,
                     "pain_score": self._pain_score(full_text),
                     "snippet": doc.snippet,
                     "page_excerpt": content.get("description", ""),
@@ -1782,9 +1863,9 @@ class ResearchToolkit:
 
         built = await asyncio.gather(
             *[
-                _build_finding(subreddit, query, doc)
+                _build_finding(subreddit, query, sort_mode, doc)
                 for subreddit, query, docs in pair_results
-                for doc in docs
+                for sort_mode, doc in docs
             ]
         )
         for item in built:

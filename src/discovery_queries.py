@@ -33,6 +33,15 @@ def reddit_problem_subreddits(config: dict[str, Any] | None = None) -> list[str]
     return subreddits or list(DEFAULT_REDDIT_PROBLEM_SUBREDDITS)
 
 
+def reddit_discovery_subreddits(config: dict[str, Any] | None = None) -> list[str]:
+    """Subreddits for problem discovery: optional ``use_r_all`` searches all of Reddit (``r/all``)."""
+    config = config or {}
+    reddit_config = config.get("discovery", {}).get("reddit", {})
+    if bool(reddit_config.get("use_r_all")):
+        return ["all"]
+    return reddit_problem_subreddits(config)
+
+
 def reddit_problem_keywords(config: dict[str, Any] | None = None) -> list[str]:
     config = config or {}
     reddit_config = config.get("discovery", {}).get("reddit", {})

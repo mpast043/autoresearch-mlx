@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import json
 import sys
 from pathlib import Path
@@ -21,8 +22,109 @@ from reddit_relay import run_relay_server  # noqa: E402
 from reddit_seed import RedditSeeder  # noqa: E402
 
 
+def run_backup_db(config_path: str | Path) -> dict:
+    """Copy SQLite DB to data/backups/ (see docs/RECOVERY.md)."""
+    import shutil
+    from datetime import datetime
+
+    import yaml
+
+    from runtime.env import load_local_env
+
+    load_local_env()
+    cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
+    with cfg_file.open(encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle) or {}
+    rel = (cfg.get("database") or {}).get("path", "data/autoresearch.db")
+    db_path = resolve_project_path(rel, default=Path(rel))
+    if not db_path.exists():
+        return {"ok": False, "error": f"database not found: {db_path}"}
+    backup_dir = db_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    dest = backup_dir / f"autoresearch-{stamp}.db"
+    shutil.copy2(db_path, dest)
+    return {"ok": True, "from": str(db_path.resolve()), "to": str(dest.resolve())}
+
+
+async def run_check_bridge(config_path: str | Path) -> dict:
+    """Call the hosted relay `/api/health` using `reddit_bridge` config (validates URL + token)."""
+    import yaml
+
+    from runtime.env import load_local_env
+
+    load_local_env()
+    cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
+    with cfg_file.open(encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle) or {}
+    bridge_cfg = dict(cfg.get("reddit_bridge") or {})
+    from reddit_bridge import BridgeError, RedditBridgeClient
+
+    client = RedditBridgeClient(bridge_cfg)
+    try:
+        if not client.enabled:
+            return {
+                "ok": False,
+                "error": "reddit_bridge disabled or base_url empty after env resolution",
+                "hint": "Set REDDIT_BRIDGE_BASE_URL and enable reddit_bridge in config.yaml",
+            }
+        health = await client.health()
+        return {
+            "ok": True,
+            "base_url": client.base_url,
+            "token_configured": bool(client.auth_token),
+            "health": health,
+        }
+    except BridgeError as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "code": exc.code,
+            "base_url": getattr(client, "base_url", ""),
+            "hint": "If code is auth_failed, REDDIT_BRIDGE_AUTH_TOKEN must match the relay token on Render.",
+        }
+    finally:
+        await client.close()
+
+
 def print_json(value) -> None:
     print(json.dumps(value, indent=2, default=str))
+
+
+def build_discovery_sort_diagnostics(db, *, limit: int = 500, run_id: str = "") -> dict:
+    """Summarize which Reddit sort modes are yielding findings."""
+    findings = db.get_findings(limit=limit) if db else []
+    sort_counts: dict[str, int] = collections.Counter()
+    sort_status_counts: dict[str, dict[str, int]] = {}
+    sub_counts: dict[str, int] = collections.Counter()
+    examined = 0
+
+    for finding in findings:
+        source = str(getattr(finding, "source", "") or "")
+        if not source.startswith("reddit-problem/"):
+            continue
+        evidence = getattr(finding, "evidence", None) or {}
+        if run_id and str(evidence.get("run_id", "")) != run_id:
+            continue
+        sort_mode = str(evidence.get("discovery_sort", "unknown") or "unknown").lower()
+        status = str(getattr(finding, "status", "") or "unknown")
+        subreddit = source.split("/", 1)[1] if "/" in source else "unknown"
+        examined += 1
+        sort_counts[sort_mode] += 1
+        sub_counts[subreddit] += 1
+        bucket = sort_status_counts.setdefault(sort_mode, {})
+        bucket[status] = int(bucket.get(status, 0)) + 1
+
+    return {
+        "rows_examined": examined,
+        "sort_counts": dict(sorted(sort_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "sort_status_counts": {k: dict(sorted(v.items(), key=lambda kv: (-kv[1], kv[0]))) for k, v in sort_status_counts.items()},
+        "top_subreddits": [
+            {"subreddit": subreddit, "count": count}
+            for subreddit, count in sorted(sub_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:20]
+        ],
+        "hint": "Use discovery.reddit.search_sorts/per_sort_limit/max_docs_per_pair to tune sort coverage.",
+    }
 
 
 def build_verbose_report(app: AutoResearcher, summary: dict) -> dict:
@@ -84,6 +186,7 @@ async def main() -> None:
         choices=[
             "run",
             "run-once",
+            "run-unseeded",
             "watch",
             "search",
             "signals",
@@ -97,6 +200,9 @@ async def main() -> None:
             "build-prep",
             "workbench",
             "report",
+            "gate-diagnostics",
+            "pipeline-health",
+            "discovery-sort-diagnostics",
             "eval",
             "review-queue",
             "review-mark",
@@ -104,6 +210,9 @@ async def main() -> None:
             "products",
             "reddit-relay",
             "reddit-seed",
+            "check-bridge",
+            "backup-db",
+            "suggest-discovery",
         ],
         help="Command to execute",
     )
@@ -118,8 +227,29 @@ async def main() -> None:
     parser.add_argument("--cluster-id", type=int, help="Cluster id for review-mark")
     parser.add_argument("--opportunity-id", type=int, help="Opportunity id for review-mark")
     parser.add_argument("--validation-id", type=int, help="Validation id for review-mark")
+    parser.add_argument("--vertical", default="devtools", help="Vertical for unseeded/run-unseeded")
+    parser.add_argument("--max-findings", type=int, default=20, help="Max raw signals for unseeded/run-unseeded")
     parser.add_argument("--label", default="", help="Review label for review-mark")
     parser.add_argument("--note", default="", help="Optional review note")
+    parser.add_argument("--run-id", default="", help="Scope gate-diagnostics to a specific pipeline run id")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        help="gate-diagnostics: max validation rows; suggest-discovery: max clusters scanned (default: 25)",
+    )
+    parser.add_argument(
+        "--min-atoms",
+        type=int,
+        default=2,
+        help="suggest-discovery: only clusters with at least this many atoms (default: 2)",
+    )
+    parser.add_argument(
+        "--money-claims-min-confidence",
+        choices=["low", "medium", "high"],
+        default="low",
+        help="suggest-discovery: minimum confidence tier for money claims (default: low)",
+    )
     args = parser.parse_args()
 
     if args.command == "watch":
@@ -148,6 +278,38 @@ async def main() -> None:
             await app.shutdown()
         return
 
+    if args.command == "check-bridge":
+        print_json(await run_check_bridge(args.config))
+        return
+
+    if args.command == "backup-db":
+        print_json(run_backup_db(args.config))
+        return
+
+    if args.command == "suggest-discovery":
+        app = AutoResearcher(config_path=args.config)
+        await app.initialize(start_new_run=False)
+        try:
+            from discovery_suggestions import build_discovery_suggestions
+
+            print_json(
+                build_discovery_suggestions(
+                    app.db,
+                    min_atoms=args.min_atoms,
+                    limit_clusters=args.limit,
+                    limit_atoms=max(args.limit * 4, 40),
+                    limit_findings=max(args.limit * 16, 200),
+                    max_keywords=min(28, max(args.limit, 12)),
+                    theme_keywords=((app.config.get("discovery", {}) or {}).get("reddit", {}) or {}).get(
+                        "theme_keywords", {}
+                    ),
+                    money_claim_min_confidence=args.money_claims_min_confidence,
+                )
+            )
+        finally:
+            await app.shutdown()
+        return
+
     app = AutoResearcher(config_path=args.config)
 
     if args.command == "run":
@@ -160,6 +322,18 @@ async def main() -> None:
             print_json(build_verbose_report(app, summary))
         else:
             print_json(summary)
+        return
+
+    if args.command == "run-unseeded":
+        await app.initialize(start_new_run=True)
+        try:
+            summary = await app.run_unseeded(
+                vertical=args.vertical,
+                max_findings=args.max_findings,
+            )
+            print_json(summary)
+        finally:
+            await app.shutdown()
         return
 
     await app.initialize(start_new_run=False)
@@ -191,6 +365,29 @@ async def main() -> None:
             print_json(app.db.get_candidate_workbench(limit=100, run_id=app.current_run_id) if app.db else [])
         elif args.command == "report":
             print_json(build_verbose_report(app, app.snapshot()))
+        elif args.command == "gate-diagnostics":
+            from gate_diagnostics import build_gate_diagnostics_report
+
+            report = build_gate_diagnostics_report(
+                app.db,
+                config=app.config,
+                run_id=args.run_id or None,
+                limit=args.limit,
+                finding_id=args.finding_id,
+            )
+            print_json(report)
+        elif args.command == "pipeline-health":
+            from pipeline_health import compute_pipeline_health
+
+            print_json(compute_pipeline_health(app.db))
+        elif args.command == "discovery-sort-diagnostics":
+            print_json(
+                build_discovery_sort_diagnostics(
+                    app.db,
+                    limit=max(args.limit * 20, 200),
+                    run_id=args.run_id or "",
+                )
+            )
         elif args.command == "review-queue":
             print_json(app.db.get_review_queue(limit=50, run_id=app.current_run_id) if app.db else [])
         elif args.command == "review-mark":

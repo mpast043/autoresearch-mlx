@@ -22,6 +22,8 @@ class Orchestrator:
         status_tracker=None,
         auto_build: bool = False,
         auto_ideate: bool = False,
+        shutdown_event: Optional[asyncio.Event] = None,
+        stop_on_hit_config: Optional[Dict[str, Any]] = None,
     ):
         self._db = db
         self._agents: Dict[str, BaseAgent] = {}
@@ -31,7 +33,51 @@ class Orchestrator:
         self._status_tracker = status_tracker
         self._auto_build = auto_build
         self._auto_ideate = auto_ideate
+        self._shutdown_event = shutdown_event
+        self._stop_on_hit_config: Dict[str, Any] = dict(stop_on_hit_config or {})
         self._started_agents: set[str] = set()
+
+    @staticmethod
+    def stop_on_hit_matches(stop_cfg: Dict[str, Any], payload: Dict[str, Any]) -> bool:
+        """True if validation payload satisfies orchestration.stop_on_hit rules."""
+        if not stop_cfg.get("enabled"):
+            return False
+        sel = str(payload.get("selection_status") or "")
+        dec = str(payload.get("decision") or "")
+        statuses = stop_cfg.get("selection_status_any", None)
+        decisions = stop_cfg.get("decision_any", None)
+        if statuses is None:
+            statuses = ["prototype_candidate"]
+        elif not isinstance(statuses, list):
+            statuses = ["prototype_candidate"]
+        if decisions is None:
+            decisions = ["promote"]
+        elif not isinstance(decisions, list):
+            decisions = ["promote"]
+        if statuses and sel in statuses:
+            return True
+        if decisions and dec in decisions:
+            return True
+        return False
+
+    def _request_shutdown_on_hit(self, payload: Dict[str, Any]) -> None:
+        if not self.stop_on_hit_matches(self._stop_on_hit_config, payload):
+            return
+        if self._stop_on_hit_config.get("exit_on_hit") is False:
+            logger.info(
+                "stop_on_hit matched selection_status=%s decision=%s — exit_on_hit=false, continuing",
+                payload.get("selection_status"),
+                payload.get("decision"),
+            )
+            return
+        if self._shutdown_event is None:
+            return
+        logger.info(
+            "stop_on_hit triggered selection_status=%s decision=%s — shutting down pipeline",
+            payload.get("selection_status"),
+            payload.get("decision"),
+        )
+        self._shutdown_event.set()
 
     def register_agent(self, agent: BaseAgent) -> None:
         self._agents[agent.name] = agent
@@ -124,11 +170,30 @@ class Orchestrator:
             )
             return
 
+        elif message.msg_type == MessageType.FINDING_UNSEEDED:
+            # Unseeded loop: skip evidence stage → route directly to validation
+            finding_id = message.payload.get("finding_id")
+            if self._status_tracker:
+                self._status_tracker.set_stage("validation")
+                self._status_tracker.log(f"[unseeded] routing finding {finding_id} directly to validation")
+            validation_msg = Message(
+                msg_type=MessageType.VALIDATION,
+                payload={"finding_id": finding_id},
+                from_agent="orchestrator",
+                to_agent="validation",
+                correlation_id=message.correlation_id,
+            )
+            await self._agents["validation"].receive_message(validation_msg)
+            return
+
         if message.msg_type == MessageType.VALIDATION:
             validations = self._db.get_recent_validations(limit=20)
             opportunities = self._db.get_opportunities(limit=20) if hasattr(self._db, "get_opportunities") else []
             build_brief_id = message.payload.get("build_brief_id")
             selection_status = message.payload.get("selection_status", "")
+
+            # Fire-and-forget stop-on-hit check after validation routing
+            self._request_shutdown_on_hit(message.payload)
 
             if self._status_tracker:
                 self._status_tracker.set_stage("opportunity")

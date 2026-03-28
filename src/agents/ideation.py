@@ -30,8 +30,11 @@ class IdeationAgent(BaseAgent):
         return {"processed": True}
 
     async def _generate_idea(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if not payload.get("passed"):
-            return {"success": False, "reason": "validation did not pass"}
+        passed_flag = bool(payload.get("passed"))
+        selection_status = str(payload.get("selection_status") or "")
+        build_brief_id = int(payload.get("build_brief_id") or 0)
+        if not passed_flag and not (selection_status == "prototype_candidate" and build_brief_id > 0):
+            return {"success": False, "reason": "validation did not pass or not prototype_candidate with brief"}
 
         validation = self.db.get_validation(payload["validation_id"])
         finding = self.db.get_finding(payload["finding_id"])

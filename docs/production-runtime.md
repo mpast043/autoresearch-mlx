@@ -4,14 +4,14 @@ This repo now has a minimal production-style package surface for the Python pipe
 
 If you want a cloud dev environment instead of a local laptop setup, use:
 
-- [docs/codespaces.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/codespaces.md)
+- [codespaces.md](codespaces.md)
 
 ## What Runs
 
 - `pipeline`: long-running discovery/evidence/validation runtime
 - `relay`: local Reddit relay HTTP service on port `8787`
 
-Both services use the same image and the same checked-in [config.yaml](/Users/meganpastore/Projects/autoresearch-mlx/config.yaml).
+Both services use the same image and the same checked-in [config.yaml](../config.yaml).
 
 ## Environment
 

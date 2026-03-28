@@ -1,0 +1,52 @@
+"""One-screen explanation of why discovery/validation may appear idle."""
+
+from __future__ import annotations
+
+from collections import Counter
+from typing import Any
+
+
+def compute_pipeline_health(db: Any) -> dict[str, Any]:
+    """Summarize finding lifecycle + whether ``run_once`` has work to do."""
+    findings = db.get_findings(limit=5000)
+    by_status = Counter((f.status or "") for f in findings)
+
+    actionable = 0
+    for f in findings:
+        if (f.status or "") != "qualified" or (f.source_class or "") != "pain_signal":
+            continue
+        s = db.get_raw_signals_by_finding(int(f.id or 0))
+        a = db.get_problem_atoms_by_finding(int(f.id or 0))
+        if s and a:
+            actionable += 1
+
+    n_val = len(db.get_validation_review(limit=10000, run_id=None))
+
+    blockers: list[str] = []
+    if actionable == 0:
+        blockers.append(
+            "No qualified pain_signal findings with raw_signal + problem_atom — run_once will not dispatch evidence. "
+            "Either discovery is deduping against existing content hashes, or all findings are already parked/killed/screened_out."
+        )
+    hints: list[str] = []
+    if by_status.get("qualified", 0) == 0 and len(findings) > 0:
+        hints.append(
+            "All findings are in terminal states (parked/killed/screened_out). To get fresh runs, add new sources/queries "
+            "or use a fresh DB for development."
+        )
+    if actionable == 0 and by_status.get("qualified", 0) == 0:
+        hints.append(
+            "Discovery skips inserts when content_hash already exists — Reddit/GitHub will look 'stuck' until new URLs appear."
+        )
+
+    return {
+        "finding_count": len(findings),
+        "findings_by_status": dict(by_status),
+        "actionable_qualified_for_pipeline": actionable,
+        "validation_rows_total": n_val,
+        "interpretation": {
+            "run_once_will_process_backlog": actionable > 0,
+            "likely_blockers": blockers,
+            "hints": hints,
+        },
+    }

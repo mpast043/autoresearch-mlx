@@ -203,6 +203,34 @@ def test_discover_once_reaps_reddit_priming_exception(temp_db, caplog):
     assert "reddit relay priming task failed: prime failed" in caplog.text
 
 
+def test_shopify_reviews_source_calls_toolkit(temp_db):
+    agent = DiscoveryAgent(temp_db, sources=["shopify_reviews"], config={})
+
+    async def fake_shopify(*, app_handles=None, observer=None):
+        return [{"source": "shopify-review/backup-and-sync", "source_url": "https://apps.shopify.com/backup-and-sync/reviews/1"}]
+
+    agent.toolkit._discover_shopify_review_threads = fake_shopify
+
+    result = asyncio.run(agent._check_source("shopify_reviews"))
+
+    assert len(result) == 1
+    assert result[0]["source"] == "shopify-review/backup-and-sync"
+
+
+def test_wordpress_reviews_source_calls_toolkit(temp_db):
+    agent = DiscoveryAgent(temp_db, sources=["wordpress_reviews"], config={})
+
+    async def fake_wp(*, plugin_slugs=None, observer=None):
+        return [{"source": "wordpress-review/woocommerce", "source_url": "https://wordpress.org/support/topic/x"}]
+
+    agent.toolkit._discover_wordpress_review_threads = fake_wp
+
+    result = asyncio.run(agent._check_source("wordpress_reviews"))
+
+    assert len(result) == 1
+    assert "woocommerce" in result[0]["source"]
+
+
 def test_github_source_timeout_does_not_stall_discovery(temp_db):
     agent = DiscoveryAgent(
         temp_db,

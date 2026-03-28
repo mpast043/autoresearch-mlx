@@ -41,6 +41,30 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in rows}
 
 
+def _dedupe_evidence_ledger(conn: sqlite3.Connection) -> None:
+    """Collapse duplicate ledger rows (same run/entity/kind); keep smallest id."""
+    try:
+        conn.execute(
+            """
+            DELETE FROM evidence_ledger
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM evidence_ledger GROUP BY run_id, entity_type, entity_id, entry_kind
+            )
+            """
+        )
+    except sqlite3.OperationalError:
+        pass
+
+
+def _ensure_evidence_ledger_unique_index(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_ledger_run_entity_kind
+        ON evidence_ledger(run_id, entity_type, entity_id, entry_kind)
+        """
+    )
+
+
 def _ensure_column(
     conn: sqlite3.Connection,
     table: str,
@@ -473,6 +497,7 @@ class Database:
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn = conn
         return conn
 
@@ -827,6 +852,8 @@ class Database:
             """,
         )
         _ensure_column(conn, "evidence_ledger", "entry_json", "TEXT DEFAULT '{}'")
+        _dedupe_evidence_ledger(conn)
+        _ensure_evidence_ledger_unique_index(conn)
         conn.commit()
 
     def get_latest_run_id(self) -> str:
@@ -848,6 +875,10 @@ class Database:
                 SELECT run_id, updated_at AS ts FROM build_briefs WHERE NULLIF(run_id, '') IS NOT NULL
                 UNION ALL
                 SELECT run_id, updated_at AS ts FROM build_prep_outputs WHERE NULLIF(run_id, '') IS NOT NULL
+                UNION ALL
+                SELECT run_id, created_at AS ts FROM experiments WHERE NULLIF(run_id, '') IS NOT NULL
+                UNION ALL
+                SELECT run_id, created_at AS ts FROM validation_experiments WHERE NULLIF(run_id, '') IS NOT NULL
             )
             ORDER BY ts DESC, run_id DESC
             LIMIT 1
@@ -874,6 +905,10 @@ class Database:
                 SELECT run_id, updated_at AS ts FROM build_briefs WHERE NULLIF(run_id, '') IS NOT NULL
                 UNION ALL
                 SELECT run_id, updated_at AS ts FROM build_prep_outputs WHERE NULLIF(run_id, '') IS NOT NULL
+                UNION ALL
+                SELECT run_id, created_at AS ts FROM experiments WHERE NULLIF(run_id, '') IS NOT NULL
+                UNION ALL
+                SELECT run_id, created_at AS ts FROM validation_experiments WHERE NULLIF(run_id, '') IS NOT NULL
             )
             GROUP BY run_id
             ORDER BY MAX(ts) DESC, run_id DESC
@@ -1508,6 +1543,36 @@ class Database:
             results.append(build_recent_validation_row(dict(row), evidence))
         return results
 
+    def list_validation_evidence_payloads(
+        self, *, run_id: Optional[str] = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Return parsed validation evidence JSON for gate diagnostics (``gate-diagnostics`` CLI)."""
+        conn = self._get_connection()
+        rid = run_id or self.get_latest_run_id()
+        if not rid:
+            return []
+        rows = conn.execute(
+            """
+            SELECT id AS validation_id, finding_id, evidence
+            FROM validations
+            WHERE run_id = ?
+            ORDER BY validated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (rid, limit),
+        ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            evidence = _json_loads(row["evidence"], {})
+            results.append(
+                {
+                    "validation_id": int(row["validation_id"]),
+                    "finding_id": int(row["finding_id"]),
+                    "evidence": evidence,
+                }
+            )
+        return results
+
     def insert_ledger_entry(self, entry: EvidenceLedgerEntry) -> int:
         entry.__post_init__()
         conn = self._get_connection()
@@ -1519,39 +1584,6 @@ class Database:
         source_url = entry.source_url or str(entry_payload.get("source_url") or "")
         quote_text = entry.quote_text or str(entry_payload.get("quote_text") or "")
         summary = entry.summary or str(entry_payload.get("summary") or "")
-        dedupe_row = conn.execute(
-            "SELECT id FROM evidence_ledger WHERE run_id = ? AND entity_type = ? AND entity_id = ? AND entry_kind = ?",
-            (run_id, entry.entity_type, entry.entity_id, entry.entry_kind),
-        ).fetchone()
-        if dedupe_row:
-            updates: list[str] = []
-            params: list[Any] = []
-            if "entry_json" in table_columns:
-                updates.append("entry_json = ?")
-                params.append(_json_dumps(entry_payload))
-            if "stance" in table_columns:
-                updates.append("stance = ?")
-                params.append(stance)
-            if "source_name" in table_columns:
-                updates.append("source_name = ?")
-                params.append(source_name)
-            if "source_url" in table_columns:
-                updates.append("source_url = ?")
-                params.append(source_url)
-            if "quote_text" in table_columns:
-                updates.append("quote_text = ?")
-                params.append(quote_text)
-            if "summary" in table_columns:
-                updates.append("summary = ?")
-                params.append(summary)
-            if "metadata_json" in table_columns:
-                updates.append("metadata_json = ?")
-                params.append(_json_dumps(entry_payload))
-            if updates:
-                params.append(dedupe_row["id"])
-                conn.execute(f"UPDATE evidence_ledger SET {', '.join(updates)} WHERE id = ?", params)
-            conn.commit()
-            return int(dedupe_row["id"])
         payload = {
             "run_id": run_id,
             "entity_type": entry.entity_type,
@@ -1565,15 +1597,39 @@ class Database:
             "summary": summary,
             "metadata_json": _json_dumps(entry_payload),
         }
-        columns = [column for column in payload if column in table_columns]
-        values = [payload[column] for column in columns]
-        placeholders = ", ".join(["?"] * len(columns))
-        cur = conn.execute(
-            f"INSERT INTO evidence_ledger ({', '.join(columns)}) VALUES ({placeholders})",
-            values,
+        insert_columns = [column for column in payload if column in table_columns]
+        insert_values = [payload[column] for column in insert_columns]
+        conflict_keys = {"run_id", "entity_type", "entity_id", "entry_kind"}
+        update_columns = [c for c in insert_columns if c not in conflict_keys]
+        if not update_columns:
+            placeholders = ", ".join(["?"] * len(insert_columns))
+            cur = conn.execute(
+                f"INSERT OR IGNORE INTO evidence_ledger ({', '.join(insert_columns)}) VALUES ({placeholders})",
+                insert_values,
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT id FROM evidence_ledger WHERE run_id = ? AND entity_type = ? AND entity_id = ? AND entry_kind = ?",
+                (run_id, entry.entity_type, entry.entity_id, entry.entry_kind),
+            ).fetchone()
+            return int(row["id"]) if row else int(cur.lastrowid)
+
+        placeholders = ", ".join(["?"] * len(insert_columns))
+        update_sql = ", ".join(f"{col} = excluded.{col}" for col in update_columns)
+        conn.execute(
+            f"""
+            INSERT INTO evidence_ledger ({', '.join(insert_columns)})
+            VALUES ({placeholders})
+            ON CONFLICT(run_id, entity_type, entity_id, entry_kind) DO UPDATE SET {update_sql}
+            """,
+            insert_values,
         )
         conn.commit()
-        return int(cur.lastrowid)
+        row = conn.execute(
+            "SELECT id FROM evidence_ledger WHERE run_id = ? AND entity_type = ? AND entity_id = ? AND entry_kind = ?",
+            (run_id, entry.entity_type, entry.entity_id, entry.entry_kind),
+        ).fetchone()
+        return int(row["id"]) if row else 0
 
     def get_evidence_ledger(self, entity_type: Optional[str] = None, entity_id: Optional[int] = None, *, limit: Optional[int] = None) -> list[EvidenceLedgerEntry]:
         return self.list_ledger_entries(entity_type=entity_type, entity_id=entity_id, limit=limit)
