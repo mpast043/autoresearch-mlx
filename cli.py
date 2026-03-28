@@ -187,6 +187,7 @@ async def main() -> None:
             "run",
             "run-once",
             "run-unseeded",
+            "deep-research",
             "watch",
             "search",
             "signals",
@@ -330,6 +331,23 @@ async def main() -> None:
             summary = await app.run_unseeded(
                 vertical=args.vertical,
                 max_findings=args.max_findings,
+            )
+            print_json(summary)
+        finally:
+            await app.shutdown()
+        return
+
+    if args.command == "deep-research":
+        from agents.deep_research import DeepResearchAgent
+        await app.initialize(start_new_run=True)
+        try:
+            agent = DeepResearchAgent(
+                name="deep_research",
+                db=app.db,
+                vertical=args.vertical,
+            )
+            summary = await agent.run_deep_research(
+                max_signals_per_source=args.max_findings,
             )
             print_json(summary)
         finally:
