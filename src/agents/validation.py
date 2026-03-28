@@ -62,7 +62,7 @@ class ValidationAgent(BaseAgent):
         self.promotion_threshold, self.park_threshold = resolve_promotion_park_thresholds(self.config)
 
     async def process(self, message) -> Dict[str, Any]:
-        if message.msg_type in (MessageType.FINDING, MessageType.EVIDENCE):
+        if message.msg_type in (MessageType.FINDING, MessageType.EVIDENCE, MessageType.VALIDATION):
             return await self._validate_finding(message.payload)
 
         payload = message.payload

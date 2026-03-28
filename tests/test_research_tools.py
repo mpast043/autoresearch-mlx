@@ -24,7 +24,7 @@ class FakeDDGS:
         return False
 
     def text(self, query, backend=None, max_results=None):
-        assert backend == "duckduckgo"
+        assert backend == "api"
         return [
             {
                 "title": "Wikipedia result",
@@ -69,7 +69,7 @@ class FakeValidationDDGS:
         return False
 
     def text(self, query, backend=None, max_results=None):
-        assert backend == "duckduckgo"
+        assert backend == "api"
         return [
             {
                 "title": "Workflow Definition",
@@ -99,7 +99,7 @@ class FakeEmptyDDGS:
         return False
 
     def text(self, query, backend=None, max_results=None):
-        assert backend == "duckduckgo"
+        assert backend == "api"
         return []
 
 

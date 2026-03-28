@@ -714,6 +714,19 @@ class ResearchToolkit:
             validation_search.get("competitor_budget_seconds", 6.0)
         )
         self.search_domain_cap = max(1, int(validation_search.get("max_results_per_domain", 2)))
+        self.ddgs_backend = validation_search.get("ddgs_backend", "api")
+        self.ddgs_extra_results = max(0, int(validation_search.get("ddgs_extra_results", 4)))
+        self.result_title_length = max(20, int(validation_search.get("result_title_length", 180)))
+        self.result_snippet_length = max(20, int(validation_search.get("result_snippet_length", 320)))
+        self.search_user_agent = str(
+            validation_search.get("search_user_agent", "Mozilla/5.0 (compatible; AutoResearcher/1.0)")
+        )
+        self.provider_timeout_recurrence = max(1, float(validation_search.get("provider_timeout_recurrence", 3)))
+        self.provider_timeout_competitor = max(1, float(validation_search.get("provider_timeout_competitor", 4)))
+        self.provider_timeout_general = max(1, float(validation_search.get("provider_timeout_general", 8)))
+        self.request_timeout_recurrence = max(1, float(validation_search.get("request_timeout_recurrence", 4)))
+        self.request_timeout_competitor = max(1, float(validation_search.get("request_timeout_competitor", 5)))
+        self.request_timeout_general = max(1, float(validation_search.get("request_timeout_general", 12)))
 
         api_keys = self.config.get("api_keys", {}) if isinstance(self.config.get("api_keys", {}), dict) else {}
         github_cfg = api_keys.get("github", {}) if isinstance(api_keys.get("github", {}), dict) else {}
@@ -1227,8 +1240,15 @@ class ResearchToolkit:
         seen_urls: set[str] = set()
         domain_counts: Counter[str] = Counter()
         validation_intent = intent.startswith("validation_")
-        provider_timeout = 3 if intent == "validation_recurrence" else 4 if intent == "validation_competitor" else 8
-        request_timeout = 4 if intent == "validation_recurrence" else 5 if intent == "validation_competitor" else 12
+        if intent == "validation_recurrence":
+            provider_timeout = self.provider_timeout_recurrence
+            request_timeout = self.request_timeout_recurrence
+        elif intent == "validation_competitor":
+            provider_timeout = self.provider_timeout_competitor
+            request_timeout = self.request_timeout_competitor
+        else:
+            provider_timeout = self.provider_timeout_general
+            request_timeout = self.request_timeout_general
 
         def _append_result(title: str, url: str, snippet: str) -> bool:
             normalized_url = normalize_search_url(url)
@@ -1250,9 +1270,9 @@ class ResearchToolkit:
                 return False
             results.append(
                 SearchDocument(
-                    title=compact_text(title, 180),
+                    title=compact_text(title, self.result_title_length),
                     url=normalized_url,
-                    snippet=compact_text(snippet, 320),
+                    snippet=compact_text(snippet, self.result_snippet_length),
                     source=site or "web",
                 )
             )
@@ -1284,9 +1304,10 @@ class ResearchToolkit:
 
                 rows: list[dict[str, Any]] = []
                 with DDGS() as ddgs:
-                    for row in ddgs.text(full_query, backend="duckduckgo", max_results=max_results + 4):
+                    extra = self.ddgs_extra_results
+                    for row in ddgs.text(full_query, backend=self.ddgs_backend, max_results=max_results + extra):
                         rows.append(row)
-                        if len(rows) >= max_results + 4:
+                        if len(rows) >= max_results + extra:
                             break
                 return rows
 
@@ -1321,7 +1342,7 @@ class ResearchToolkit:
                     "https://html.duckduckgo.com/html/",
                     params={"q": full_query},
                     timeout=request_timeout,
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; AutoResearcher/1.0)"},
+                    headers={"User-Agent": self.search_user_agent},
                 )
                 response.raise_for_status()
                 return response.text
@@ -1353,7 +1374,7 @@ class ResearchToolkit:
                         "https://www.bing.com/search",
                         params={"q": full_query},
                         timeout=request_timeout,
-                        headers={"User-Agent": "Mozilla/5.0 (compatible; AutoResearcher/1.0)"},
+                        headers={"User-Agent": self.search_user_agent},
                     )
                     response.raise_for_status()
                     return response.text

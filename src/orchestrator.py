@@ -94,6 +94,30 @@ class Orchestrator:
             await agent.start()
             self._started_agents.add(agent.name)
 
+    async def consume_until_quiet(self, max_messages: int = 50, timeout: float = 5.0) -> int:
+        """
+        Consume messages from the queue until it's quiet or max_messages reached.
+        Returns number of messages processed.
+        """
+        processed = 0
+        deadline = asyncio.get_event_loop().time() + timeout
+        while processed < max_messages:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                msg = await asyncio.wait_for(
+                    self.message_queue.get_for_agent(self.name),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                break
+            if msg is None:
+                break
+            await self.receive_message(msg)
+            processed += 1
+        return processed
+
     async def stop(self) -> None:
         self._running = False
         for name, agent in self._agents.items():
