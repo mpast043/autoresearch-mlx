@@ -19,15 +19,9 @@ discovery:
   # App/plugin review lanes (1–2 star pain). Tune slugs/handles to niches you care about.
   shopify_reviews:
     # Public storefront HTML scrape (no Shopify Partner/Admin API). Slugs: https://apps.shopify.com/<handle>
-    app_handles:
-      - backup-and-sync
-      - parcel-intelligence
-      - inventory-manager
-      - bold-brain-teaser
-      - zipify-onesliceupsell
-      - reamaze-live-help
-      - mage-smtp
-    max_apps: 7
+    # Leave empty to auto-discover from sitemap
+    app_handles: []
+    max_apps: 10
     reviews_per_app: 5
     rating_filters: [1, 2]
     sort_by: newest
