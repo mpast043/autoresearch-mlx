@@ -130,7 +130,7 @@ orchestration:
     retry_interval_seconds: 0
 
 builder:
-  auto_build: false
+  auto_build: true
 
 validation:
   promotion_threshold: 0.66

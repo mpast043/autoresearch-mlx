@@ -265,10 +265,13 @@ class Orchestrator:
                     priority=2,
                 )
 
+            # Ideation triggers on promote OR on prototype_candidate with build brief
             should_route_to_ideation = (
                 self._auto_ideate
-                and message.payload.get("passed")
-                and message.payload.get("decision") == "promote"
+                and (
+                    (message.payload.get("passed") and message.payload.get("decision") == "promote")
+                    or (build_brief_id and selection_status == "prototype_candidate")
+                )
             )
             if should_route_to_ideation:
                 await self.send_message(
