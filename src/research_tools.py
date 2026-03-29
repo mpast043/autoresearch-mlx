@@ -2011,7 +2011,11 @@ class ResearchToolkit:
         observer: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> list[dict[str, Any]]:
         shopify_config = self.config.get("discovery", {}).get("shopify_reviews", {})
-        app_handles = app_handles or shopify_config.get("app_handles") or ["parcel-intelligence", "backup-and-sync"]
+        # Allow empty list to trigger sitemap discovery
+        if app_handles is None:
+            app_handles = shopify_config.get("app_handles")
+        if app_handles is None:
+            app_handles = ["parcel-intelligence", "backup-and-sync"]
         max_apps = int(shopify_config.get("max_apps", 2))
         reviews = await self.shopify_review_adapter.fetch_reviews(
             app_handles=list(app_handles)[:max_apps],
