@@ -2012,9 +2012,10 @@ class ResearchToolkit:
     ) -> list[dict[str, Any]]:
         shopify_config = self.config.get("discovery", {}).get("shopify_reviews", {})
         app_handles = app_handles or shopify_config.get("app_handles") or ["parcel-intelligence", "backup-and-sync"]
+        max_apps = int(shopify_config.get("max_apps", 2))
         reviews = await self.shopify_review_adapter.fetch_reviews(
-            app_handles=list(app_handles)[:3],
-            max_apps=int(shopify_config.get("max_apps", 2)),
+            app_handles=list(app_handles)[:max_apps],
+            max_apps=max_apps,
             reviews_per_app=int(shopify_config.get("reviews_per_app", 2)),
             rating_filters=shopify_config.get("rating_filters") or [1],
             sort_by=str(shopify_config.get("sort_by", "newest")),
