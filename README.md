@@ -21,14 +21,21 @@ This repository currently contains the policy, source adapters, evaluation fixtu
 
 The current source-policy-aware lanes include:
 
-- Reddit
+- Reddit (problem posts from configured subreddits + r/all)
 - GitHub issues and discussions
-- WordPress Plugin Directory reviews
-- Shopify App Store reviews
+- WordPress Plugin Directory reviews (1-2 star pain)
+- Shopify App Store reviews (1-2 star pain)
+- Web search (DuckDuckGo - problem + success queries)
+- YouTube (comments)
 
-Important policy rule:
+**Deep Research** - Multi-source synthesis agent for targeted vertical exploration:
+```bash
+python cli.py deep-research --vertical <name>  # devtools, ecommerce, etc.
+```
 
-- review text or issue text can become `pain_signal` only when it is specific enough
+Important policy rules:
+- Reddit `search_time_filter: year` - only recent posts (configurable)
+- review text or issue text can become `pain_signal` only when specific enough
 - ratings, counts, pricing, popularity proxies, and listing metadata are enrichment inputs only
 - vague summaries, marketing copy, generic praise, and thin product-specific noise are screened out
 

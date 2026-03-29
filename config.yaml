@@ -36,7 +36,7 @@ discovery:
   # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
   reddit:
     # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
-    search_time_filter: all
+    search_time_filter: year
     # true = search r/all for each keyword (widest Reddit reach; noisier). false = only problem_subreddits below.
     use_r_all: false
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
@@ -127,8 +127,8 @@ validation:
     recurrence_results: 6
     competitor_results: 8
     evidence_sample: 5
-    recurrence_budget_seconds: 30.0
-    competitor_budget_seconds: 15.0
+    recurrence_budget_seconds: 45.0
+    competitor_budget_seconds: 20.0
     max_results_per_domain: 2
     # DuckDuckGo provider backend: "api" (default) or "duckduckgo" (HTML, may be blocked in some networks)
     ddgs_backend: api
@@ -140,13 +140,13 @@ validation:
     # HTTP user-agent sent with search requests
     search_user_agent: "Mozilla/5.0 (compatible; AutoResearcher/1.0)"
     # Provider (ddgs/duckduckgo_search) timeouts per intent (seconds)
-    provider_timeout_recurrence: 3
-    provider_timeout_competitor: 4
-    provider_timeout_general: 8
+    provider_timeout_recurrence: 8
+    provider_timeout_competitor: 10
+    provider_timeout_general: 12
     # HTTP request timeouts per intent (seconds)
-    request_timeout_recurrence: 4
-    request_timeout_competitor: 5
-    request_timeout_general: 12
+    request_timeout_recurrence: 10
+    request_timeout_competitor: 12
+    request_timeout_general: 20
 
 reddit_bridge:
   enabled: true

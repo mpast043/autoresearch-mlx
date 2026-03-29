@@ -17,6 +17,10 @@ python cli.py run-once              # single discovery run
 python cli.py run-once --verbose    # verbose output with artifact counts and decision logs
 python cli.py watch                  # continuous watch mode (renders pipeline_status.json)
 
+# Deep research (targeted vertical exploration)
+python cli.py deep-research --vertical devtools   # multi-source synthesis for devtools vertical
+python cli.py deep-research --vertical ecommerce # ecommerce vertical
+
 # Behavioral evaluation
 python cli.py eval                   # runs gold-set behavioral eval harness
 
