@@ -9,6 +9,7 @@ discovery:
     - reddit
     - web
     - github
+    - youtube
     - wordpress_reviews
     - shopify_reviews
   candidate_filter:
@@ -21,8 +22,14 @@ discovery:
     app_handles:
       - backup-and-sync
       - parcel-intelligence
-    max_apps: 2
-    reviews_per_app: 3
+      - y间的-shopify-app
+      - shopify-inventory-manager
+      - bold-brain-teaser
+      - zipify-onesliceupsell
+      - reamaze-live-help
+      - mage SMTP
+    max_apps: 8
+    reviews_per_app: 5
     rating_filters: [1, 2]
     sort_by: newest
   wordpress_reviews:
@@ -30,7 +37,12 @@ discovery:
       - woocommerce
       - elementor
       - wordfence
-    reviews_per_plugin: 3
+      - wp-rocket
+      - elementor-pro
+      - wordpress-seo
+      - woocommerce-services
+      - fluent-crm
+    reviews_per_plugin: 5
     star_filters: [1, 2]
 
   # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
