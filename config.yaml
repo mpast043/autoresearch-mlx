@@ -22,13 +22,12 @@ discovery:
     app_handles:
       - backup-and-sync
       - parcel-intelligence
-      - y间的-shopify-app
-      - shopify-inventory-manager
+      - inventory-manager
       - bold-brain-teaser
       - zipify-onesliceupsell
       - reamaze-live-help
-      - mage SMTP
-    max_apps: 8
+      - mage-smtp
+    max_apps: 7
     reviews_per_app: 5
     rating_filters: [1, 2]
     sort_by: newest
