@@ -727,6 +727,8 @@ class ResearchToolkit:
         self.request_timeout_recurrence = max(1, float(validation_search.get("request_timeout_recurrence", 4)))
         self.request_timeout_competitor = max(1, float(validation_search.get("request_timeout_competitor", 5)))
         self.request_timeout_general = max(1, float(validation_search.get("request_timeout_general", 12)))
+        # YouTube API key
+        self.youtube_api_key = os.environ.get("YOUTUBE_API_KEY", "")
 
         api_keys = self.config.get("api_keys", {}) if isinstance(self.config.get("api_keys", {}), dict) else {}
         github_cfg = api_keys.get("github", {}) if isinstance(api_keys.get("github", {}), dict) else {}
@@ -1490,6 +1492,41 @@ class ResearchToolkit:
         except Exception:
             return ""
 
+    async def youtube_comments(self, video_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Fetch YouTube video comments via Data API v3."""
+        if not self.youtube_api_key:
+            return []
+
+        comments: list[dict[str, Any]] = []
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as session:
+                # Get comment threads
+                url = "https://www.googleapis.com/youtube/v3/commentThreads"
+                params = {
+                    "part": "snippet",
+                    "videoId": video_id,
+                    "maxResults": min(limit, 100),
+                    "key": self.youtube_api_key,
+                }
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+                    for item in data.get("items", []):
+                        snippet = item.get("snippet", {})
+                        top_comment = snippet.get("topLevelComment", {}).get("snippet", {})
+                        comments.append({
+                            "author": top_comment.get("authorDisplayName", ""),
+                            "text": top_comment.get("textDisplay", ""),
+                            "like_count": top_comment.get("likeCount", 0),
+                            "published_at": top_comment.get("publishedAt", ""),
+                        })
+        except Exception:
+            pass
+        return comments
+
     async def youtube_search(self, query: str, limit: int = 5) -> list[SearchDocument]:
         cache_key = (f"youtube:{query}", limit, "youtube", "general")
         if cache_key in self._search_cache:
@@ -1527,6 +1564,35 @@ class ResearchToolkit:
                     pass
 
         docs = await self.search_web(query, max_results=limit, site="youtube.com")
+        # Fallback to YouTube Data API if no results
+        if not docs and self.youtube_api_key:
+            try:
+                import aiohttp
+
+                async with aiohttp.ClientSession() as session:
+                    url = "https://www.googleapis.com/youtube/v3/search"
+                    params = {
+                        "part": "snippet",
+                        "q": query,
+                        "maxResults": min(limit, 10),
+                        "type": "video",
+                        "key": self.youtube_api_key,
+                    }
+                    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            for item in data.get("items", [])[:limit]:
+                                snippet = item.get("snippet", {})
+                                docs.append(
+                                    SearchDocument(
+                                        title=snippet.get("title", ""),
+                                        url=f'https://www.youtube.com/watch?v={item["id"]["videoId"]}',
+                                        snippet=snippet.get("description", "")[:200],
+                                        source="youtube",
+                                    )
+                                )
+            except Exception:
+                pass
         self._search_cache[cache_key] = list(docs)
         return docs
 
@@ -1626,6 +1692,82 @@ class ResearchToolkit:
                     },
                 }
             )
+        return findings
+
+    async def _discover_youtube_comments(
+        self,
+        keywords: Optional[list[str]] = None,
+        observer: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> list[dict[str, Any]]:
+        """Discover problem signals from YouTube video comments."""
+        keywords = keywords or [
+            "shopify app review", "shopify problems", "ecommerce tools",
+            "shopify alternative", "shopify frustration",
+        ]
+        docs: list[tuple[str, SearchDocument]] = []
+        for keyword in keywords[:4]:
+            started = asyncio.get_running_loop().time()
+            status = "ok"
+            error = ""
+            query_docs: list[SearchDocument] = []
+            try:
+                query_docs = await self.youtube_search(keyword, limit=3)
+            except Exception as exc:
+                status = "error"
+                error = str(exc)
+            if observer:
+                observer(
+                    {
+                        "source_name": "youtube-comments",
+                        "query_text": keyword,
+                        "docs_seen": len(query_docs),
+                        "latency_ms": round((asyncio.get_running_loop().time() - started) * 1000, 2),
+                        "status": status,
+                        "error": error,
+                    }
+                )
+            docs.extend((keyword, doc) for doc in query_docs)
+
+        findings: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        problem_keywords = [
+            "problem", "issue", "broken", "bug", "frustrat", "annoying", "slow",
+            "expensive", "missing", "need", "wish", "want", "can't", "cannot",
+            "doesn work", "doesn't work", "no option", "hard to", "difficult",
+        ]
+        for keyword, doc in docs:
+            if doc.url in seen_urls:
+                continue
+            seen_urls.add(doc.url)
+            video_id_match = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{6,})", doc.url)
+            if not video_id_match:
+                continue
+            comments = await self.youtube_comments(video_id_match.group(1), limit=20)
+            # Filter for problem-focused comments
+            problem_comments = [
+                c for c in comments
+                if any(pk in c.get("text", "").lower() for pk in problem_keywords)
+            ]
+            if not problem_comments:
+                continue
+            comment_texts = " | ".join(c["text"][:200] for c in problem_comments[:5])
+            findings.append({
+                "source": "youtube",
+                "source_url": doc.url,
+                "entrepreneur": "Video commenter",
+                "product_built": doc.title,
+                "monetization_method": "",
+                "outcome_summary": compact_text(comment_texts, 420),
+                "finding_kind": "pain_signal",
+                "recurrence_key": infer_recurrence_key(doc.title),
+                "evidence": {
+                    "source_plan": "youtube-comments",
+                    "discovery_query": keyword,
+                    "channel_or_site": "youtube",
+                    "snippet": doc.snippet,
+                    "comments": problem_comments[:5],
+                },
+            })
         return findings
 
     async def _discover_reddit_successes(

@@ -176,6 +176,16 @@ class DiscoveryAgent(BaseAgent):
                 default_limit=4,
             )
             return await self.toolkit._discover_youtube_successes(keywords=queries, observer=observer)
+        if normalized == "youtube-comments":
+            queries = self._plan_queries(
+                "youtube-comments",
+                self.config.get("discovery", {}).get("youtube_comments", {}).get(
+                    "keywords",
+                    ["shopify app review", "shopify problems", "ecommerce tools"],
+                ),
+                default_limit=3,
+            )
+            return await self.toolkit._discover_youtube_comments(keywords=queries, observer=observer)
         if normalized == "reddit":
             reddit_subreddits = reddit_discovery_subreddits(self.config)
             success_candidates = reddit_success_keywords(self.config)

@@ -10,6 +10,7 @@ discovery:
     - web
     - github
     - youtube
+    - youtube-comments
     - wordpress_reviews
     - shopify_reviews
   candidate_filter:
@@ -37,6 +38,14 @@ discovery:
       - fluent-crm
     reviews_per_plugin: 5
     star_filters: [1, 2]
+  # YouTube comments for problem discovery
+  youtube_comments:
+    keywords:
+      - "shopify app review 2024"
+      - "best shopify apps"
+      - "shopify app recommendations"
+      - "shopify app vs"
+      - "ecommerce tools review"
 
   # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
   reddit:
