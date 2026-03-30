@@ -4,13 +4,21 @@ import os
 import sqlite3
 import sys
 import tempfile
-
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from aiohttp.test_utils import make_mocked_request
 
-from reddit_relay import ALLOW_NO_AUTH_KEY, AUTH_TOKEN_KEY, STORE_KEY, RedditRelayStore, build_relay_app, cached_search, cached_thread
+from reddit_relay import (
+    ALLOW_NO_AUTH_KEY,
+    AUTH_TOKEN_KEY,
+    STORE_KEY,
+    RedditRelayStore,
+    build_relay_app,
+    cached_search,
+    cached_thread,
+)
 
 
 def test_relay_store_search_round_trip():
@@ -62,7 +70,7 @@ def test_relay_store_thread_and_comments_round_trip():
 def test_cached_thread_repairs_legacy_shape():
     path = tempfile.mktemp(suffix=".db")
     try:
-        store = RedditRelayStore(path)
+        RedditRelayStore(path)
         with sqlite3.connect(path) as conn:
             conn.execute(
                 "INSERT INTO reddit_thread_cache (url, payload_json, collected_at) VALUES (?, ?, ?)",
@@ -160,3 +168,14 @@ def test_cached_search_handles_invalid_json_payload():
     finally:
         if os.path.exists(path):
             os.remove(path)
+
+
+def test_build_relay_app_default_db_path_is_project_rooted():
+    app = build_relay_app({"reddit_relay": {"allow_no_auth": True}})
+    try:
+        expected = str((Path(__file__).resolve().parents[1] / "data" / "reddit_relay_cache.db").resolve())
+        assert app[STORE_KEY].db_path == expected
+    finally:
+        db_path = Path(app[STORE_KEY].db_path)
+        if db_path.exists():
+            db_path.unlink()

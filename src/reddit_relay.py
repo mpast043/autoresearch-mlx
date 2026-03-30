@@ -20,6 +20,8 @@ from urllib.parse import urlparse
 
 from aiohttp import web
 
+from runtime.paths import resolve_project_path
+
 try:
     from reddit_bridge import normalize_reddit_item
 except Exception:  # pragma: no cover - supports package and direct module usage
@@ -487,7 +489,7 @@ async def cached_comments(request: web.Request) -> web.Response:
 def build_relay_app(config: dict[str, Any] | None = None) -> web.Application:
     config = config or {}
     relay_config = config.get("reddit_relay", config)
-    db_path = relay_config.get("cache_db_path") or "data/reddit_relay_cache.db"
+    db_path = str(resolve_project_path(relay_config.get("cache_db_path"), default="data/reddit_relay_cache.db"))
     auth_token = _resolve_env(relay_config.get("auth_token", ""))
     allow_no_auth = bool(relay_config.get("allow_no_auth", False))
 
