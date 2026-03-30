@@ -42,6 +42,68 @@ def test_default_initialization(temp_db):
     assert agent._seen_hashes == set()
 
 
+def test_discover_once_refreshes_config_after_expansion(temp_db, tmp_path, monkeypatch):
+    state_path = tmp_path / "discovery_expansion.json"
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["reddit"],
+        config={
+            "discovery": {
+                "auto_expand": True,
+                "expansion": {"state_path": str(state_path), "cooldown_hours": 0},
+                "reddit": {"problem_keywords": ["base keyword"], "problem_subreddits": ["basesub"]},
+            }
+        },
+    )
+
+    monkeypatch.setattr(
+        "agents.discovery.run_expansion",
+        lambda db, config: {
+            "expanded": True,
+            "added_keywords": ["fresh keyword"],
+            "added_subreddits": ["freshsub"],
+        },
+    )
+
+    def fake_get_expanded_config(config):
+        merged = dict(config)
+        discovery = dict(merged.get("discovery", {}))
+        reddit = dict(discovery.get("reddit", {}))
+        reddit["problem_keywords"] = [*reddit.get("problem_keywords", []), "fresh keyword"]
+        reddit["problem_subreddits"] = [*reddit.get("problem_subreddits", []), "freshsub"]
+        discovery["reddit"] = reddit
+        merged["discovery"] = discovery
+        return merged
+
+    monkeypatch.setattr("agents.discovery.get_expanded_config", fake_get_expanded_config)
+
+    captured = {}
+
+    class DummyToolkit:
+        def __init__(self, config):
+            captured["keywords"] = config["discovery"]["reddit"]["problem_keywords"]
+            captured["subreddits"] = config["discovery"]["reddit"]["problem_subreddits"]
+
+        def set_discovery_feedback(self, feedback):
+            return None
+
+    monkeypatch.setattr("agents.discovery.ResearchToolkit", DummyToolkit)
+
+    async def no_prime():
+        return None
+
+    async def no_results(source):
+        return []
+
+    agent._prime_reddit_relay = no_prime
+    agent._check_source = no_results
+
+    asyncio.run(agent._discover_once())
+
+    assert captured["keywords"] == ["base keyword", "fresh keyword"]
+    assert captured["subreddits"] == ["basesub", "freshsub"]
+
+
 def test_custom_sources_initialization(temp_db):
     agent = DiscoveryAgent(temp_db, sources=["reddit", "github"])
     assert agent.sources == ["reddit", "github"]
@@ -608,65 +670,3 @@ def test_prime_reddit_relay_includes_learned_theme_queries(temp_db, monkeypatch)
 
     assert "duct tape spreadsheets" in captured["queries"]
     assert "manual handoff workflow" in captured["queries"]
-
-
-def test_discover_once_refreshes_config_after_expansion(temp_db, tmp_path, monkeypatch):
-    state_path = tmp_path / "discovery_expansion.json"
-    agent = DiscoveryAgent(
-        temp_db,
-        sources=["reddit"],
-        config={
-            "discovery": {
-                "auto_expand": True,
-                "expansion": {"state_path": str(state_path), "cooldown_hours": 0},
-                "reddit": {"problem_keywords": ["base keyword"], "problem_subreddits": ["basesub"]},
-            }
-        },
-    )
-
-    monkeypatch.setattr(
-        "agents.discovery.run_expansion",
-        lambda db, config: {
-            "expanded": True,
-            "added_keywords": ["fresh keyword"],
-            "added_subreddits": ["freshsub"],
-        },
-    )
-
-    def fake_get_expanded_config(config):
-        merged = dict(config)
-        discovery = dict(merged.get("discovery", {}))
-        reddit = dict(discovery.get("reddit", {}))
-        reddit["problem_keywords"] = [*reddit.get("problem_keywords", []), "fresh keyword"]
-        reddit["problem_subreddits"] = [*reddit.get("problem_subreddits", []), "freshsub"]
-        discovery["reddit"] = reddit
-        merged["discovery"] = discovery
-        return merged
-
-    monkeypatch.setattr("agents.discovery.get_expanded_config", fake_get_expanded_config)
-
-    captured = {}
-
-    class DummyToolkit:
-        def __init__(self, config):
-            captured["keywords"] = config["discovery"]["reddit"]["problem_keywords"]
-            captured["subreddits"] = config["discovery"]["reddit"]["problem_subreddits"]
-
-        def set_discovery_feedback(self, feedback):
-            return None
-
-    monkeypatch.setattr("agents.discovery.ResearchToolkit", DummyToolkit)
-
-    async def no_prime():
-        return None
-
-    async def no_results(source):
-        return []
-
-    agent._prime_reddit_relay = no_prime
-    agent._check_source = no_results
-
-    asyncio.run(agent._discover_once())
-
-    assert captured["keywords"] == ["base keyword", "fresh keyword"]
-    assert captured["subreddits"] == ["basesub", "freshsub"]

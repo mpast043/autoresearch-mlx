@@ -20,13 +20,14 @@ def _expansion_file(config: dict[str, Any] | None = None, *, path: str | Path | 
     if path is not None:
         return resolve_project_path(path)
     configured = (config or {}).get("discovery", {}).get("expansion", {}).get("state_path")
-    return resolve_project_path(configured or DEFAULT_EXPANSION_PATH)
+    return resolve_project_path(configured, default=DEFAULT_EXPANSION_PATH)
+
 
 def load_expansion_state(
-    config: dict[str, Any] | None = None, 
-    *, 
+    config: dict[str, Any] | None = None,
+    *,
     path: str | Path | None = None,
-)-> dict[str, Any]:
+) -> dict[str, Any]:
     """Load current expansion state from file."""
     expansion_file = _expansion_file(config, path=path)
     if expansion_file.exists():
@@ -96,7 +97,7 @@ def get_winning_patterns(db, min_score: float = 0.5) -> dict[str, list[str]]:
 def _merge_unique(existing: list[str], new_items: list[str]) -> list[str]:
     seen: set[str] = set()
     merged: list[str] = []
-    for item in *(existing or []), *(new_items or []):
+    for item in [*(existing or []), *(new_items or [])]:
         cleaned = str(item).strip()
         if not cleaned:
             continue
@@ -129,16 +130,18 @@ def generate_candidates(
     winning = winning or {"keywords": [], "subreddits": []}
     suggested_keywords = _merge_unique(
         winning.get("keywords", []),
-        suggestions.get("suggested_keywords", [])
+        suggestions.get("suggested_keywords", []),
     )
-    suggested_subreddits = _merge_unique(
+    suggested_subs = _merge_unique(
         winning.get("subreddits", []),
-        suggestions.get("suggested_subreddits_from_findings", [])
+        suggestions.get("suggested_subreddits_from_findings", []),
     )
+
     base_keyword_keys = {bk.lower() for bk in base_keywords}
     base_subreddit_keys = {bs.lower() for bs in base_subreddits}
+
     new_keywords = [k for k in suggested_keywords if k.lower() not in base_keyword_keys]
-    new_subreddits = [s for s in suggested_subreddits if s.lower() not in base_subreddit_keys]
+    new_subreddits = [s for s in suggested_subs if s.lower() not in base_subreddit_keys]
 
     return {
         "keywords": new_keywords[:max_new_keywords],
@@ -183,9 +186,9 @@ def run_expansion(db, config: dict[str, Any]) -> dict[str, Any]:
 
     # Generate candidates
     candidates = generate_candidates(
-        db, 
-        base_keywords, 
-        base_subreddits, 
+        db,
+        base_keywords,
+        base_subreddits,
         max_new_keywords=max_keywords,
         max_new_subreddits=max_subreddits,
         winning=winning,
@@ -235,12 +238,6 @@ def get_expanded_config(config: dict[str, Any]) -> dict[str, Any]:
     reddit_section = merged.setdefault("discovery", {}).setdefault("reddit", {})
     reddit_section["problem_keywords"] = all_keywords
     reddit_section["problem_subreddits"] = all_subreddits
-
-    if "reddit" not in merged.get("discovery", {}):
-        merged.setdefault("reddit", {})
-
-    merged["discovery"]["reddit"]["problem_keywords"] = all_keywords
-    merged["discovery"]["reddit"]["problem_subreddits"] = all_subreddits
 
     logger.info(f"Merged config: {len(all_keywords)} keywords ({len(expanded_keywords)} expanded), "
                 f"{len(all_subreddits)} subreddits ({len(expanded_subreddits)} expanded)")

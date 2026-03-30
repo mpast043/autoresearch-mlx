@@ -6,13 +6,13 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from database import Database
 from discovery_expander import (
     get_expanded_config,
     load_expansion_state,
     run_expansion,
     save_expansion_state,
 )
-from database import Database
 
 
 @pytest.fixture
