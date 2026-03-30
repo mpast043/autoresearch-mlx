@@ -78,6 +78,25 @@ except Exception:  # pragma: no cover - supports package and direct module usage
         def normalize_content(text: str) -> str:
             return " ".join((text or "").lower().split())
 
+# Re-export text utilities for backward compatibility (functions only)
+from utils.text import (
+    compact_text,
+    contains_keyword,
+    domain_for,
+    first_match,
+    infer_recurrence_key,
+    normalize_search_url,
+    query_phrases,
+    query_terms,
+    topical_overlap,
+    unwrap_search_result_url,
+    url_path,
+    slugify,
+    _query_phrase,
+    _query_term_span,
+    _clean_recurrence_text,
+)
+
 
 AI_TOOL_KEYWORDS = [
     "openai",
