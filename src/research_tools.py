@@ -1340,6 +1340,25 @@ class ResearchToolkit:
         if url in self._fetch_cache:
             return dict(self._fetch_cache[url])
 
+        # Check for Jina Reader config
+        use_jina = self.config.get("discovery", {}).get("web", {}).get("use_jina_reader", False)
+
+        if use_jina:
+            try:
+                from utils.jina_reader import read_url_async
+                result = await read_url_async(url)
+                if result.success:
+                    normalized = {
+                        "url": url,
+                        "title": compact_text(result.title or url, 180),
+                        "description": compact_text(result.markdown[:900] if result.markdown else "", 900),
+                        "text": compact_text(result.markdown or "", 2500),
+                    }
+                    self._fetch_cache[url] = normalized
+                    return dict(normalized)
+            except Exception:
+                pass  # Fall through to other methods
+
         if self.fetcher:
             try:
                 payload = await asyncio.to_thread(self.fetcher.fetch, url)

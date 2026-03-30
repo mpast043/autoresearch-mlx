@@ -12,6 +12,12 @@ discovery:
     min_validation_score: 0.4
     cooldown_hours: 12
 
+  # Web discovery options
+  web:
+    # Use Jina Reader for content extraction (free, no API key)
+    # Falls back to MCP fetcher or requests+BeautifulSoup if disabled
+    use_jina_reader: true
+
   # `web` = broad web search + marketplace pain threads (see DiscoveryAgent._check_source).
   sources:
     - reddit
