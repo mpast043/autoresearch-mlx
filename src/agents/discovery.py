@@ -104,8 +104,9 @@ class DiscoveryAgent(BaseAgent):
     ):
         super().__init__("discovery", message_queue)
         self.db = db
+        self.base_config = config or {}
         # Apply expanded config at init
-        self.config = get_expanded_config(config or {})
+        self.config = get_expanded_config(self.base_config)
         self.sources = sources if sources is not None else ["youtube", "reddit", "github"]
         self.check_interval = self.config.get("discovery", {}).get("check_interval", 300)
         self.toolkit = ResearchToolkit(self.config)
@@ -138,11 +139,13 @@ class DiscoveryAgent(BaseAgent):
     async def _discover_once(self) -> list[int]:
         # Run expansion to add new keywords/subreddits based on previous wave's feedback
         try:
-            expansion_result = run_expansion(self.db, self.config)
+            expansion_result = run_expansion(self.db, self.base_config)
             if expansion_result.get("expanded"):
                 logger.info(f"Discovery expanded: +{len(expansion_result.get('added_keywords', []))} keywords, "
                             f"+{len(expansion_result.get('added_subreddits', []))} subreddits")
-                # Refresh toolkit with expanded config
+                # Refresh toolkit with expanded config so the new scope is used immediately.
+                self.config = get_expanded_config(self.base_config)
+                self.check_interval = self.config.get("discovery", {}).get("check_interval", 300)
                 self.toolkit = ResearchToolkit(self.config)
         except Exception as e:
             logger.warning(f"Expansion failed: {e}")

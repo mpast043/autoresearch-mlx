@@ -9,17 +9,29 @@ from pathlib import Path
 from typing import Any
 
 from discovery_suggestions import build_discovery_suggestions
+from runtime.paths import resolve_project_path
 
 logger = logging.getLogger(__name__)
 
-EXPANSION_FILE = Path("data/discovery_expansion.json")
+DEFAULT_EXPANSION_PATH = Path("data/discovery_expansion.json")
 
 
-def load_expansion_state() -> dict[str, Any]:
+def _expansion_file(config: dict[str, Any] | None = None, *, path: str | Path | None = None) -> Path:
+    if path is not None:
+        return resolve_project_path(path)
+    configured = (config or {}).get("discovery", {}).get("expansion", {}).get("state_path")
+    return resolve_project_path(configured or DEFAULT_EXPANSION_PATH)
+
+def load_expansion_state(
+    config: dict[str, Any] | None = None, 
+    *, 
+    path: str | Path | None = None,
+)-> dict[str, Any]:
     """Load current expansion state from file."""
-    if EXPANSION_FILE.exists():
+    expansion_file = _expansion_file(config, path=path)
+    if expansion_file.exists():
         try:
-            return json.loads(EXPANSION_FILE.read_text())
+            return json.loads(expansion_file.read_text())
         except json.JSONDecodeError:
             pass
     return {
@@ -29,10 +41,16 @@ def load_expansion_state() -> dict[str, Any]:
     }
 
 
-def save_expansion_state(state: dict[str, Any]) -> None:
+def save_expansion_state(
+    state: dict[str, Any],
+    config: dict[str, Any] | None = None,
+    *,
+    path: str | Path | None = None,
+) -> None:
     """Save expansion state to file."""
-    EXPANSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    EXPANSION_FILE.write_text(json.dumps(state, indent=2))
+    expansion_file = _expansion_file(config, path=path)
+    expansion_file.parent.mkdir(parents=True, exist_ok=True)
+    expansion_file.write_text(json.dumps(state, indent=2))
 
 
 def get_winning_patterns(db, min_score: float = 0.5) -> dict[str, list[str]]:
@@ -75,24 +93,56 @@ def get_winning_patterns(db, min_score: float = 0.5) -> dict[str, list[str]]:
     }
 
 
-def generate_candidates(db, base_keywords: list[str], base_subreddits: list[str], max_new: int = 3) -> dict[str, list[str]]:
+def _merge_unique(existing: list[str], new_items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for item in *(existing or []), *(new_items or []):
+        cleaned = str(item).strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(cleaned)
+    return merged
+
+
+def generate_candidates(
+    db,
+    base_keywords: list[str],
+    base_subreddits: list[str],
+    *,
+    max_new_keywords: int = 3,
+    max_new_subreddits: int = 2,
+    winning: dict[str, list[str]] | None = None,
+) -> dict[str, list[str]]:
     """Generate new keyword candidates based on winning patterns.
 
     Uses existing problem atoms to extract similar language patterns.
     """
-    # Get suggestions from existing DB
-    suggestions = build_discovery_suggestions(db, max_keywords=max_new * 3)
+    suggestions = build_discovery_suggestions(
+        db,
+        max_keywords=max(max_new_keywords, max_new_subreddits) * 3,
+    )
 
-    suggested_keywords = suggestions.get("suggested_keywords", [])
-    suggested_subs = suggestions.get("suggested_subreddits_from_findings", [])
-
-    # Filter out already-active keywords/subreddits
-    new_keywords = [k for k in suggested_keywords if k.lower() not in [bk.lower() for bk in base_keywords]]
-    new_subreddits = [s for s in suggested_subs if s.lower() not in [bs.lower() for bs in base_subreddits]]
+    winning = winning or {"keywords": [], "subreddits": []}
+    suggested_keywords = _merge_unique(
+        winning.get("keywords", []),
+        suggestions.get("suggested_keywords", [])
+    )
+    suggested_subreddits = _merge_unique(
+        winning.get("subreddits", []),
+        suggestions.get("suggested_subreddits_from_findings", [])
+    )
+    base_keyword_keys = {bk.lower() for bk in base_keywords}
+    base_subreddit_keys = {bs.lower() for bs in base_subreddits}
+    new_keywords = [k for k in suggested_keywords if k.lower() not in base_keyword_keys]
+    new_subreddits = [s for s in suggested_subreddits if s.lower() not in base_subreddit_keys]
 
     return {
-        "keywords": new_keywords[:max_new],
-        "subreddits": new_subreddits[:max_new],
+        "keywords": new_keywords[:max_new_keywords],
+        "subreddits": new_subreddits[:max_new_subreddits],
     }
 
 
@@ -109,7 +159,7 @@ def run_expansion(db, config: dict[str, Any]) -> dict[str, Any]:
 
     # Check cooldown
     cooldown_hours = expansion_config.get("cooldown_hours", 24)
-    state = load_expansion_state()
+    state = load_expansion_state(config)
     last_ts = state.get("last_expansion_ts", 0)
     hours_since = (time.time() - last_ts) / 3600
 
@@ -132,15 +182,22 @@ def run_expansion(db, config: dict[str, Any]) -> dict[str, Any]:
     logger.info(f"Found {len(winning['keywords'])} winning keywords, {len(winning['subreddits'])} winning subreddits")
 
     # Generate candidates
-    candidates = generate_candidates(db, base_keywords, base_subreddits, max_keywords)
+    candidates = generate_candidates(
+        db, 
+        base_keywords, 
+        base_subreddits, 
+        max_new_keywords=max_keywords,
+        max_new_subreddits=max_subreddits,
+        winning=winning,
+    )
     logger.info(f"Generated {len(candidates['keywords'])} new keyword candidates, {len(candidates['subreddits'])} subreddit candidates")
 
     # Add to state
-    state["keywords"] = list(set(state.get("keywords", []) + candidates["keywords"]))
-    state["subreddits"] = list(set(state.get("subreddits", []) + candidates["subreddits"]))
+    state["keywords"] = _merge_unique(state.get("keywords", []), candidates["keywords"])
+    state["subreddits"] = _merge_unique(state.get("subreddits", []), candidates["subreddits"])
     state["last_expansion_ts"] = time.time()
 
-    save_expansion_state(state)
+    save_expansion_state(state, config)
 
     logger.info(f"Expansion complete: added {len(candidates['keywords'])} keywords, {len(candidates['subreddits'])} subreddits")
 
@@ -156,7 +213,7 @@ def get_expanded_config(config: dict[str, Any]) -> dict[str, Any]:
 
     Returns a modified config dict with expanded discovery scope.
     """
-    state = load_expansion_state()
+    state = load_expansion_state(config)
     expanded_keywords = state.get("keywords", [])
     expanded_subreddits = state.get("subreddits", [])
 
@@ -172,8 +229,12 @@ def get_expanded_config(config: dict[str, Any]) -> dict[str, Any]:
     base_subreddits = reddit_config.get("problem_subreddits", [])
 
     # Merge
-    all_keywords = list(set(base_keywords + expanded_keywords))
-    all_subreddits = list(set(base_subreddits + expanded_subreddits))
+    all_keywords = _merge_unique(base_keywords, expanded_keywords)
+    all_subreddits = _merge_unique(base_subreddits, expanded_subreddits)
+
+    reddit_section = merged.setdefault("discovery", {}).setdefault("reddit", {})
+    reddit_section["problem_keywords"] = all_keywords
+    reddit_section["problem_subreddits"] = all_subreddits
 
     if "reddit" not in merged.get("discovery", {}):
         merged.setdefault("reddit", {})

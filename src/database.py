@@ -1183,11 +1183,19 @@ class Database:
         return [self._row_to_problem_atom(row) for row in rows]
 
     def get_problem_atoms_by_cluster_key(self, cluster_key: str) -> list[ProblemAtom]:
-        rows = self.get_problem_atoms(limit=5000)
-        matched = [ProblemAtom(**row) if isinstance(row, dict) else row for row in []]
-        del matched
-        atoms = [self._row_to_problem_atom(row) for row in self._get_connection().execute("SELECT * FROM problem_atoms ORDER BY id ASC").fetchall()]
-        return [atom for atom in atoms if atom.cluster_key == cluster_key]
+        conn = self._get_connection()
+        table_columns = _table_columns(conn, "problem_atoms")
+        if "cluster_key" in table_columns:
+            rows = conn.execute(
+                "SELECT * FROM problem_atoms WHERE cluster_key = ? ORDER BY id ASC",
+                (cluster_key,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM problem_atoms WHERE json_extract(metadata_json, '$.cluster_key') = ? ORDER BY id ASC",
+                (cluster_key,),
+            ).fetchall()
+        return [self._row_to_problem_atom(row) for row in rows]
 
     def get_cluster(self, cluster_id: int) -> Optional[OpportunityCluster]:
         conn = self._get_connection()
@@ -1209,14 +1217,26 @@ class Database:
         table_columns = _table_columns(conn, "opportunity_clusters")
         cluster_key = cluster.cluster_key or (cluster.metadata or {}).get("cluster_key", "")
         existing = None
-        for row in conn.execute("SELECT * FROM opportunity_clusters ORDER BY id DESC").fetchall():
-            row_cluster = self._row_to_cluster(row)
-            if cluster_key and row_cluster.cluster_key == cluster_key:
-                existing = row_cluster
-                break
-            if not cluster_key and row_cluster.label == cluster.label and row_cluster.job_to_be_done == cluster.job_to_be_done:
-                existing = row_cluster
-                break
+        if cluster_key:
+            if "cluster_key" in table_columns:
+                row = conn.execute(
+                    "SELECT * FROM opportunity_clusters WHERE cluster_key = ? ORDER BY id DESC LIMIT 1",
+                    (cluster_key,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM opportunity_clusters WHERE json_extract(metadata_json, '$.cluster_key') = ? ORDER BY id DESC LIMIT 1",
+                    (cluster_key,),
+                ).fetchone()
+            if row:
+                existing = self._row_to_cluster(row)
+        if existing is None:
+            row = conn.execute(
+                "SELECT * FROM opportunity_clusters WHERE label = ? AND job_to_be_done = ? ORDER BY id DESC LIMIT 1",
+                (cluster.label, cluster.job_to_be_done),
+            ).fetchone()
+            if row:
+                existing = self._row_to_cluster(row)
         payload = {
             "cluster_key": cluster_key or cluster.label,
             "label": cluster.label,
@@ -1299,28 +1319,28 @@ class Database:
         conn = self._get_connection()
         member_columns = _table_columns(conn, "cluster_members")
         atom_column = "problem_atom_id" if "problem_atom_id" in member_columns else "atom_id"
-        rows = conn.execute("SELECT * FROM problem_atoms ORDER BY id ASC").fetchall()
+        atom_columns = _table_columns(conn, "problem_atoms")
+        cluster_columns = _table_columns(conn, "opportunity_clusters")
+        atom_cluster_expr = "pa.cluster_key" if "cluster_key" in atom_columns else "json_extract(pa.metadata_json, '$.cluster_key')"
+        cluster_key_expr = "oc.cluster_key" if "cluster_key" in cluster_columns else "json_extract(oc.metadata_json, '$.cluster_key')"
+        rows = conn.execute(
+            f"""
+            SELECT oc.id AS cluster_id, pa.id AS atom_id
+            FROM problem_atoms pa
+            JOIN opportunity_clusters oc ON {cluster_key_expr} = {atom_cluster_expr}
+            LEFT JOIN cluster_members cm
+              ON cm.cluster_id = oc.id AND cm.{atom_column} = pa.id
+            WHERE {atom_cluster_expr} IS NOT NULL
+              AND {atom_cluster_expr} != ''
+              AND cm.cluster_id IS NULL
+            ORDER BY pa.id ASC
+            """
+        ).fetchall()
         for row in rows:
-            atom = self._row_to_problem_atom(row)
-            if not atom.cluster_key:
-                continue
-            cluster_id = None
-            for cluster_row in conn.execute("SELECT * FROM opportunity_clusters ORDER BY id ASC").fetchall():
-                cluster = self._row_to_cluster(cluster_row)
-                if cluster.cluster_key == atom.cluster_key:
-                    cluster_id = cluster.id
-                    break
-            if cluster_id is None:
-                continue
-            exists = conn.execute(
-                f"SELECT 1 FROM cluster_members WHERE cluster_id = ? AND {atom_column} = ?",
-                (cluster_id, atom.id),
-            ).fetchone()
-            if not exists:
-                conn.execute(
-                    f"INSERT INTO cluster_members (cluster_id, {atom_column}) VALUES (?, ?)",
-                    (cluster_id, atom.id),
-                )
+            conn.execute(
+                f"INSERT INTO cluster_members (cluster_id, {atom_column}) VALUES (?, ?)",
+                (row["cluster_id"], row["atom_id"]),
+            )
         conn.commit()
 
     def get_cluster_members(self, cluster_id: int) -> list[int]:

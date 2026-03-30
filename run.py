@@ -94,9 +94,9 @@ class AutoResearcher:
             ],
             force=True,
         )
-        # Temporary: surface corroboration search traces — remove after diagnosis
-        logging.getLogger("src.research_tools").setLevel(logging.DEBUG)
-        logging.getLogger("research_tools").setLevel(logging.DEBUG)
+        if self.config.get("logging", {}).get("debug_research_tools", False):
+            logging.getLogger("src.research_tools").setLevel(logging.DEBUG)
+            logging.getLogger("research_tools").setLevel(logging.DEBUG)
         return log_path
 
     def runtime_paths(self) -> dict[str, str]:
