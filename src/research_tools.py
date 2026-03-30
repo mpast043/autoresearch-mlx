@@ -78,7 +78,9 @@ except Exception:  # pragma: no cover - supports package and direct module usage
         def normalize_content(text: str) -> str:
             return " ".join((text or "").lower().split())
 
-# Re-export text utilities for backward compatibility (functions only)
+# Re-export utilities for backward compatibility
+from utils.search_plan import CorroborationPlan, CorroborationAction, DiscoveryQueryPlan, SkillAudit
+from utils.tooling import ToolingManager
 from utils.text import (
     compact_text,
     contains_keyword,
@@ -553,101 +555,6 @@ def infer_recurrence_key(text: str) -> str:
         if token not in terms:
             terms.append(token)
     return " ".join(terms[:6])
-
-
-@dataclass
-class CorroborationPlan:
-    signature_terms: list[str]
-    role_terms: list[str]
-    segment_terms: list[str]
-    job_phrase: str
-    failure_phrase: str
-    workaround_phrase: str
-    cost_terms: list[str]
-    ecosystem_hints: list[str]
-    family_queries: dict[str, list[str]]
-    max_attempts_per_family: int = 2
-    source_priority: tuple[str, ...] = ("reddit", "web", "github", "stackoverflow", "etsy")
-
-
-@dataclass(frozen=True)
-class DiscoveryQueryPlan:
-    source_name: str
-    queries: list[str]
-    slice_size: int
-    cycle_index: int = 0
-    query_offset: int = 0
-    rotation_applied: bool = False
-    rotated_queries_used: list[str] = field(default_factory=list)
-
-
-@dataclass
-class CorroborationAction:
-    action: str
-    target_family: str = ""
-    reason: str = ""
-    expected_gain_class: str = ""
-    skipped_families: dict[str, str] = field(default_factory=dict)
-    budget_snapshot: dict[str, Any] = field(default_factory=dict)
-    fallback_strategy: str = ""
-    promotion_gap_class: str = ""
-    sufficiency_priority_reason: str = ""
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "action": self.action,
-            "target_family": self.target_family,
-            "reason": self.reason,
-            "expected_gain_class": self.expected_gain_class,
-            "skipped_families": dict(self.skipped_families),
-            "budget_snapshot": dict(self.budget_snapshot),
-            "fallback_strategy": self.fallback_strategy,
-            "promotion_gap_class": self.promotion_gap_class,
-            "sufficiency_priority_reason": self.sufficiency_priority_reason,
-        }
-
-
-@dataclass
-class SkillAudit:
-    name: str
-    path: str
-    approved: bool
-    score: float
-    runnable: bool
-    capabilities: list[str]
-    reasons: list[str]
-
-
-class ToolingManager:
-    """Creates reusable skill packs, MCP config, and helper scripts."""
-
-    def __init__(self, config: Optional[dict[str, Any]] = None):
-        self.config = config or {}
-
-    def default_mcp_config(self, allowed_root: str = ".") -> dict[str, Any]:
-        return {
-            "mcpServers": {
-                "brave-search": {
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-                    "env": {"BRAVE_API_KEY": "${BRAVE_API_KEY}"},
-                },
-                "fetch": {"command": "npx", "args": ["-y", "mcp-fetch-server"]},
-                "github": {
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-github"],
-                    "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"},
-                },
-                "filesystem": {
-                    "command": "npx",
-                    "args": ["-y", "@modelcontextprotocol/server-filesystem", allowed_root],
-                },
-                "browser": {"command": "npx", "args": ["-y", "@playwright/mcp"]},
-            }
-        }
-
-    def write_mcp_config(self, path: Path) -> None:
-        path.write_text(json.dumps(self.default_mcp_config(str(path.parent)), indent=2))
 
 
 class ResearchToolkit:
