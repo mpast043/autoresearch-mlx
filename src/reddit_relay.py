@@ -9,6 +9,7 @@ runtime falls back to its legacy/public Reddit path.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -307,7 +308,7 @@ async def auth_middleware(request: web.Request, handler):
 
     authorization = request.headers.get("Authorization", "")
     expected = f"Bearer {token}" if token else ""
-    if not token or authorization != expected:
+    if not token or not hmac.compare_digest(authorization, expected):
         return _json_error(401, "auth_failed", "missing or invalid bearer token")
     return await handler(request)
 
