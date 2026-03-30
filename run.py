@@ -159,7 +159,8 @@ class AutoResearcher:
         if self.config.get("orchestration", {}).get("auto_ideate_after_validation", False):
             self.agents["ideation"] = IdeationAgent(self.db, message_queue=message_queue, config=self.config)
         if self.config.get("builder", {}).get("auto_build", False):
-            self.agents["builder"] = BuilderAgent(self.db, message_queue=message_queue, config=self.config)
+            from src.agents.builder_v2 import BuilderV2Agent
+            self.agents["builder"] = BuilderV2Agent(self.config, db=self.db)
 
         for agent in self.agents.values():
             self.orchestrator.register_agent(agent)

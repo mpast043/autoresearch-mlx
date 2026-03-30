@@ -16,6 +16,31 @@ This repository currently contains the policy, source adapters, evaluation fixtu
 - Persists corroboration and market enrichment separately.
 - Validates opportunities before any build-prep work happens.
 - Gates validated opportunities into explicit post-validation selection states instead of allowing direct promotion into building.
+- **Self-expanding discovery**: Automatically adds new keywords and subreddits based on what patterns yield validated opportunities.
+- **Idea generation**: Creates product ideas from validated opportunities.
+- **Code generation**: Generates functional prototypes using Ollama (local LLM).
+
+## Full Pipeline
+
+The complete pipeline is:
+
+`discovery -> evidence -> validation -> build_prep -> ideation -> builder`
+
+- **Discovery**: Finds pain signals from configured sources
+- **Evidence**: Gathers corroboration and market enrichment
+- **Validation**: Clusters atoms, scores opportunities, makes promote/park/kill decisions
+- **Build Prep**: Solution framing, experiment design, spec generation (for prototype_candidate)
+- **Ideation**: Creates product ideas from validated opportunities (optional, via `auto_ideate_after_validation`)
+- **Builder**: Generates functional code from ideas using Ollama (optional, via `auto_build`)
+
+Enable optional stages in `config.yaml`:
+```yaml
+orchestration:
+  auto_ideate_after_validation: true  # Enable idea generation
+
+builder:
+  auto_build: true  # Enable code generation
+```
 
 ## Source Families In Scope
 
@@ -40,6 +65,47 @@ Important policy rules:
 - vague summaries, marketing copy, generic praise, and thin product-specific noise are screened out
 
 The source-policy implementation lives in [src/source_policy.py](/Users/meganpastore/Projects/autoresearch-mlx/src/source_policy.py).
+
+## Self-Expanding Discovery
+
+The system can autonomously expand its search scope based on what patterns perform well:
+
+```yaml
+discovery:
+  auto_expand: true
+  expansion:
+    max_keywords_per_wave: 3      # Max new keywords per expansion
+    max_subreddits_per_wave: 2    # Max new subreddits per expansion
+    min_validation_score: 0.5     # Only add from queries with avg_score >= 0.5
+    cooldown_hours: 24            # Hours between expansions
+```
+
+When enabled:
+1. After each discovery wave, the system analyzes validation feedback
+2. Finds keywords/subreddits that yielded prototype_candidate or promote decisions
+3. Uses `discovery_suggestions` logic to find similar patterns
+4. Adds new candidates to the active discovery scope
+
+Expanded state is stored in `data/discovery_expansion.json` and merged with base config at startup.
+
+## Code Generation (BuilderV2)
+
+When `builder.auto_build: true`, the system uses [BuilderV2Agent](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/builder_v2.py) to generate functional code:
+
+```yaml
+llm:
+  provider: ollama  # or 'anthropic'
+  model: qwen2.5:7b-instruct
+  base_url: http://localhost:11434
+  max_tokens: 8000
+```
+
+Output types:
+- `workflow_reliability_console` - Python CLI tools
+- `workflow_diagnostic_prototype` - React + FastAPI web apps
+- `operator_evidence_workspace` - Evidence collection tools
+
+Generated projects go to `data/generated_projects/{slug}/`.
 
 ## Active Runtime Model
 
@@ -67,9 +133,9 @@ The current build-prep layer is intentionally narrow and explicit.
 Selection states currently include:
 
 - `research_more`
-- `prototype_candidate`
+- `prototype_candidate` - eligible for build_prep and ideation
 - `prototype_ready`
-- `build_ready`
+- `build_ready` - eligible for builder
 - `launched`
 - `iterate`
 - `expand`
@@ -90,6 +156,12 @@ The three build-prep agents are:
 
 These agents consume a canonical persisted build brief and write traceable outputs back to the runtime store.
 
+## Ideation
+
+When `orchestration.auto_ideate_after_validation: true`, the [IdeationAgent](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/ideation.py) creates product ideas from validated opportunities (promote decisions or prototype_candidate status).
+
+Ideas are stored in the `ideas` table and can trigger code generation via the builder.
+
 ## Key Files
 
 - [CLAUDE.md](/Users/meganpastore/Projects/autoresearch-mlx/CLAUDE.md): internal operator/developer guide
@@ -102,6 +174,10 @@ These agents consume a canonical persisted build brief and write traceable outpu
 - [src/behavior_eval.py](/Users/meganpastore/Projects/autoresearch-mlx/src/behavior_eval.py): behavioral eval harness
 - [src/build_prep.py](/Users/meganpastore/Projects/autoresearch-mlx/src/build_prep.py): selection transitions and build-brief helpers
 - [src/agents/build_prep.py](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/build_prep.py): solution-framing, experiment-design, and spec-generation agents
+- [src/agents/builder_v2.py](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/builder_v2.py): LLM-powered code generator
+- [src/agents/ideation.py](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/ideation.py): idea generation from validated opportunities
+- [src/discovery_expander.py](/Users/meganpastore/Projects/autoresearch-mlx/src/discovery_expander.py): self-expanding discovery logic
+- [src/discovery_suggestions.py](/Users/meganpastore/Projects/autoresearch-mlx/src/discovery_suggestions.py): keyword/subreddit suggestions from DB
 - [evals/behavior_gold.json](/Users/meganpastore/Projects/autoresearch-mlx/evals/behavior_gold.json): gold-set behavioral fixtures
 - [bridges/reddit-devvit](/Users/meganpastore/Projects/autoresearch-mlx/bridges/reddit-devvit): Devvit bridge scaffold for the Reddit relay path
 

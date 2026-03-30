@@ -4,6 +4,14 @@ database:
   path: data/autoresearch.db
 
 discovery:
+  # Self-expanding discovery: automatically add new keywords/subreddits based on what works
+  auto_expand: true
+  expansion:
+    max_keywords_per_wave: 5
+    max_subreddits_per_wave: 5
+    min_validation_score: 0.4
+    cooldown_hours: 12
+
   # `web` = broad web search + marketplace pain threads (see DiscoveryAgent._check_source).
   sources:
     - reddit
@@ -52,7 +60,7 @@ discovery:
     # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
     search_time_filter: year
     # true = search r/all for each keyword (widest Reddit reach; noisier). false = only problem_subreddits below.
-    use_r_all: false
+    use_r_all: true
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
     max_subreddits_per_wave: 0
     max_keywords_per_wave: 0
@@ -79,6 +87,11 @@ discovery:
       - sales
       - freelance
       - productivity
+      - accounting
+      - projectmanagement
+      - automation
+      - notion
+      - airtable
     problem_keywords:
       - "annoying manual task"
       - "manual process"
@@ -132,9 +145,16 @@ orchestration:
 builder:
   auto_build: true
 
+# LLM config for builder_v2 code generation
+llm:
+  provider: ollama
+  model: qwen2.5:7b-instruct
+  base_url: http://localhost:11434
+  max_tokens: 8000
+
 validation:
-  promotion_threshold: 0.66
-  park_threshold: 0.42
+  promotion_threshold: 0.55
+  park_threshold: 0.35
   # Evidence/gathering search settings
   search:
     query_terms: 14

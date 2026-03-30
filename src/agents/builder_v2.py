@@ -14,8 +14,12 @@ import time
 import re
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional
-import anthropic
+from typing import Optional, Dict, Any
+
+# Import MessageType for process() method
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from messaging import MessageType
 
 logger = logging.getLogger(__name__)
 
@@ -90,20 +94,68 @@ Return ONLY the final JSON:
 
 def _extract_json_from_response(text: str) -> list[dict]:
     """Find JSON array of {path, content} objects in LLM response."""
-    # Try markdown code block first
-    match = re.search(r"```(?:json)?\s*(\[[\s\S]+?\])\s*```", text)
+    # First try: look for {"files": [...]} wrapper - more lenient
+    match = re.search(r'\{[^{]*"files"\s*:\s*(\[[\s\S]*\])\s*\}', text)
+    if match:
+        try:
+            result = json.loads(match.group(1))
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # Try direct full JSON parse if text starts with {
+    try:
+        data = json.loads(text.strip())
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "files" in data:
+            files = data.get("files")
+            if isinstance(files, list):
+                return files
+    except json.JSONDecodeError:
+        pass
+
+    # Try markdown code block first - be more permissive
+    match = re.search(r"```(?:json)?\s*(\{[\s\S]*\}\s*,\s*\{[\s\S]*\}|\[[\s\S]*\])\s*```", text)
     if match:
         try:
             return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
-    # Try bare array
-    match = re.search(r"(\[[\s\S]+?\])\s*$", text)
+
+    # Try to find a json code block with just ```
+    match = re.search(r"```\s*(\{[\s\S]*\}|\[[\s\S]*\])\s*```", text)
     if match:
         try:
             return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
+
+    # Try bare array anywhere in text
+    match = re.search(r"(\[[\s\S]+\])\s*$", text, re.MULTILINE)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Last resort: look for any JSON array-like structure
+    # Find the first [ and matching ]
+    start = text.find("[")
+    if start >= 0:
+        # Try to find matching ]
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i+1])
+                    except json.JSONDecodeError:
+                        break
     return []
 
 
@@ -115,15 +167,60 @@ def _sanitize_filename(name: str) -> str:
 class BuilderV2Agent:
     """Real code-generating builder that produces working projects from specs."""
 
-    def __init__(self, config: dict):
+    name = "builder"
+
+    def __init__(self, config: dict, db=None):
+        # Minimal interface for orchestrator - builder is message-driven
+        self.status = "ready"
+        self._message_queue = None
+        self._shutdown_event = asyncio.Event()
+
+    async def start(self) -> None:
+        """Start the agent's message loop."""
+        self._shutdown_event.clear()
+        asyncio.create_task(self._run_loop())
+
+    async def stop(self) -> None:
+        """Stop the agent."""
+        self._shutdown_event.set()
+
+    async def _run_loop(self) -> None:
+        """Main message processing loop."""
+        while not self._shutdown_event.is_set():
+            if self._message_queue is None:
+                await asyncio.sleep(0.1)
+                continue
+            message = await self._message_queue.get_for_agent(self.name)
+            if message is None:
+                await asyncio.sleep(0.05)
+                continue
+            await self.process(message)
         self.config = config
-        api_key = config.get("llm", {}).get("api_key") or config.get("anthropic_api_key") or config.get("openai_api_key")
-        provider = config.get("llm", {}).get("provider", "anthropic")
+        self.db = db
+        provider = config.get("llm", {}).get("provider", "anthropic").lower()
         self.model = config.get("llm", {}).get("model", "claude-sonnet-4-20250514")
         self.max_tokens = config.get("llm", {}).get("max_tokens", 8000)
-        if not api_key:
-            raise ValueError("No LLM API key found in config (llm.api_key or ANTHROPIC_API_KEY)")
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.base_url = config.get("llm", {}).get("base_url", "")
+
+        if provider == "ollama":
+            # Ollama runs locally - no API key needed
+            import aiohttp
+            self.client = None
+            self._aiohttp = aiohttp
+            self._provider = "ollama"
+            self.model = self.model or "codellama"
+            if not self.base_url:
+                self.base_url = "http://localhost:11434"
+        elif provider == "anthropic":
+            import anthropic
+            api_key = config.get("llm", {}).get("api_key") or config.get("anthropic_api_key")
+            if not api_key:
+                raise ValueError("No LLM API key found (llm.api_key or ANTHROPIC_API_KEY)")
+            self.client = anthropic.Anthropic(api_key=api_key)
+            self._provider = "anthropic"
+        else:
+            raise ValueError(f"Unsupported LLM provider: {provider}. Use 'ollama' or 'anthropic'")
+
         self.output_root = Path(config.get("paths", {}).get("generated_projects",
                                                           "data/generated_projects"))
 
@@ -145,14 +242,40 @@ class BuilderV2Agent:
         )
 
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-            raw = response.content[0].text
+            if self._provider == "ollama":
+                # Use Ollama API
+                async with self._aiohttp.ClientSession() as session:
+                    payload = {
+                        "model": self.model,
+                        "prompt": f"{system_prompt}\n\n{user_prompt}",
+                        "stream": False,
+                    }
+                    async with session.post(
+                        f"{self.base_url}/api/generate",
+                        json=payload,
+                        timeout=self._aiohttp.ClientTimeout(total=180)
+                    ) as resp:
+                        if resp.status != 200:
+                            error_text = await resp.text()
+                            return BuildResult(
+                                success=False,
+                                error=f"Ollama error {resp.status}: {error_text}",
+                                duration_s=time.time() - t0,
+                            )
+                        result = await resp.json()
+                        raw = result.get("response", "")
+            else:
+                # Use Anthropic API
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                )
+                raw = response.content[0].text
             files = _extract_json_from_response(raw)
+            logger.info(f"Parsed {len(files)} files from LLM response, type: {type(files)}, first: {files[0] if files else 'empty'}")
+            logger.info(f"Raw response (first 300 chars): {raw[:300]}")
 
             if not files:
                 return BuildResult(
@@ -162,11 +285,15 @@ class BuilderV2Agent:
                 )
 
             written = []
-            for f in files:
-                fpath = output_dir / f["path"]
-                fpath.parent.mkdir(parents=True, exist_ok=True)
-                fpath.write_text(f["content"])
-                written.append(str(f["path"]))
+            try:
+                for f in files:
+                    fpath = output_dir / f["path"]
+                    fpath.parent.mkdir(parents=True, exist_ok=True)
+                    fpath.write_text(f["content"])
+                    written.append(str(f["path"]))
+            except Exception as e:
+                logger.error(f"Error writing files: {e}")
+                return BuildResult(success=False, error=str(e), duration_s=time.time() - t0)
 
             # Write SPEC.md
             spec_path = output_dir / "SPEC.md"
@@ -187,6 +314,39 @@ class BuilderV2Agent:
         except Exception as e:
             logger.error(f"BuilderV2 build failed: {e}")
             return BuildResult(success=False, error=str(e), duration_s=time.time() - t0)
+
+    async def build_from_idea(self, idea_id: int) -> BuildResult:
+        """Build a project from an idea_id by fetching the idea from the database."""
+        if not self.db:
+            return BuildResult(success=False, error="No database connection")
+
+        # Fetch idea via direct SQL
+        conn = self.db._get_connection()
+        row = conn.execute(
+            "SELECT id, title, description, slug, spec_json, audience FROM ideas WHERE id=?",
+            (idea_id,)
+        ).fetchone()
+        if not row:
+            return BuildResult(success=False, error=f"Idea {idea_id} not found")
+
+        spec = {
+            "title": row["title"] or "",
+            "output_type": "workflow_reliability_console",
+            "problem_statement": row["description"] or "",
+            "value_hypothesis": row["description"] or "",
+            "audience": row["audience"] or "",
+            "core_features": [],
+        }
+
+        # Try to get more details from spec_json if available
+        if row["spec_json"]:
+            try:
+                idea_spec = json.loads(row["spec_json"])
+                spec.update(idea_spec)
+            except json.JSONDecodeError:
+                pass
+
+        return await self.build_from_spec(spec, idea_id)
 
     async def build_from_brief(self, brief_path: Path, idea_id: Optional[int] = None) -> BuildResult:
         """Build from a build brief markdown file (output of SpecGenerationAgent)."""
@@ -229,6 +389,27 @@ class BuilderV2Agent:
             spec["output_type"] = "workflow_reliability_console"
 
         return spec
+
+    async def process(self, message) -> Dict[str, Any]:
+        """Handle incoming messages from the orchestrator."""
+        if message.msg_type == MessageType.BUILD_REQUEST:
+            idea_id = message.payload.get("idea_id")
+            if not idea_id:
+                return {"success": False, "error": "No idea_id in BUILD_REQUEST"}
+
+            result = await self.build_from_idea(idea_id)
+
+            return {
+                "success": result.success,
+                "idea_id": idea_id,
+                "project_path": str(result.project_path) if result.project_path else None,
+                "files_written": result.files_written,
+                "confidence": result.confidence,
+                "error": result.error,
+                "duration_s": result.duration_s,
+            }
+
+        return {"processed": True}
 
 
 # ─── CLI Entry Point ──────────────────────────────────────────────────────────
