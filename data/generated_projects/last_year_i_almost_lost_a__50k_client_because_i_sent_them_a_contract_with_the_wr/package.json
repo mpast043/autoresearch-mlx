@@ -1,0 +1,10 @@
+{
+  "name": "workflow_reliability_console",
+  "version": "1.0.0",
+  "description": "A CLI tool for diagnosing and fixing workflow reliability issues.",
+  "main": "server.py",
+  "scripts": {
+    "start": "uvicorn server:app --reload"
+  },
+  "dependencies": {}
+}

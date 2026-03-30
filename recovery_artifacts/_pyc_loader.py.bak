@@ -1,0 +1,97 @@
+"""Helpers for loading project modules from surviving CPython 3.14 bytecode."""
+
+from __future__ import annotations
+
+import importlib.abc
+import importlib.machinery
+import importlib.util
+import marshal
+import sys
+import types
+from pathlib import Path
+
+
+class _ProjectSourcelessLoader(importlib.machinery.SourcelessFileLoader):
+    def exec_module(self, module: types.ModuleType) -> None:
+        module.__file__ = self.path
+        module.__loader__ = self
+        if getattr(module, "__spec__", None) is not None:
+            module.__package__ = module.__spec__.parent
+        code = self.get_code(module.__name__)
+        if code is None:
+            raise ImportError(f"Cannot load bytecode for {module.__name__} from {self.path}")
+        exec(code, module.__dict__)
+
+
+class _ProjectPycFinder(importlib.abc.MetaPathFinder):
+    def __init__(self, project_root: Path) -> None:
+        self.project_root = project_root.resolve()
+        self.search_roots = [
+            self.project_root,
+            self.project_root / "src",
+        ]
+        self.tag = f"cpython-{sys.version_info.major}{sys.version_info.minor}"
+
+    def _package_candidate(self, base: Path, parts: list[str]) -> Path:
+        package_dir = base.joinpath(*parts)
+        return package_dir / "__pycache__" / f"__init__.{self.tag}.pyc"
+
+    def _module_candidate(self, base: Path, parts: list[str]) -> Path:
+        rel_dir = base.joinpath(*parts[:-1])
+        mod = parts[-1]
+        return rel_dir / "__pycache__" / f"{mod}.{self.tag}.pyc"
+
+    def _package_source_exists(self, base: Path, parts: list[str]) -> bool:
+        return (base.joinpath(*parts) / "__init__.py").exists()
+
+    def _module_source_exists(self, base: Path, parts: list[str]) -> bool:
+        rel_dir = base.joinpath(*parts[:-1])
+        mod = parts[-1]
+        return (rel_dir / f"{mod}.py").exists()
+
+    def find_spec(self, fullname: str, path=None, target=None):  # type: ignore[override]
+        parts = fullname.split(".")
+        for base in self.search_roots:
+            if self._package_source_exists(base, parts) or self._module_source_exists(base, parts):
+                return None
+
+            package_pyc = self._package_candidate(base, parts)
+            if package_pyc.exists():
+                loader = _ProjectSourcelessLoader(fullname, str(package_pyc))
+                spec = importlib.util.spec_from_loader(fullname, loader, origin=str(package_pyc), is_package=True)
+                if spec is not None:
+                    spec.submodule_search_locations = [str(package_pyc.parent.parent)]
+                    return spec
+
+            module_pyc = self._module_candidate(base, parts)
+            if module_pyc.exists():
+                loader = _ProjectSourcelessLoader(fullname, str(module_pyc))
+                return importlib.util.spec_from_loader(fullname, loader, origin=str(module_pyc), is_package=False)
+        return None
+
+
+def install_project_pyc_importer(project_root: Path | str) -> None:
+    root = Path(project_root).resolve()
+    marker = f"autoresearch-pyc:{root}"
+    for finder in sys.meta_path:
+        if getattr(finder, "_autoresearch_marker", "") == marker:
+            return
+
+    finder = _ProjectPycFinder(root)
+    setattr(finder, "_autoresearch_marker", marker)
+    sys.meta_path.insert(0, finder)
+
+    src_path = str(root / "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+
+def exec_project_pyc(module_globals: dict, pyc_path: Path | str) -> None:
+    path = Path(pyc_path).resolve()
+    with path.open("rb") as handle:
+        handle.read(16)
+        code = marshal.load(handle)
+
+    module_globals.setdefault("__file__", str(path))
+    module_globals.setdefault("__cached__", str(path))
+    exec(code, module_globals)

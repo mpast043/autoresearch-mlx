@@ -1,0 +1,1 @@
+{"name": "a-tedious-manual-data-reconciliation-process-that", "version": "1.0.0", "description": "A tedious manual data reconciliation process that requires focused attention on boring repetitive work.", "main": "index.js", "scripts": {"start": "node server.js"}, "dependencies": {}}
