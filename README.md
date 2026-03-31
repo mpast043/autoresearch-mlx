@@ -64,7 +64,7 @@ Important policy rules:
 - ratings, counts, pricing, popularity proxies, and listing metadata are enrichment inputs only
 - vague summaries, marketing copy, generic praise, and thin product-specific noise are screened out
 
-The source-policy implementation lives in [src/source_policy.py](/Users/meganpastore/Projects/autoresearch-mlx/src/source_policy.py).
+The source-policy implementation lives in [src/source_policy.py](./src/source_policy.py).
 
 ## Self-Expanding Discovery
 
@@ -90,7 +90,7 @@ Expanded state is stored in `data/discovery_expansion.json` and merged with base
 
 ## Code Generation (BuilderV2)
 
-When `builder.auto_build: true`, the system uses [BuilderV2Agent](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/builder_v2.py) to generate functional code:
+When `builder.auto_build: true`, the system uses [BuilderV2Agent](./src/agents/builder_v2.py) to generate functional code:
 
 ```yaml
 llm:
@@ -115,7 +115,7 @@ The active evidence path is:
 
 The most important state-model reference is:
 
-- [docs/state-model.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/state-model.md)
+- [docs/state-model.md](./docs/state-model.md)
 
 That document defines:
 
@@ -145,8 +145,8 @@ There is no direct `validated -> build_ready` path.
 
 Current build-prep components:
 
-- [src/build_prep.py](/Users/meganpastore/Projects/autoresearch-mlx/src/build_prep.py)
-- [src/agents/build_prep.py](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/build_prep.py)
+- [src/build_prep.py](./src/build_prep.py)
+- [src/agents/build_prep.py](./src/agents/build_prep.py)
 
 The three build-prep agents are:
 
@@ -158,58 +158,58 @@ These agents consume a canonical persisted build brief and write traceable outpu
 
 ## Ideation
 
-When `orchestration.auto_ideate_after_validation: true`, the [IdeationAgent](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/ideation.py) creates product ideas from validated opportunities (promote decisions or prototype_candidate status).
+When `orchestration.auto_ideate_after_validation: true`, the [IdeationAgent](./src/agents/ideation.py) creates product ideas from validated opportunities (promote decisions or prototype_candidate status).
 
 Ideas are stored in the `ideas` table and can trigger code generation via the builder.
 
 ## Key Files
 
-- [CLAUDE.md](/Users/meganpastore/Projects/autoresearch-mlx/CLAUDE.md): internal operator/developer guide
-- [docs/state-model.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/state-model.md): runtime state model and active table definitions
-- [docs/production-runtime.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/production-runtime.md): packaging, environment, and Docker runtime notes
-- [docs/render-deploy.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/render-deploy.md): Render relay deployment notes
-- [src/source_policy.py](/Users/meganpastore/Projects/autoresearch-mlx/src/source_policy.py): first-class source routing rules
-- [src/review_sources.py](/Users/meganpastore/Projects/autoresearch-mlx/src/review_sources.py): review-source adapters and parsing
-- [src/github_sources.py](/Users/meganpastore/Projects/autoresearch-mlx/src/github_sources.py): GitHub issue/discussion adapter
-- [src/behavior_eval.py](/Users/meganpastore/Projects/autoresearch-mlx/src/behavior_eval.py): behavioral eval harness
-- [src/build_prep.py](/Users/meganpastore/Projects/autoresearch-mlx/src/build_prep.py): selection transitions and build-brief helpers
-- [src/agents/build_prep.py](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/build_prep.py): solution-framing, experiment-design, and spec-generation agents
-- [src/agents/builder_v2.py](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/builder_v2.py): LLM-powered code generator
-- [src/agents/ideation.py](/Users/meganpastore/Projects/autoresearch-mlx/src/agents/ideation.py): idea generation from validated opportunities
-- [src/discovery_expander.py](/Users/meganpastore/Projects/autoresearch-mlx/src/discovery_expander.py): self-expanding discovery logic
-- [src/discovery_suggestions.py](/Users/meganpastore/Projects/autoresearch-mlx/src/discovery_suggestions.py): keyword/subreddit suggestions from DB
-- [evals/behavior_gold.json](/Users/meganpastore/Projects/autoresearch-mlx/evals/behavior_gold.json): gold-set behavioral fixtures
-- [bridges/reddit-devvit](/Users/meganpastore/Projects/autoresearch-mlx/bridges/reddit-devvit): Devvit bridge scaffold for the Reddit relay path
+- [CLAUDE.md](./CLAUDE.md): internal operator/developer guide
+- [docs/state-model.md](./docs/state-model.md): runtime state model and active table definitions
+- [docs/production-runtime.md](./docs/production-runtime.md): packaging, environment, and Docker runtime notes
+- [docs/render-deploy.md](./docs/render-deploy.md): Render relay deployment notes
+- [src/source_policy.py](./src/source_policy.py): first-class source routing rules
+- [src/review_sources.py](./src/review_sources.py): review-source adapters and parsing
+- [src/github_sources.py](./src/github_sources.py): GitHub issue/discussion adapter
+- [src/behavior_eval.py](./src/behavior_eval.py): behavioral eval harness
+- [src/build_prep.py](./src/build_prep.py): selection transitions and build-brief helpers
+- [src/agents/build_prep.py](./src/agents/build_prep.py): solution-framing, experiment-design, and spec-generation agents
+- [src/agents/builder_v2.py](./src/agents/builder_v2.py): LLM-powered code generator
+- [src/agents/ideation.py](./src/agents/ideation.py): idea generation from validated opportunities
+- [src/discovery_expander.py](./src/discovery_expander.py): self-expanding discovery logic
+- [src/discovery_suggestions.py](./src/discovery_suggestions.py): keyword/subreddit suggestions from DB
+- [evals/behavior_gold.json](./evals/behavior_gold.json): gold-set behavioral fixtures
+- [bridges/reddit-devvit](./bridges/reddit-devvit): Devvit bridge scaffold for the Reddit relay path
 
 ## Repository Layout
 
-- [src](/Users/meganpastore/Projects/autoresearch-mlx/src): core source adapters, policy modules, and build-prep helpers
-- [tests](/Users/meganpastore/Projects/autoresearch-mlx/tests): regression and behavior coverage
-- [docs](/Users/meganpastore/Projects/autoresearch-mlx/docs): system documentation
-- [evals](/Users/meganpastore/Projects/autoresearch-mlx/evals): behavioral evaluation fixtures
-- [data](/Users/meganpastore/Projects/autoresearch-mlx/data): runtime databases and backups
-- [output](/Users/meganpastore/Projects/autoresearch-mlx/output): logs and generated runtime artifacts
-- [dashboard](/Users/meganpastore/Projects/autoresearch-mlx/dashboard): dashboard/frontend workspace
-- [bridges](/Users/meganpastore/Projects/autoresearch-mlx/bridges): external bridge integrations, including Reddit Devvit
+- [src](./src): core source adapters, policy modules, and build-prep helpers
+- [tests](./tests): regression and behavior coverage
+- [docs](./docs): system documentation
+- [evals](./evals): behavioral evaluation fixtures
+- [data](./data): runtime databases and backups
+- [output](./output): logs and generated runtime artifacts
+- [dashboard](./dashboard): dashboard/frontend workspace
+- [bridges](./bridges): external bridge integrations, including Reddit Devvit
 
 ## Packaging And Runtime
 
-The Python runtime can now be installed from [requirements.txt](/Users/meganpastore/Projects/autoresearch-mlx/requirements.txt) and packaged with:
+The Python runtime can now be installed from [requirements.txt](./requirements.txt) and packaged with:
 
-- [Dockerfile](/Users/meganpastore/Projects/autoresearch-mlx/Dockerfile)
-- [docker-compose.yml](/Users/meganpastore/Projects/autoresearch-mlx/docker-compose.yml)
-- [render.yaml](/Users/meganpastore/Projects/autoresearch-mlx/render.yaml)
+- [Dockerfile](./Dockerfile)
+- [docker-compose.yml](./docker-compose.yml)
+- [render.yaml](./render.yaml)
 
 For environment variables, runtime paths, and startup steps, use:
 
-- [docs/production-runtime.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/production-runtime.md)
-- [docs/render-deploy.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/render-deploy.md)
-- [docs/codespaces.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/codespaces.md)
+- [docs/production-runtime.md](./docs/production-runtime.md)
+- [docs/render-deploy.md](./docs/render-deploy.md)
+- [docs/codespaces.md](./docs/codespaces.md)
 
 Codespaces support is now included through:
 
-- [.devcontainer/devcontainer.json](/Users/meganpastore/Projects/autoresearch-mlx/.devcontainer/devcontainer.json)
-- [.env.example](/Users/meganpastore/Projects/autoresearch-mlx/.env.example)
+- [.devcontainer/devcontainer.json](./.devcontainer/devcontainer.json)
+- [.env.example](./.env.example)
 
 ## Current Guardrails
 
@@ -223,14 +223,14 @@ Codespaces support is now included through:
 ## Current Limitations
 
 - Source quality and corroboration depth still matter more than volume.
-- Some runtime entrypoints referenced in internal notes may not be present at the repo root in this snapshot; use [CLAUDE.md](/Users/meganpastore/Projects/autoresearch-mlx/CLAUDE.md) and [docs/state-model.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/state-model.md) as the authoritative local references for workflow and state.
+- Some runtime entrypoints referenced in internal notes may not be present at the repo root in this snapshot; use [CLAUDE.md](./CLAUDE.md) and [docs/state-model.md](./docs/state-model.md) as the authoritative local references for workflow and state.
 - Public review sources do not always expose install counts or rich reviewer metadata, so some market fields use bounded proxies when necessary.
 
 ## Recommended Next Reference
 
 If you are trying to understand how the system behaves at runtime, start with:
 
-1. [docs/state-model.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/state-model.md)
-2. [src/source_policy.py](/Users/meganpastore/Projects/autoresearch-mlx/src/source_policy.py)
-3. [src/build_prep.py](/Users/meganpastore/Projects/autoresearch-mlx/src/build_prep.py)
-4. [evals/behavior_gold.json](/Users/meganpastore/Projects/autoresearch-mlx/evals/behavior_gold.json)
+1. [docs/state-model.md](./docs/state-model.md)
+2. [src/source_policy.py](./src/source_policy.py)
+3. [src/build_prep.py](./src/build_prep.py)
+4. [evals/behavior_gold.json](./evals/behavior_gold.json)
