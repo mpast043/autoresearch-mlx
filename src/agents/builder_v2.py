@@ -169,6 +169,7 @@ class BuilderV2Agent:
         self.status = "ready"
         self._message_queue = None
         self._shutdown_event = asyncio.Event()
+        self._task: asyncio.Task | None = None
         self.config = config or {}
         self.db = db
         self.model = ""
@@ -219,11 +220,22 @@ class BuilderV2Agent:
     async def start(self) -> None:
         """Start the agent's message loop."""
         self._shutdown_event.clear()
-        asyncio.create_task(self._run_loop())
+        self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
         """Stop the agent."""
         self._shutdown_event.set()
+        if self._task:
+            await self._task
+
+    def _handle_task_result(self, task: asyncio.Task) -> None:
+        """Handle task result for better debugging."""
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass  # Expected on shutdown
+        except Exception as e:
+            print(f"[BuilderV2Agent] crashed: {e}")
 
     async def _run_loop(self) -> None:
         """Main message processing loop."""
