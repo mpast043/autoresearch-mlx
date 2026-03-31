@@ -17,8 +17,9 @@ import sqlite3
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 
+import aiohttp
 from aiohttp import web
 
 from runtime.paths import resolve_project_path
@@ -210,6 +211,92 @@ class RedditRelayStore:
                 (cache_key,),
             ).fetchone()
         return row is not None
+
+    async def fetch_live_search(
+        self,
+        *,
+        subreddit: str,
+        query: str,
+        limit: int = 2,
+        sort: str = "relevance",
+        cursor: str = "",
+    ) -> dict[str, Any] | None:
+        """Fetch live from Reddit API on cache miss."""
+        import asyncio
+        params = {
+            "q": query,
+            "sort": sort,
+            "t": "year",
+            "limit": str(min(limit, 25)),
+        }
+        if cursor:
+            params["after"] = cursor
+        if subreddit != "all":
+            params["restrict_sr"] = "on"
+
+        subreddit_path = subreddit if subreddit != "all" else "all"
+        url = f"https://www.reddit.com/r/{subreddit_path}/search.json?{urlencode(params)}"
+
+        headers = {
+            "User-Agent": "AutoResearcher/1.0 (Python;aiohttp)",
+            "Accept": "application/json",
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status != 200:
+                        logger.warning("live reddit search failed status=%s url=%s", resp.status, url)
+                        return None
+                    data = await resp.json()
+        except asyncio.TimeoutError:
+            logger.warning("live reddit search timeout url=%s", url)
+            return None
+        except Exception as exc:
+            logger.warning("live reddit search error url=%s error=%s", url, exc)
+            return None
+
+        children = data.get("data", {}).get("children", [])
+        items = []
+        for child in children:
+            post = child.get("data", {})
+            if not post.get("id"):
+                continue
+            items.append({
+                "id": post.get("id", ""),
+                "kind": "post",
+                "subreddit": post.get("subreddit", ""),
+                "title": post.get("title", ""),
+                "body": post.get("selftext", "") or post.get("body", ""),
+                "author": post.get("author", ""),
+                "permalink": post.get("permalink", ""),
+                "score": post.get("score", 0),
+                "num_comments": post.get("num_comments", 0),
+                "created_utc": post.get("created_utc", 0),
+                "source_type": "reddit",
+                "post_id": post.get("id", ""),
+                "parent_id": "",
+            })
+
+        next_cursor = data.get("data", {}).get("after", "") or ""
+        collected_at = int(time.time())
+
+        if items:
+            self.put_search(
+                subreddit=subreddit,
+                query=query,
+                sort=sort,
+                cursor=cursor,
+                next_cursor=next_cursor,
+                items=items,
+                collected_at=collected_at,
+            )
+
+        return {
+            "items": items,
+            "next_cursor": next_cursor,
+            "collected_at": collected_at,
+        }
 
     def put_thread(
         self,
@@ -445,7 +532,17 @@ async def cached_search(request: web.Request) -> web.Response:
         )
         return _json_error(500, "cached_search_bad_shape", "cached search payload could not be normalized", items=[], next_cursor="")
     if result is None:
-        return _json_error(404, "no_cached_result", "no cached search result", items=[], next_cursor="")
+        # Try live search on cache miss
+        result = await store.fetch_live_search(
+            subreddit=subreddit,
+            query=query,
+            limit=limit,
+            sort=sort,
+            cursor=cursor,
+        )
+        if result is None:
+            return _json_error(502, "live_search_failed", "live reddit search failed", items=[], next_cursor="")
+
     return web.json_response(
         {
             "ok": True,
