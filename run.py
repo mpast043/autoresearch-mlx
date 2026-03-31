@@ -14,23 +14,18 @@ import sys
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-SRC_ROOT = PROJECT_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
-
-from runtime.env import load_local_env  # noqa: E402
-from runtime.paths import DEFAULT_CONFIG_PATH, build_runtime_paths, resolve_project_path  # noqa: E402
-from database import Database  # noqa: E402
-from orchestrator import Orchestrator  # noqa: E402
-from messaging import MessageType  # noqa: E402
-from agents.discovery import DiscoveryAgent  # noqa: E402
-from agents.evidence import EvidenceAgent  # noqa: E402
-from agents.build_prep import ExperimentDesignAgent, SolutionFramingAgent, SpecGenerationAgent  # noqa: E402
-from agents.validation import ValidationAgent  # noqa: E402
-from agents.ideation import IdeationAgent  # noqa: E402
-from agents.builder import BuilderAgent  # noqa: E402
-from status_tracker import StatusTracker  # noqa: E402
+from src.runtime.env import load_local_env  # noqa: E402
+from src.runtime.paths import DEFAULT_CONFIG_PATH, build_runtime_paths, resolve_project_path  # noqa: E402
+from src.database import Database  # noqa: E402
+from src.orchestrator import Orchestrator  # noqa: E402
+from src.messaging import MessageType  # noqa: E402
+from src.agents.discovery import DiscoveryAgent  # noqa: E402
+from src.agents.evidence import EvidenceAgent  # noqa: E402
+from src.agents.build_prep import ExperimentDesignAgent, SolutionFramingAgent, SpecGenerationAgent  # noqa: E402
+from src.agents.validation import ValidationAgent  # noqa: E402
+from src.agents.ideation import IdeationAgent  # noqa: E402
+from src.agents.builder import BuilderAgent  # noqa: E402
+from src.status_tracker import StatusTracker  # noqa: E402
 
 
 logger = logging.getLogger(__name__)

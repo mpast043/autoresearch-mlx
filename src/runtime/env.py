@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from runtime.paths import DEFAULT_ENV_PATH, resolve_project_path
+from src.runtime.paths import DEFAULT_ENV_PATH, resolve_project_path
 
 
 def load_local_env(env_path: Path | str | None = None) -> None:

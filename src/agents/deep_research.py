@@ -23,9 +23,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from agents.base import BaseAgent
-from database import Database, Finding, RawSignal
-from messaging import MessageQueue, MessageType
+from src.agents.base import BaseAgent
+from src.database import Database, Finding, RawSignal
+from src.messaging import MessageQueue, MessageType
 
 logger = logging.getLogger(__name__)
 

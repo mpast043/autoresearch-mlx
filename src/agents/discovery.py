@@ -8,23 +8,23 @@ import logging
 from collections import defaultdict
 from typing import Any, Dict, Optional
 
-from agents.base import AgentStatus, BaseAgent
-from database import Database, Finding, ProblemAtom, RawSignal
-from discovery_queries import (
+from src.agents.base import AgentStatus, BaseAgent
+from src.database import Database, Finding, ProblemAtom, RawSignal
+from src.discovery_queries import (
     reddit_discovery_subreddits,
     reddit_problem_keywords,
     reddit_success_keywords,
 )
-from messaging import MessageQueue, MessageType
-from opportunity_engine import (
+from src.messaging import MessageQueue, MessageType
+from src.opportunity_engine import (
     build_problem_atom,
     build_raw_signal_payload,
     classify_source_signal,
     qualify_problem_signal,
 )
-from reddit_seed import RedditSeeder
-from research_tools import DiscoveryQueryPlan, ResearchToolkit
-from discovery_expander import run_expansion, get_expanded_config
+from src.reddit_seed import RedditSeeder
+from src.research_tools import DiscoveryQueryPlan, ResearchToolkit
+from src.discovery_expander import run_expansion, get_expanded_config
 
 logger = logging.getLogger(__name__)
 

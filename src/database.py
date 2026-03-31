@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from build_prep import is_allowed_selection_transition
-from database_views import (
+from src.build_prep import is_allowed_selection_transition
+from src.database_views import (
     build_candidate_workbench_item,
     build_recent_validation_row,
     build_validation_corroboration_digest,

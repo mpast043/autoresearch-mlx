@@ -79,9 +79,9 @@ except Exception:  # pragma: no cover - supports package and direct module usage
             return " ".join((text or "").lower().split())
 
 # Re-export utilities for backward compatibility
-from utils.search_plan import CorroborationPlan, CorroborationAction, DiscoveryQueryPlan, SkillAudit
-from utils.tooling import ToolingManager
-from utils.text import (
+from src.utils.search_plan import CorroborationPlan, CorroborationAction, DiscoveryQueryPlan, SkillAudit
+from src.utils.tooling import ToolingManager
+from src.utils.text import (
     compact_text,
     contains_keyword,
     domain_for,

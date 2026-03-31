@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from runtime.paths import resolve_project_path
+from src.runtime.paths import resolve_project_path
 
 logger = logging.getLogger(__name__)
 

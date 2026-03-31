@@ -9,9 +9,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 # Re-export compact_text for internal use
-from research_tools import compact_text, infer_recurrence_key
+from src.research_tools import compact_text, infer_recurrence_key
 
-from database import ProblemAtom
+from src.database import ProblemAtom
 
 
 def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:

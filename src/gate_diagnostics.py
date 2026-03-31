@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from build_prep import explain_selection_gate_detail
-from opportunity_engine import diagnose_stage_decision
-from validation_thresholds import resolve_promotion_park_thresholds
+from src.build_prep import explain_selection_gate_detail
+from src.opportunity_engine import diagnose_stage_decision
+from src.validation_thresholds import resolve_promotion_park_thresholds
 
 
 def _review_feedback_for_engine(evidence: dict[str, Any]) -> dict[str, Any]:

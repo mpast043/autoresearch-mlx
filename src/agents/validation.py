@@ -6,9 +6,9 @@ import hashlib
 import json
 from typing import Any, Dict, Optional
 
-from agents.base import BaseAgent
-from build_prep import build_brief_payload, determine_selection_state
-from database import (
+from src.agents.base import BaseAgent
+from src.build_prep import build_brief_payload, determine_selection_state
+from src.database import (
     BuildBrief,
     Database,
     EvidenceLedgerEntry,
@@ -19,8 +19,8 @@ from database import (
     Validation,
     ValidationExperiment,
 )
-from messaging import MessageQueue, MessageType
-from opportunity_engine import (
+from src.messaging import MessageQueue, MessageType
+from src.opportunity_engine import (
     assess_market_gap,
     build_cluster_summary,
     build_counterevidence,
@@ -30,9 +30,9 @@ from opportunity_engine import (
     score_opportunity,
     stage_decision,
 )
-from research_tools import ResearchToolkit
-from source_policy import atom_generation_allowed
-from validation_thresholds import resolve_promotion_park_thresholds
+from src.research_tools import ResearchToolkit
+from src.source_policy import atom_generation_allowed
+from src.validation_thresholds import resolve_promotion_park_thresholds
 
 
 class ValidationAgent(BaseAgent):

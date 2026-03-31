@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agents.base import BaseAgent
-from database import Database, Product
-from messaging import MessageQueue, MessageType
-from research_tools import ToolingManager, slugify
+from src.agents.base import BaseAgent
+from src.database import Database, Product
+from src.messaging import MessageQueue, MessageType
+from src.research_tools import ToolingManager, slugify
 
 
 class BuilderAgent(BaseAgent):

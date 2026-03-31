@@ -8,8 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from discovery_suggestions import build_discovery_suggestions
-from runtime.paths import resolve_project_path
+from src.discovery_suggestions import build_discovery_suggestions
+from src.runtime.paths import resolve_project_path
 
 logger = logging.getLogger(__name__)
 

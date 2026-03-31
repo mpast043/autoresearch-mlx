@@ -22,7 +22,7 @@ from urllib.parse import urlparse, urlencode
 import aiohttp
 from aiohttp import web
 
-from runtime.paths import resolve_project_path
+from src.runtime.paths import resolve_project_path
 
 try:
     from reddit_bridge import normalize_reddit_item

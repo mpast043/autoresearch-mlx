@@ -9,11 +9,11 @@ from collections import Counter
 from typing import Any
 from urllib.parse import urlparse
 
-from database import OpportunityCluster, ProblemAtom, RawSignal, ValidationExperiment
-from research_tools import compact_text, infer_recurrence_key
+from src.database import OpportunityCluster, ProblemAtom, RawSignal, ValidationExperiment
+from src.research_tools import compact_text, infer_recurrence_key
 
 # Re-export helpers for backward compatibility
-from utils.opportunity_helpers import (
+from src.utils.opportunity_helpers import (
     clamp,
     infer_source_type,
     json_dumps,

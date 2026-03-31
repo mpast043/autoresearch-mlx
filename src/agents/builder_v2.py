@@ -18,9 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from messaging import MessageType
-from runtime.paths import DEFAULT_CONFIG_PATH, resolve_project_path
+from src.messaging import MessageType
+from src.runtime.paths import DEFAULT_CONFIG_PATH, resolve_project_path
 
 logger = logging.getLogger(__name__)
 

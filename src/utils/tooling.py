@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from utils.search_plan import SkillAudit
+from src.utils.search_plan import SkillAudit
 
 
 class ToolingManager:

@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
-from agents.base import BaseAgent
-from database import Database, Idea
-from messaging import MessageQueue, MessageType
-from research_tools import slugify
+from src.agents.base import BaseAgent
+from src.database import Database, Idea
+from src.messaging import MessageQueue, MessageType
+from src.research_tools import slugify
 
 
 class IdeationAgent(BaseAgent):

@@ -9,17 +9,12 @@ import json
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-SRC_ROOT = PROJECT_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
-
-from runtime.paths import DEFAULT_CONFIG_PATH, resolve_project_path  # noqa: E402
+from src.runtime.paths import DEFAULT_CONFIG_PATH, resolve_project_path  # noqa: E402
 from run import AutoResearcher  # noqa: E402
-from behavior_eval import run_behavior_eval  # noqa: E402
-from database import ReviewFeedback  # noqa: E402
-from reddit_relay import run_relay_server  # noqa: E402
-from reddit_seed import RedditSeeder  # noqa: E402
+from src.behavior_eval import run_behavior_eval  # noqa: E402
+from src.database import ReviewFeedback  # noqa: E402
+from src.reddit_relay import run_relay_server  # noqa: E402
+from src.reddit_seed import RedditSeeder  # noqa: E402
 
 
 def run_backup_db(config_path: str | Path) -> dict:

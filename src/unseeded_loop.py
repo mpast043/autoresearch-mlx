@@ -22,8 +22,6 @@ from typing import Optional
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from src.database import Database
 from src.agents.validation import ValidationAgent
 from src.build_prep import determine_selection_state

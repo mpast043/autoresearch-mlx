@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from database import ProblemAtom, RawSignal
-from opportunity_engine import (
+from src.database import ProblemAtom, RawSignal
+from src.opportunity_engine import (
     build_cluster_summary,
     build_problem_atom,
     build_raw_signal_payload,

@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Dict, Optional
 
-from messaging import MessageQueue, MessageType, create_message
+from src.messaging import MessageQueue, MessageType, create_message
 
 
 class AgentStatus(Enum):

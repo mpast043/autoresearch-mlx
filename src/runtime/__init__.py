@@ -1,7 +1,7 @@
 """Shared runtime helpers for entrypoints."""
 
-from runtime.env import load_local_env
-from runtime.paths import (
+from src.runtime.env import load_local_env
+from src.runtime.paths import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_ENV_PATH,
     DEFAULT_SOURCES_DB_PATH,
