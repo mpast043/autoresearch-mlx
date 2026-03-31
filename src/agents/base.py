@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Dict, Optional
 
-from src.messaging import MessageQueue, MessageType, create_message
+from src.messaging import Message, MessageBus, MessageQueue, MessageType, create_message
 
 
 class AgentStatus(Enum):
@@ -23,10 +23,10 @@ class AgentStatus(Enum):
 class BaseAgent(ABC):
     """Abstract base class for all agents."""
 
-    def __init__(self, name: str, message_queue: Optional[MessageQueue] = None):
+    def __init__(self, name: str, message_queue: Optional[MessageBus | MessageQueue] = None):
         self.name = name
         self.status = AgentStatus.IDLE
-        self._message_queue = message_queue if message_queue else MessageQueue()
+        self._message_queue = message_queue if message_queue else MessageBus()
         self._error_count = 0
         self._max_errors = 3
         self._task: Optional[asyncio.Task] = None
@@ -74,14 +74,7 @@ class BaseAgent(ABC):
                 if self.status == AgentStatus.STOPPED:
                     break
 
-                if self._message_queue.empty():
-                    await asyncio.sleep(0.1)
-                    continue
-
-                message = await self._message_queue.get_for_agent(self.name)
-                if message is None:
-                    await asyncio.sleep(0.05)
-                    continue
+                message = await self._message_queue.receive(self.name)
 
                 self._processing_count += 1
                 try:

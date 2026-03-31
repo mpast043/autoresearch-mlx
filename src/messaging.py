@@ -34,6 +34,8 @@ class Message:
 
 
 class MessageQueue:
+    """Legacy single-queue implementation kept for backward compatibility."""
+
     def __init__(self) -> None:
         self._queue: asyncio.PriorityQueue[tuple[int, int, Message]] = asyncio.PriorityQueue()
         self._counter = 0
@@ -75,6 +77,67 @@ class MessageQueue:
         return self._queue.qsize()
 
 
+class MessageBus:
+    """Per-agent queue implementation for O(1) retrieval and natural backpressure."""
+
+    def __init__(self) -> None:
+        self._queues: dict[str, asyncio.Queue[Message]] = {}
+        self._lock = asyncio.Lock()
+
+    async def _get_queue(self, agent_name: str) -> asyncio.Queue[Message]:
+        """Get or create queue for an agent."""
+        if agent_name not in self._queues:
+            async with self._lock:
+                if agent_name not in self._queues:
+                    self._queues[agent_name] = asyncio.Queue()
+        return self._queues[agent_name]
+
+    async def send(self, message: Message) -> None:
+        """Send a message to its recipient's queue."""
+        queue = await self._get_queue(message.to_agent)
+        await queue.put(message)
+
+    async def put(self, message: Message) -> None:
+        """Alias for send() for backward compatibility."""
+        await self.send(message)
+
+    async def receive(self, agent_name: str) -> Message:
+        """Receive a message from agent's queue (blocks until available)."""
+        queue = await self._get_queue(agent_name)
+        return await queue.get()
+
+    async def receive_nowait(self, agent_name: str) -> Optional[Message]:
+        """Receive immediately or return None if empty."""
+        queue = await self._get_queue(agent_name)
+        try:
+            return queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
+    def empty(self, agent_name: str | None = None) -> bool:
+        """Check if agent's queue is empty. If agent_name is None, check if ALL queues are empty."""
+        if agent_name is not None:
+            return agent_name not in self._queues or self._queues[agent_name].empty()
+        # Check if ALL queues are empty
+        return all(q.empty() for q in self._queues.values())
+
+    def qsize(self, agent_name: str | None = None) -> int:
+        """Get size of agent's queue. If agent_name is None, return total across all queues."""
+        if agent_name is not None:
+            if agent_name not in self._queues:
+                return 0
+            return self._queues[agent_name].qsize()
+        return sum(q.qsize() for q in self._queues.values())
+
+    async def register_agent(self, agent_name: str) -> None:
+        """Register an agent to ensure its queue exists."""
+        await self._get_queue(agent_name)
+
+    def registered_agents(self) -> list[str]:
+        """List all registered agents."""
+        return list(self._queues.keys())
+
+
 def create_message(
     from_agent: str,
     to_agent: str,
@@ -95,4 +158,3 @@ def create_message(
 
 # Compatibility aliases for older code and docs.
 AgentMessage = Message
-MessageBus = MessageQueue

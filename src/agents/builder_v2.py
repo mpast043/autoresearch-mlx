@@ -243,10 +243,7 @@ class BuilderV2Agent:
             if self._message_queue is None:
                 await asyncio.sleep(0.1)
                 continue
-            message = await self._message_queue.get_for_agent(self.name)
-            if message is None:
-                await asyncio.sleep(0.05)
-                continue
+            message = await self._message_queue.receive(self.name)
             await self.process(message)
 
     async def build_from_spec(self, spec: dict, idea_id: Optional[int] = None) -> BuildResult:

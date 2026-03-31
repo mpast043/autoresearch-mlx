@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from src.agents.base import BaseAgent
-from src.messaging import MessageQueue, MessageType, create_message
+from src.messaging import MessageBus, MessageQueue, MessageType, create_message
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class Orchestrator:
     ):
         self._db = db
         self._agents: Dict[str, BaseAgent] = {}
-        self._message_queue = MessageQueue()
+        self._message_queue = MessageBus()
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._status_tracker = status_tracker
@@ -107,12 +107,10 @@ class Orchestrator:
                 break
             try:
                 msg = await asyncio.wait_for(
-                    self.message_queue.get_for_agent(self.name),
+                    self.message_queue.receive(self.name),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
-                break
-            if msg is None:
                 break
             await self.receive_message(msg)
             processed += 1
@@ -135,15 +133,7 @@ class Orchestrator:
     async def _run_loop(self) -> None:
         while self._running:
             try:
-                if self._message_queue.empty():
-                    await asyncio.sleep(0.05)
-                    continue
-
-                message = await self._message_queue.get_for_agent("orchestrator")
-                if message is None:
-                    await asyncio.sleep(0.02)
-                    continue
-
+                message = await self._message_queue.receive("orchestrator")
                 await self._handle_orchestrator_message(message)
             except asyncio.CancelledError:
                 break

@@ -580,7 +580,8 @@ class EvidenceAgent(BaseAgent):
                     self._inflight.difference_update(done)
                     continue
 
-                message = await self._message_queue.get_for_agent(self.name)
+                # Try non-blocking receive first
+                message = await self._message_queue.receive_nowait(self.name)
                 if message is None:
                     if self._inflight:
                         done, _ = await asyncio.wait(self._inflight, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
