@@ -1,15 +1,19 @@
 """Tests for CLI operator-facing helpers."""
 
+import asyncio
 import os
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import cli
 from cli import (
     build_builder_jobs_view,
     build_discovery_sort_diagnostics,
@@ -17,6 +21,10 @@ from cli import (
     build_verbose_report,
     render_watch_snapshot,
 )
+
+
+async def _fake_deep_research_run(self, max_signals_per_source=1):
+    return {"ok": True, "command": "deep-research"}
 
 
 class DummyStatusTracker:
@@ -256,3 +264,69 @@ def test_cli_eval_runs_from_another_cwd_via_absolute_path():
         os.rmdir(temp_dir)
 
     assert '"passed_cases": 15' in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("argv", "module_name", "module_attr", "module_value", "expected_fragment"),
+    [
+        (
+            ["cli.py", "suggest-discovery", "--limit", "1"],
+            "src.discovery_suggestions",
+            "build_discovery_suggestions",
+            lambda db, **kwargs: {"ok": True, "command": "suggest-discovery"},
+            '"command": "suggest-discovery"',
+        ),
+        (
+            ["cli.py", "deep-research", "--max-findings", "1"],
+            "src.agents.deep_research",
+            "DeepResearchAgent",
+            type(
+                "DeepResearchAgent",
+                (),
+                {
+                    "__init__": lambda self, name, db, vertical="devtools": None,
+                    "run_deep_research": _fake_deep_research_run,
+                },
+            ),
+            '"command": "deep-research"',
+        ),
+        (
+            ["cli.py", "gate-diagnostics"],
+            "src.gate_diagnostics",
+            "build_gate_diagnostics_report",
+            lambda db, config, run_id=None, limit=25, finding_id=None: {"ok": True, "command": "gate-diagnostics"},
+            '"command": "gate-diagnostics"',
+        ),
+        (
+            ["cli.py", "pipeline-health"],
+            "src.pipeline_health",
+            "compute_pipeline_health",
+            lambda db: {"ok": True, "command": "pipeline-health"},
+            '"command": "pipeline-health"',
+        ),
+    ],
+)
+def test_cli_command_import_paths_use_src_modules(monkeypatch, capsys, argv, module_name, module_attr, module_value, expected_fragment):
+    class DummyAppForCommands:
+        def __init__(self, config_path=None):
+            self.config = {"discovery": {"reddit": {"theme_keywords": {}}}}
+            self.db = DummyDB()
+            self.current_run_id = "run-1"
+            self.status_tracker = DummyStatusTracker()
+
+        async def initialize(self, start_new_run=False):
+            return None
+
+        async def shutdown(self):
+            return None
+
+    module = types.ModuleType(module_name)
+    setattr(module, module_attr, module_value)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    monkeypatch.setattr(cli, "AutoResearcher", DummyAppForCommands)
+    monkeypatch.setattr(sys, "argv", argv)
+
+    asyncio.run(cli.main())
+
+    output = capsys.readouterr().out
+    assert expected_fragment in output

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import logging.handlers
 import signal
 from collections import Counter
 from datetime import datetime
@@ -80,11 +81,24 @@ class AutoResearcher:
     def _configure_logging(self) -> str:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         log_path = str(self._runtime_paths["log_path"].resolve())
+
+        # Use RotatingFileHandler for log rotation (10MB per file, keep 5 backups)
+        rotating_handler = logging.handlers.RotatingFileHandler(
+            log_path,
+            maxBytes=10 * 1024 * 1024,  # 10MB
+            backupCount=5,
+            encoding="utf-8",
+        )
+        rotating_handler.setLevel(logging.INFO)
+        rotating_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        )
+
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s %(levelname)s %(name)s %(message)s",
             handlers=[
-                logging.FileHandler(log_path),
+                rotating_handler,
                 logging.StreamHandler(),
             ],
             force=True,

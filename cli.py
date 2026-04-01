@@ -506,7 +506,7 @@ async def main() -> None:
         app = AutoResearcher(config_path=args.config)
         await app.initialize(start_new_run=False)
         try:
-            from discovery_suggestions import build_discovery_suggestions
+            from src.discovery_suggestions import build_discovery_suggestions
 
             print_json(
                 build_discovery_suggestions(
@@ -553,7 +553,7 @@ async def main() -> None:
         return
 
     if args.command == "deep-research":
-        from agents.deep_research import DeepResearchAgent
+        from src.agents.deep_research import DeepResearchAgent
         await app.initialize(start_new_run=True)
         try:
             agent = DeepResearchAgent(
@@ -605,7 +605,7 @@ async def main() -> None:
         elif args.command == "report":
             print_json(build_verbose_report(app, app.snapshot()))
         elif args.command == "gate-diagnostics":
-            from gate_diagnostics import build_gate_diagnostics_report
+            from src.gate_diagnostics import build_gate_diagnostics_report
 
             report = build_gate_diagnostics_report(
                 app.db,
@@ -616,7 +616,7 @@ async def main() -> None:
             )
             print_json(report)
         elif args.command == "pipeline-health":
-            from pipeline_health import compute_pipeline_health
+            from src.pipeline_health import compute_pipeline_health
 
             print_json(compute_pipeline_health(app.db))
         elif args.command == "discovery-sort-diagnostics":

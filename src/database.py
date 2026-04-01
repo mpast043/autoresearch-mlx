@@ -455,17 +455,34 @@ class Idea:
     confidence_score: float = 0.0
     product_type: str = "solution"
     spec_json: str = "{}"
+    build_brief_id: int = 0
     id: Optional[int] = None
     created_at: Optional[str] = None
+
+    @property
+    def spec(self) -> dict[str, Any]:
+        return _json_loads(self.spec_json, {})
 
 
 @dataclass
 class Product:
+    idea_id: int = 0
+    build_brief_id: int = 0
+    opportunity_id: int = 0
+    validation_id: int = 0
     name: str = ""
+    location: str = ""
     status: str = "proposed"
+    metadata: dict[str, Any] | None = None
     metadata_json: str = "{}"
     id: Optional[int] = None
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.metadata is None and self.metadata_json not in (None, ""):
+            self.metadata = _json_loads(self.metadata_json, {})
+        self.metadata_json = _json_dumps(self.metadata)
 
 
 @dataclass
@@ -528,6 +545,8 @@ class Database:
                 recurrence_key TEXT,
                 evidence_json TEXT DEFAULT '{}'
             );
+            CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
+            CREATE INDEX IF NOT EXISTS idx_findings_source ON findings(source);
             CREATE TABLE IF NOT EXISTS raw_signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finding_id INTEGER REFERENCES findings(id),
@@ -558,6 +577,7 @@ class Database:
                 current_tools TEXT DEFAULT '',
                 source_quote TEXT DEFAULT '',
                 confidence_score REAL DEFAULT 0,
+                atom_json TEXT DEFAULT '{}',
                 score_json TEXT DEFAULT '{}',
                 metadata_json TEXT DEFAULT '{}',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -616,6 +636,8 @@ class Database:
                 notes_json TEXT DEFAULT '{}',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE INDEX IF NOT EXISTS idx_opportunities_selection_status ON opportunities(selection_status);
+            CREATE INDEX IF NOT EXISTS idx_opportunities_composite_score ON opportunities(composite_score);
             CREATE TABLE IF NOT EXISTS validations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT DEFAULT '',
@@ -743,14 +765,23 @@ class Database:
                 monetization_strategy TEXT DEFAULT '',
                 confidence_score REAL DEFAULT 0,
                 product_type TEXT DEFAULT 'solution',
-                spec_json TEXT DEFAULT '{}'
+                spec_json TEXT DEFAULT '{}',
+                build_brief_id INTEGER REFERENCES build_briefs(id)
             );
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                idea_id INTEGER DEFAULT 0,
+                build_brief_id INTEGER DEFAULT 0,
+                opportunity_id INTEGER DEFAULT 0,
+                validation_id INTEGER DEFAULT 0,
                 name TEXT,
+                location TEXT DEFAULT '',
                 status TEXT DEFAULT 'proposed',
-                metadata_json TEXT DEFAULT '{}',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                test_results TEXT,
+                tooling_manifest TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                built_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS resources (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -828,6 +859,17 @@ class Database:
         _ensure_column(
             conn,
             "problem_atoms",
+            "atom_json",
+            "TEXT DEFAULT '{}'",
+            backfill_sql="""
+            UPDATE problem_atoms
+            SET atom_json = COALESCE(metadata_json, '{}')
+            WHERE atom_json IS NULL OR atom_json = ''
+            """,
+        )
+        _ensure_column(
+            conn,
+            "problem_atoms",
             "score_json",
             "TEXT DEFAULT '{}'",
             backfill_sql="""
@@ -840,6 +882,32 @@ class Database:
         _ensure_column(conn, "opportunity_clusters", "metadata_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "discovery_feedback", "prototype_candidates", "INTEGER DEFAULT 0")
         _ensure_column(conn, "discovery_feedback", "build_briefs", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "idea_id", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "build_brief_id", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "opportunity_id", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "validation_id", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "location", "TEXT DEFAULT ''")
+        _ensure_column(conn, "products", "build_brief_id", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "opportunity_id", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "name", "TEXT")
+        _ensure_column(conn, "products", "status", "TEXT DEFAULT 'proposed'")
+        _ensure_column(conn, "products", "test_results", "TEXT")
+        # Add missing JSON and timestamp columns to products table
+        # SQLite doesn't support DEFAULT CURRENT_TIMESTAMP in ALTER TABLE
+        try:
+            columns = _table_columns(conn, "products")
+            if "metadata_json" not in columns:
+                conn.execute("ALTER TABLE products ADD COLUMN metadata_json TEXT DEFAULT '{}'")
+            if "created_at" not in columns:
+                conn.execute("ALTER TABLE products ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                conn.execute("UPDATE products SET created_at = COALESCE(built_at, CURRENT_TIMESTAMP) WHERE created_at IS NULL")
+            if "updated_at" not in columns:
+                conn.execute("ALTER TABLE products ADD COLUMN updated_at TIMESTAMP")
+                conn.execute(
+                    "UPDATE products SET updated_at = COALESCE(built_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL"
+                )
+        except sqlite3.OperationalError:
+            pass  # Columns may already exist
         _ensure_column(
             conn,
             "clusters",
@@ -854,6 +922,18 @@ class Database:
         _ensure_column(conn, "evidence_ledger", "entry_json", "TEXT DEFAULT '{}'")
         _dedupe_evidence_ledger(conn)
         _ensure_evidence_ledger_unique_index(conn)
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_products_build_brief
+            ON products(build_brief_id, built_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_products_idea
+            ON products(idea_id, built_at DESC)
+            """
+        )
         conn.commit()
 
     def get_latest_run_id(self) -> str:
@@ -962,7 +1042,7 @@ class Database:
     def _row_to_problem_atom(self, row: sqlite3.Row) -> ProblemAtom:
         score_json = _json_loads(row["score_json"], {})
         metadata = _json_loads(row["metadata_json"], {})
-        atom_json = row["metadata_json"] if row["metadata_json"] not in (None, "") else "{}"
+        atom_json = row["atom_json"] if row["atom_json"] not in (None, "") else "{}"
         return ProblemAtom(
             id=row["id"],
             finding_id=row["finding_id"] or 0,
@@ -1144,9 +1224,9 @@ class Database:
             "confidence_score": atom.confidence or atom.confidence_score,
             "confidence": atom.confidence or atom.confidence_score,
             "score_json": _json_dumps(atom.score_json or {"confidence": atom.confidence or atom.confidence_score}),
-            "atom_json": _json_dumps(
-                atom.score_json
-                or {
+            "atom_json": atom.atom_json
+            or _json_dumps(
+                {
                     "cluster_key": atom.cluster_key,
                     "segment": atom.segment,
                     "user_role": atom.user_role,
@@ -2397,9 +2477,180 @@ class Database:
             params.append(limit)
         return [Idea(**dict(row)) for row in conn.execute(sql, params).fetchall()]
 
+    def get_idea(self, idea_id: int) -> Optional[Idea]:
+        conn = self._get_connection()
+        row = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+        return Idea(**dict(row)) if row else None
+
+    def update_idea_status(self, idea_id: int, status: str) -> None:
+        conn = self._get_connection()
+        conn.execute("UPDATE ideas SET status = ? WHERE id = ?", (status, idea_id))
+        conn.commit()
+
+    def insert_product(self, product: Product) -> int:
+        product.__post_init__()
+        conn = self._get_connection()
+        cur = conn.execute(
+            """
+            INSERT INTO products (
+                idea_id, build_brief_id, opportunity_id, validation_id,
+                name, location, status, metadata_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                product.idea_id,
+                product.build_brief_id,
+                product.opportunity_id,
+                product.validation_id,
+                product.name,
+                product.location,
+                product.status,
+                product.metadata_json,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def get_product(self, product_id: int) -> Optional[dict[str, Any]]:
+        conn = self._get_connection()
+        row = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_product_for_idea(self, idea_id: int) -> Optional[dict[str, Any]]:
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM products WHERE idea_id = ? ORDER BY built_at DESC, id DESC LIMIT 1",
+            (idea_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_product_for_build_brief(self, build_brief_id: int) -> Optional[dict[str, Any]]:
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM products WHERE build_brief_id = ? ORDER BY built_at DESC, id DESC LIMIT 1",
+            (build_brief_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_product_status(self, product_id: int, status: str, metadata_json: Optional[str] = None) -> None:
+        conn = self._get_connection()
+        if metadata_json is None:
+            conn.execute(
+                "UPDATE products SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, product_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE products SET status = ?, metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, metadata_json, product_id),
+            )
+        conn.commit()
+
+    def upsert_product_for_build(
+        self,
+        *,
+        build_brief_id: int,
+        opportunity_id: int,
+        validation_id: int,
+        name: str,
+        location: str,
+        status: str,
+        metadata: dict[str, Any],
+    ) -> int:
+        conn = self._get_connection()
+        metadata_json = _json_dumps(metadata)
+        existing = self.get_product_for_build_brief(build_brief_id)
+        if existing is None:
+            cur = conn.execute(
+                """
+                INSERT INTO products (
+                    build_brief_id, opportunity_id, validation_id,
+                    name, location, status, metadata_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    build_brief_id,
+                    opportunity_id,
+                    validation_id,
+                    name,
+                    location,
+                    status,
+                    metadata_json,
+                ),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+        conn.execute(
+            """
+            UPDATE products
+            SET opportunity_id = ?, validation_id = ?, name = ?, location = ?,
+                status = ?, metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                opportunity_id,
+                validation_id,
+                name,
+                location,
+                status,
+                metadata_json,
+                existing["id"],
+            ),
+        )
+        conn.commit()
+        return int(existing["id"])
+
+    def upsert_product_for_idea(
+        self,
+        *,
+        idea_id: int,
+        name: str,
+        location: str,
+        status: str,
+        metadata: dict[str, Any],
+    ) -> int:
+        conn = self._get_connection()
+        metadata_json = _json_dumps(metadata)
+        existing = self.get_product_for_idea(idea_id)
+        if existing is None:
+            cur = conn.execute(
+                """
+                INSERT INTO products (
+                    idea_id, name, location, status, metadata_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    idea_id,
+                    name,
+                    location,
+                    status,
+                    metadata_json,
+                ),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+        conn.execute(
+            """
+            UPDATE products
+            SET name = ?, location = ?, status = ?, metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                name,
+                location,
+                status,
+                metadata_json,
+                existing["id"],
+            ),
+        )
+        conn.commit()
+        return int(existing["id"])
+
     def get_products(self, limit: Optional[int] = None) -> list[dict[str, Any]]:
         conn = self._get_connection()
-        sql = "SELECT * FROM products ORDER BY created_at DESC"
+        sql = "SELECT * FROM products ORDER BY built_at DESC"
         params: list[Any] = []
         if limit:
             sql += " LIMIT ?"

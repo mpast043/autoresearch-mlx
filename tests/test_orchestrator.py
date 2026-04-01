@@ -158,3 +158,48 @@ def test_stop_on_hit_exit_on_hit_false_does_not_shutdown(temp_db):
     )
     asyncio.run(orch._handle_orchestrator_message(msg))
     assert not ev.is_set()
+
+
+def test_consume_until_quiet_drains_orchestrator_queue(temp_db):
+    orchestrator = Orchestrator(temp_db)
+
+    async def scenario():
+        await orchestrator._message_queue.put(
+            create_message(
+                from_agent="discovery",
+                to_agent="orchestrator",
+                msg_type=MessageType.FINDING,
+                payload={"finding_id": 321},
+            )
+        )
+        processed = await orchestrator.consume_until_quiet(timeout=0.05)
+        queued = await orchestrator._message_queue.get_for_agent("evidence")
+        return processed, queued
+
+    processed, queued = asyncio.run(scenario())
+    assert processed == 1
+    assert queued is not None
+    assert queued.payload["finding_id"] == 321
+
+
+def test_orchestrator_routes_spec_generation_completion_to_builder_when_auto_build_enabled(temp_db):
+    orchestrator = Orchestrator(temp_db, auto_build=True)
+    message = create_message(
+        from_agent="spec_generation",
+        to_agent="orchestrator",
+        msg_type=MessageType.BUILD_PREP,
+        payload={
+            "build_brief_id": 9,
+            "opportunity_id": 4,
+            "validation_id": 7,
+            "prep_stage": "spec_generation",
+            "next_agent": "",
+        },
+    )
+
+    asyncio.run(orchestrator._handle_orchestrator_message(message))
+
+    queued = asyncio.run(orchestrator._message_queue.get_for_agent("builder"))
+    assert queued is not None
+    assert queued.msg_type == MessageType.BUILD_REQUEST
+    assert queued.payload["build_brief_id"] == 9

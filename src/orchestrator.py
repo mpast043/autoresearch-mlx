@@ -100,14 +100,15 @@ class Orchestrator:
         Returns number of messages processed.
         """
         processed = 0
-        deadline = asyncio.get_event_loop().time() + timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
         while processed < max_messages:
-            remaining = deadline - asyncio.get_event_loop().time()
+            remaining = deadline - loop.time()
             if remaining <= 0:
                 break
             try:
                 msg = await asyncio.wait_for(
-                    self._message_bus.receive(self.name),
+                    self._message_queue.receive("orchestrator"),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
@@ -284,6 +285,20 @@ class Orchestrator:
                     to_agent=next_agent,
                     msg_type=MessageType.BUILD_PREP,
                     payload=message.payload,
+                    priority=2,
+                )
+            elif (
+                self._auto_build
+                and message.payload.get("prep_stage") == "spec_generation"
+            ):
+                await self.send_message(
+                    to_agent="builder",
+                    msg_type=MessageType.BUILD_REQUEST,
+                    payload={
+                        "build_brief_id": message.payload.get("build_brief_id"),
+                        "opportunity_id": message.payload.get("opportunity_id"),
+                        "validation_id": message.payload.get("validation_id"),
+                    },
                     priority=2,
                 )
             return
