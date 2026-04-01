@@ -147,6 +147,31 @@ class TestDatabase(unittest.TestCase):
         self.assertGreater(validation_id, 0)
         self.assertEqual(len(self.db.get_recent_validations(limit=10)), 1)
 
+    def test_problem_atom_persists_atom_json(self) -> None:
+        finding_id = self.db.insert_finding(
+            Finding(source="reddit", source_url="https://example.com/thread", content_hash="atom-json-hash")
+        )
+        atom_json = json.dumps({"pain_statement": "handoff breaks", "segment": "ops"})
+        atom_id = self.db.insert_problem_atom(
+            ProblemAtom(
+                finding_id=finding_id,
+                raw_signal_id=12,
+                signal_id=12,
+                pain_statement="handoff breaks",
+                atom_json=atom_json,
+                metadata={"segment": "ops"},
+            )
+        )
+
+        atom = self.db.get_problem_atoms(finding_id=finding_id, limit=1)[0]
+        conn = self.db._get_connection()
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(problem_atoms)").fetchall()}
+        stored = conn.execute("SELECT atom_json FROM problem_atoms WHERE id = ?", (atom_id,)).fetchone()
+
+        self.assertIn("atom_json", columns)
+        self.assertEqual(stored["atom_json"], atom_json)
+        self.assertEqual(atom.atom_json, atom_json)
+
     def test_validation_review_preserves_recurrence_match_records(self) -> None:
         finding_id = self.db.insert_finding(
             Finding(

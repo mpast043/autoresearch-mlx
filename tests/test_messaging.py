@@ -8,7 +8,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from messaging import MessageType, MessageQueue, create_message
+from messaging import MessageBus, MessageType, MessageQueue, create_message
 
 
 def test_create_message_generates_uuid_and_timestamp():
@@ -71,3 +71,17 @@ def test_get_for_agent_selects_targeted_message():
     assert target is not None
     assert target.payload["id"] == 2
     assert sorted(item.payload["id"] for item in remaining) == [1, 3]
+
+
+def test_message_bus_preserves_priority_then_fifo():
+    async def scenario():
+        bus = MessageBus()
+        await bus.put(create_message("a", "target", MessageType.RESULT, {"id": 1}, priority=5))
+        await bus.put(create_message("a", "target", MessageType.RESULT, {"id": 2}, priority=1))
+        await bus.put(create_message("a", "target", MessageType.RESULT, {"id": 3}, priority=1))
+        return [await bus.receive("target"), await bus.receive("target"), await bus.receive("target")]
+
+    first, second, third = asyncio.run(scenario())
+    assert first.payload["id"] == 2
+    assert second.payload["id"] == 3
+    assert third.payload["id"] == 1

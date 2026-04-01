@@ -48,10 +48,10 @@ class BuilderAgent(BaseAgent):
         if existing_product is None:
             product = Product(
                 idea_id=idea_id,
+                name=idea.title,
                 location=str(build_dir),
-                build_status="in_progress",
-                test_results="{}",
-                tooling_manifest="{}",
+                status="in_progress",
+                metadata={"test_results": {}, "tooling_manifest": {}},
             )
             product_id = self.db.insert_product(product)
         else:
@@ -76,7 +76,16 @@ class BuilderAgent(BaseAgent):
             ),
             "skill_paths": skill_paths,
         }
-        self.db.update_product_status(product_id, "completed", json.dumps(test_results))
+        self.db.update_product_status(
+            product_id,
+            "completed",
+            json.dumps(
+                {
+                    "test_results": test_results,
+                    "tooling_manifest": {"skill_paths": skill_paths},
+                }
+            ),
+        )
         self.db.update_idea_status(idea_id, "built")
 
         await self.send_message(

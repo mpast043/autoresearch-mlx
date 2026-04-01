@@ -81,24 +81,23 @@ class MessageBus:
     """Per-agent queue implementation for O(1) retrieval and natural backpressure."""
 
     def __init__(self) -> None:
-        self._queues: dict[str, asyncio.Queue[tuple[int, Message]]] = {}
+        self._queues: dict[str, asyncio.PriorityQueue[tuple[int, int, Message]]] = {}
         self._lock = asyncio.Lock()
         self._counter = 0
 
-    async def _get_queue(self, agent_name: str) -> asyncio.Queue[tuple[int, Message]]:
+    async def _get_queue(self, agent_name: str) -> asyncio.PriorityQueue[tuple[int, int, Message]]:
         """Get or create queue for an agent."""
         if agent_name not in self._queues:
             async with self._lock:
                 if agent_name not in self._queues:
-                    self._queues[agent_name] = asyncio.Queue()
+                    self._queues[agent_name] = asyncio.PriorityQueue()
         return self._queues[agent_name]
 
     async def send(self, message: Message) -> None:
         """Send a message to its recipient's queue with priority."""
         queue = await self._get_queue(message.to_agent)
         self._counter += 1
-        # Preserve priority as tuple for ordering
-        await queue.put((message.priority, message))
+        await queue.put((message.priority, self._counter, message))
 
     async def put(self, message: Message) -> None:
         """Alias for send() for backward compatibility."""
@@ -110,7 +109,7 @@ class MessageBus:
         try:
             item = queue.get_nowait()
             if isinstance(item, tuple):
-                return item[1]
+                return item[2]
             return item
         except asyncio.QueueEmpty:
             return None
@@ -120,7 +119,7 @@ class MessageBus:
         queue = await self._get_queue(agent_name)
         item = await queue.get()
         if isinstance(item, tuple):
-            return item[1]
+            return item[2]
         return item
 
     async def receive_nowait(self, agent_name: str) -> Optional[Message]:
@@ -129,7 +128,7 @@ class MessageBus:
         try:
             item = queue.get_nowait()
             if isinstance(item, tuple):
-                return item[1]
+                return item[2]
             return item
         except asyncio.QueueEmpty:
             return None

@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from src.messaging import MessageType
+from src.build_prep import is_allowed_selection_transition
+from src.messaging import MessageType, create_message
 from src.runtime.paths import DEFAULT_CONFIG_PATH, resolve_project_path
 
 logger = logging.getLogger(__name__)
@@ -225,8 +226,12 @@ class BuilderV2Agent:
     async def stop(self) -> None:
         """Stop the agent."""
         self._shutdown_event.set()
-        if self._task:
-            await self._task
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
 
     def _handle_task_result(self, task: asyncio.Task) -> None:
         """Handle task result for better debugging."""
@@ -370,6 +375,40 @@ class BuilderV2Agent:
 
         return await self.build_from_spec(spec, idea_id)
 
+    async def build_from_build_brief(self, build_brief_id: int) -> BuildResult:
+        """Build a project from a build brief plus the spec-generation output."""
+        if not self.db:
+            return BuildResult(success=False, error="No database connection")
+
+        brief = self.db.get_build_brief(build_brief_id)
+        if brief is None:
+            return BuildResult(success=False, error=f"Build brief {build_brief_id} not found")
+
+        prep_outputs = self.db.list_build_prep_outputs(build_brief_id=build_brief_id, run_id=brief.run_id, limit=20)
+        spec_output = next((item for item in prep_outputs if item.prep_stage == "spec_generation"), None)
+        brief_payload = brief.brief
+
+        spec = dict(spec_output.output if spec_output else {})
+        problem_summary = brief_payload.get("problem_summary", "")
+        spec.setdefault("title", problem_summary or f"build_brief_{build_brief_id}")
+        spec.setdefault("output_type", brief.recommended_output_type or "workflow_reliability_console")
+        spec.setdefault("problem_statement", problem_summary)
+        spec.setdefault(
+            "value_hypothesis",
+            brief_payload.get("value_hypothesis")
+            or brief_payload.get("pain_workaround", {}).get("pain_statement", "")
+            or problem_summary,
+        )
+        spec.setdefault("audience", brief_payload.get("job_to_be_done", ""))
+        spec.setdefault("core_features", brief_payload.get("launch_artifact_plan", []))
+        traceability = dict(spec.get("traceability") or {})
+        traceability.setdefault("build_brief_id", build_brief_id)
+        traceability.setdefault("opportunity_id", brief.opportunity_id)
+        traceability.setdefault("validation_id", brief.validation_id)
+        spec["traceability"] = traceability
+
+        return await self.build_from_spec(spec)
+
     async def build_from_brief(self, brief_path: Path, idea_id: Optional[int] = None) -> BuildResult:
         """Build from a build brief markdown file (output of SpecGenerationAgent)."""
         if not brief_path.exists():
@@ -378,6 +417,73 @@ class BuilderV2Agent:
         brief_content = brief_path.read_text()
         spec = self._parse_brief(brief_content)
         return await self.build_from_spec(spec, idea_id)
+
+    def _record_build_artifact(
+        self,
+        *,
+        build_brief_id: int | None,
+        idea_id: int | None,
+        result: BuildResult,
+        spec: dict[str, Any],
+    ) -> int:
+        if not self.db:
+            return 0
+        product_status = "completed" if result.success else "failed"
+        metadata: dict[str, Any] = {
+            "output_type": spec.get("output_type", "workflow_reliability_console"),
+            "files_written": result.files_written,
+            "confidence": result.confidence,
+            "duration_s": result.duration_s,
+            "error": result.error,
+            "traceability": spec.get("traceability", {}),
+        }
+        if build_brief_id:
+            brief = self.db.get_build_brief(build_brief_id)
+            if brief is None:
+                return 0
+            title = str(spec.get("title") or brief.brief.get("problem_summary") or f"Build {build_brief_id}")
+            return self.db.upsert_product_for_build(
+                build_brief_id=build_brief_id,
+                opportunity_id=brief.opportunity_id,
+                validation_id=brief.validation_id,
+                name=title,
+                location=str(result.project_path) if result.project_path else "",
+                status=product_status,
+                metadata=metadata,
+            )
+        if idea_id:
+            idea = self.db.get_idea(int(idea_id))
+            title = str(spec.get("title") or (idea.title if idea else "") or f"Idea {idea_id}")
+            return self.db.upsert_product_for_idea(
+                idea_id=int(idea_id),
+                name=title,
+                location=str(result.project_path) if result.project_path else "",
+                status=product_status,
+                metadata=metadata,
+            )
+        return 0
+
+    def _advance_build_lifecycle(self, *, build_brief_id: int, success: bool) -> None:
+        if not self.db:
+            return
+        brief = self.db.get_build_brief(build_brief_id)
+        if brief is None:
+            return
+        target_status = "launched" if success else "iterate"
+        if is_allowed_selection_transition(brief.status, target_status):
+            self.db.update_build_brief_status(build_brief_id, target_status)
+        opportunity = self.db.get_opportunity(brief.opportunity_id)
+        if opportunity and is_allowed_selection_transition(opportunity.selection_status, target_status):
+            self.db.update_opportunity_selection(
+                brief.opportunity_id,
+                selection_status=target_status,
+                selection_reason="builder_v2_completed" if success else "builder_v2_failed",
+            )
+
+    def _advance_idea_lifecycle(self, *, idea_id: int, success: bool) -> None:
+        if not self.db:
+            return
+        self.db.update_idea_status(idea_id, "built" if success else "failed")
 
     def _parse_brief(self, brief: str) -> dict:
         """Extract a spec dict from a build brief markdown file."""
@@ -409,19 +515,86 @@ class BuilderV2Agent:
         """Handle incoming messages from the orchestrator."""
         if message.msg_type == MessageType.BUILD_REQUEST:
             idea_id = message.payload.get("idea_id")
-            if not idea_id:
-                return {"success": False, "error": "No idea_id in BUILD_REQUEST"}
+            build_brief_id = message.payload.get("build_brief_id")
+            if idea_id:
+                idea = self.db.get_idea(int(idea_id)) if self.db else None
+                spec = dict(idea.spec if idea else {})
+                if idea:
+                    spec.setdefault("title", idea.title or "")
+                    spec.setdefault("output_type", "workflow_reliability_console")
+                    spec.setdefault("problem_statement", idea.description or "")
+                    spec.setdefault("value_hypothesis", idea.description or "")
+                    spec.setdefault("audience", idea.audience or "")
+                    spec.setdefault("core_features", [])
+                result = await self.build_from_idea(idea_id)
+            elif build_brief_id:
+                build_brief_id = int(build_brief_id)
+                brief = self.db.get_build_brief(build_brief_id) if self.db else None
+                prep_outputs = self.db.list_build_prep_outputs(
+                    build_brief_id=build_brief_id,
+                    run_id=brief.run_id if brief else None,
+                    limit=20,
+                ) if self.db and brief else []
+                spec_output = next((item for item in prep_outputs if item.prep_stage == "spec_generation"), None)
+                spec = dict(spec_output.output if spec_output else {})
+                if brief:
+                    brief_payload = brief.brief
+                    problem_summary = brief_payload.get("problem_summary", "")
+                    spec.setdefault("title", problem_summary or f"build_brief_{build_brief_id}")
+                    spec.setdefault("output_type", brief.recommended_output_type or "workflow_reliability_console")
+                    spec.setdefault("problem_statement", problem_summary)
+                    spec.setdefault(
+                        "value_hypothesis",
+                        brief_payload.get("value_hypothesis")
+                        or brief_payload.get("pain_workaround", {}).get("pain_statement", "")
+                        or problem_summary,
+                    )
+                    spec.setdefault("audience", brief_payload.get("job_to_be_done", ""))
+                    spec.setdefault("core_features", brief_payload.get("launch_artifact_plan", []))
+                    traceability = dict(spec.get("traceability") or {})
+                    traceability.setdefault("build_brief_id", build_brief_id)
+                    traceability.setdefault("opportunity_id", brief.opportunity_id)
+                    traceability.setdefault("validation_id", brief.validation_id)
+                    spec["traceability"] = traceability
+                result = await self.build_from_spec(spec)
+            else:
+                return {"success": False, "error": "No idea_id or build_brief_id in BUILD_REQUEST"}
 
-            result = await self.build_from_idea(idea_id)
-            return {
+            product_id = 0
+            if build_brief_id or idea_id:
+                product_id = self._record_build_artifact(
+                    build_brief_id=build_brief_id,
+                    idea_id=idea_id,
+                    result=result,
+                    spec=spec,
+                )
+            if build_brief_id:
+                self._advance_build_lifecycle(build_brief_id=build_brief_id, success=result.success)
+            if idea_id:
+                self._advance_idea_lifecycle(idea_id=int(idea_id), success=result.success)
+
+            payload = {
                 "success": result.success,
                 "idea_id": idea_id,
+                "build_brief_id": build_brief_id,
+                "product_id": product_id or None,
                 "project_path": str(result.project_path) if result.project_path else None,
                 "files_written": result.files_written,
                 "confidence": result.confidence,
                 "error": result.error,
                 "duration_s": result.duration_s,
             }
+            if self._message_queue is not None:
+                await self._message_queue.put(
+                    create_message(
+                        from_agent=self.name,
+                        to_agent="orchestrator",
+                        msg_type=MessageType.RESULT,
+                        payload=payload,
+                        priority=2,
+                    )
+                )
+            return payload
 
         return {"processed": True}
 
