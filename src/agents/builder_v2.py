@@ -38,54 +38,112 @@ class PromptLibrary:
     """Type-specific prompt templates for different output_type builds."""
 
     SYSTEM_PROMPTS = {
-        "workflow_reliability_console": """You are a senior full-stack engineer building a Python CLI/console tool for diagnosing and fixing workflow reliability issues.
+        "saas": """You are a senior full-stack engineer building a production-ready Flask web application (SaaS).
+Your job is to produce a complete, working web app that is demo-ready and solves the user's problem.
+Output ONLY the code files. No markdown explanations.
+Use Flask, SQLAlchemy, SQLite. Write production-quality code.
+The app must have a landing page with hero section, pricing page, not just a form.""",
+        "microsaas": """You are a senior full-stack engineer building a focused MicroSaaS web application.
+Your job is to produce a complete, working single-purpose web app that solves ONE specific problem well.
+Output ONLY the code files. No markdown explanations.
+Use Flask, SQLAlchemy, SQLite. Keep it simple - one core feature, done well.
+Include a landing page, real functionality, working database.""",
+        "browser_extension": """You are a senior engineer building a browser extension (Chrome/Firefox).
+Your job is to produce a complete, working extension that solves the user's problem.
+Output ONLY the code files. No markdown explanations.
+Include manifest.json, background.js, popup.html, content.js, options.html.
+The extension must have a real popup UI and actual functionality.""",
+        "plugin": """You are a senior engineer building a plugin/integration for an existing platform.
+Your job is to produce a complete, working plugin that can be deployed.
+Output ONLY the code files. No markdown explanations.
+Identify the target platform (Notion, Slack, Jira, WordPress, etc.) and build accordingly.
+Include all necessary files, configuration, and setup instructions.""",
+        "slack_bot": """You are a senior engineer building a Slack bot/integration.
+Your job is to produce a complete, working Slack app that solves the user's problem.
+Output ONLY the code files. No markdown explanations.
+Use Python with Slack SDK. Include app.py, requirements.txt, and setup instructions.
+The bot must respond to commands and have real functionality.""",
+        "api_service": """You are a senior backend engineer building a standalone API service.
+Your job is to produce a complete, working API that solves the user's problem.
+Output ONLY the code files. No markdown explanations.
+Use Flask or FastAPI with SQLAlchemy. Include proper endpoints, models, error handling.
+The API must have real business logic, not just placeholder endpoints.""",
+        "desktop_app": """You are a senior full-stack engineer building a desktop application.
+Your job is to produce a complete, working desktop app that solves the user's problem.
+Output ONLY the code files. No markdown explanations.
+Use Electron (Node.js + React) or Tauri (Rust + web). Include proper build config.
+The app must have a real UI with working functionality.""",
+        "cli_tool": """You are a senior full-stack engineer building a Python CLI/console tool.
 Your job is to produce a complete, working Python project.
 Output ONLY the code files listed in your plan. No markdown explanations.
 Use asyncio for I/O. Include type hints. Write production-quality code.
 Install dependencies: standard library only where possible, else add to requirements.txt.""",
-        "workflow_diagnostic_prototype": """You are a senior full-stack engineer building a prototype web dashboard for diagnosing workflow reliability issues.
-Your job is to produce a complete, working web app.
-Use React + Vite (frontend) and FastAPI (backend). Output ONLY the code files.
-Include realistic mock data. Style with Tailwind CSS.
-Write production-quality code. No placeholders.""",
-        "operator_evidence_workspace": """You are a senior full-stack engineer building an evidence-collection workspace for operators.
-Your job is to produce a complete, working project for capturing and organizing evidence.
-Use React + Vite frontend, FastAPI backend, SQLite for local storage.
-Output ONLY the code files. Use Tailwind for styling.
-Write production-quality code. No TODO comments or placeholders.""",
     }
 
-    USER_TEMPLATE = """Generate a {output_type} project from this spec:
+    USER_TEMPLATE = """Generate a {output_type} from this spec:
 
 ## Spec
 {json_spec}
 
-## Requirements
-1. Create ALL files under /tmp/autoresearch_build/{slug}/
-2. Each file must be complete, runnable code (no stubs, no TODOs)
-3. Include package.json with all dependencies (frontend only)
-4. Include requirements.txt (backend only)
-5. Include a README with setup instructions
-6. Include a Makefile or run.sh for one-command startup
-7. Use environment variables for any secrets (put placeholder in .env.example)
-8. Generate realistic mock data so it runs out of the box
+## Product Requirements
+Generate a complete, working product that solves the user's problem. This should be a deployable web application (SaaS).
 
-## Output structure to generate:
-- package.json (frontend)
-- requirements.txt (backend)
-- src/ (frontend components or backend routes)
-- server.py or main.py
-- README.md
+### Product Type Decision
+Based on the problem_statement in the spec:
+- If it involves workflow management, automation, or team processes → build a Flask/FastAPI web app
+- If it involves data entry, forms, or databases → build a web app with SQLite
+- If it involves monitoring or alerts → build a web dashboard
+- Default to a Flask web application with SQLite database
+
+### What the product must include:
+1. **A landing page with hero section** - first impression matters, make it demo-worthy
+2. **Navigation and branding** - header with logo, nav links
+3. **A working Flask web application** with real functionality
+4. **Database models** (using SQLAlchemy) that match the problem domain
+5. **Real API endpoints** that do actual things (not just return mock data)
+6. **A frontend** with HTML/CSS/JS templates that show real data
+7. **Actual business logic** that solves the stated problem
+
+### DO NOT:
+- Do NOT generate placeholder code or stub functions
+- Do NOT just return mock data in API responses
+- Do NOT create a project that won't run
+- Do NOT create just a basic contact form - build a REAL application
+
+### File Structure to generate:
+- app.py (Flask application - use port from env var PORT or default to 5001)
+- models.py (SQLAlchemy database models)
+- requirements.txt (Python dependencies - use >= versions)
+- templates/base.html, templates/index.html, templates/*.html (frontend with hero section)
+- static/style.css (styling - make it look professional)
 - .env.example
-- run.sh or Makefile
+- run.sh (bash script that creates venv, installs deps, runs app)
+- README.md (complete documentation)
 
-Return ONLY the final JSON:
-{{"files": [{{"path": "relative/path/file.ext", "content": "..."}}]}}
+### README format:
+```markdown
+# Product Name
+
+## What is this?
+[A clear one-line description]
+
+## What problem does it solve?
+[Explain the pain point]
+
+## Key Features
+- [Feature 1]
+- [Feature 2]
+
+## How to Run
+1. Install: `pip install -r requirements.txt`
+2. Run: `python app.py`
+3. Access: http://localhost:5000
+```
 """
 
     @classmethod
     def for_output_type(cls, output_type: str) -> tuple[str, str]:
-        system = cls.SYSTEM_PROMPTS.get(output_type, cls.SYSTEM_PROMPTS["workflow_reliability_console"])
+        system = cls.SYSTEM_PROMPTS.get(output_type, cls.SYSTEM_PROMPTS["saas"])
         return system, cls.USER_TEMPLATE
 
 
@@ -253,7 +311,7 @@ class BuilderV2Agent:
         output_dir = self.output_root / slug
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        output_type = spec.get("output_type", "workflow_reliability_console")
+        output_type = spec.get("output_type", "saas")
         system_prompt, user_template = PromptLibrary.for_output_type(output_type)
 
         spec_json = json.dumps(spec, indent=2)
@@ -354,7 +412,7 @@ class BuilderV2Agent:
 
         spec = {
             "title": row["title"] or "",
-            "output_type": "workflow_reliability_console",
+            "output_type": "saas",
             "problem_statement": row["description"] or "",
             "value_hypothesis": row["description"] or "",
             "audience": row["audience"] or "",
@@ -381,7 +439,7 @@ class BuilderV2Agent:
 
     def _parse_brief(self, brief: str) -> dict:
         """Extract a spec dict from a build brief markdown file."""
-        spec = {"raw_brief": brief, "output_type": "workflow_reliability_console"}
+        spec = {"raw_brief": brief, "output_type": "saas"}
 
         title_match = re.search(r"^#\s+(.+)$", brief, re.MULTILINE)
         if title_match:
@@ -395,13 +453,26 @@ class BuilderV2Agent:
         if sol_match:
             spec["proposed_solution"] = sol_match.group(1).strip()[:500]
 
+        # Detect output type from brief content
         brief_lower = brief.lower()
-        if any(k in brief_lower for k in ["dashboard", "monitor", "ui", "prototype"]):
-            spec["output_type"] = "workflow_diagnostic_prototype"
-        elif any(k in brief_lower for k in ["workspace", "evidence", "capture"]):
-            spec["output_type"] = "operator_evidence_workspace"
+        if any(k in brief_lower for k in ["chrome extension", "firefox extension", "browser extension"]):
+            spec["output_type"] = "browser_extension"
+        elif any(k in brief_lower for k in ["notion", "slack", "jira", "wordpress", "plugin", "integration"]):
+            spec["output_type"] = "plugin"
+        elif any(k in brief_lower for k in ["slack bot", "slack app", "slack integration"]):
+            spec["output_type"] = "slack_bot"
+        elif any(k in brief_lower for k in ["api", "rest", "endpoint", "microservice"]):
+            spec["output_type"] = "api_service"
+        elif any(k in brief_lower for k in ["desktop", "electron", "tauri", "app"]):
+            spec["output_type"] = "desktop_app"
+        elif any(k in brief_lower for k in ["cli", "command line", "terminal", "console tool"]):
+            spec["output_type"] = "cli_tool"
+        elif any(k in brief_lower for k in ["microsaas", "micro-saas", "single feature", "one purpose", "focused"]):
+            spec["output_type"] = "microsaas"
+        elif any(k in brief_lower for k in ["dashboard", "monitor", "prototype", "ui"]):
+            spec["output_type"] = "saas"
         else:
-            spec["output_type"] = "workflow_reliability_console"
+            spec["output_type"] = "saas"
 
         return spec
 
