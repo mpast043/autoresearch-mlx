@@ -24,7 +24,7 @@ def run_backup_db(config_path: str | Path) -> dict:
 
     import yaml
 
-    from runtime.env import load_local_env
+    from src.runtime.env import load_local_env
 
     load_local_env()
     cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
@@ -46,14 +46,14 @@ async def run_check_bridge(config_path: str | Path) -> dict:
     """Call the hosted relay `/api/health` using `reddit_bridge` config (validates URL + token)."""
     import yaml
 
-    from runtime.env import load_local_env
+    from src.runtime.env import load_local_env
 
     load_local_env()
     cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
     with cfg_file.open(encoding="utf-8") as handle:
         cfg = yaml.safe_load(handle) or {}
     bridge_cfg = dict(cfg.get("reddit_bridge") or {})
-    from reddit_bridge import BridgeError, RedditBridgeClient
+    from src.reddit_bridge import BridgeError, RedditBridgeClient
 
     client = RedditBridgeClient(bridge_cfg)
     try:
