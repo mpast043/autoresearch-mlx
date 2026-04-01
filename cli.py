@@ -122,6 +122,218 @@ def build_discovery_sort_diagnostics(db, *, limit: int = 500, run_id: str = "") 
     }
 
 
+def _safe_ratio(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(float(numerator) / float(denominator), 4)
+
+
+def build_source_health_summary(db, *, limit: int = 8) -> dict:
+    if not db or not hasattr(db, "get_discovery_feedback"):
+        return {}
+
+    rows = db.get_discovery_feedback() or []
+    if not rows:
+        return {"rows": 0, "source_count": 0, "status_mix": {}, "top_sources": []}
+
+    status_mix: dict[str, int] = collections.Counter()
+    by_source: dict[str, dict] = {}
+    for row in rows:
+        source_name = str(row.get("source_name") or "unknown")
+        bucket = by_source.setdefault(
+            source_name,
+            {
+                "source_name": source_name,
+                "queries": 0,
+                "runs": 0,
+                "docs_seen": 0,
+                "findings_emitted": 0,
+                "validations": 0,
+                "passes": 0,
+                "prototype_candidates": 0,
+                "build_briefs": 0,
+                "_latency_total": 0.0,
+                "_latency_samples": 0,
+                "_status_counts": collections.Counter(),
+            },
+        )
+        bucket["queries"] += 1
+        bucket["runs"] += int(row.get("runs") or 0)
+        bucket["docs_seen"] += int(row.get("docs_seen") or 0)
+        bucket["findings_emitted"] += int(row.get("findings_emitted") or 0)
+        bucket["validations"] += int(row.get("validations") or 0)
+        bucket["passes"] += int(row.get("passes") or 0)
+        bucket["prototype_candidates"] += int(row.get("prototype_candidates") or 0)
+        bucket["build_briefs"] += int(row.get("build_briefs") or 0)
+        latency_ms = float(row.get("last_latency_ms") or 0.0)
+        if latency_ms > 0:
+            bucket["_latency_total"] += latency_ms
+            bucket["_latency_samples"] += 1
+        last_status = str(row.get("last_status") or "unknown")
+        status_mix[last_status] = status_mix.get(last_status, 0) + 1
+        bucket["_status_counts"][last_status] += 1
+
+    top_sources = []
+    for bucket in by_source.values():
+        status_counts = bucket["_status_counts"]
+        dominant_status = max(status_counts.items(), key=lambda kv: (kv[1], kv[0]))[0] if status_counts else "unknown"
+        top_sources.append(
+            {
+                "source_name": bucket["source_name"],
+                "queries": bucket["queries"],
+                "runs": bucket["runs"],
+                "docs_seen": bucket["docs_seen"],
+                "findings_emitted": bucket["findings_emitted"],
+                "validations": bucket["validations"],
+                "passes": bucket["passes"],
+                "prototype_candidates": bucket["prototype_candidates"],
+                "build_briefs": bucket["build_briefs"],
+                "yield_per_run": _safe_ratio(bucket["findings_emitted"], bucket["runs"]),
+                "pass_rate": _safe_ratio(bucket["passes"], bucket["validations"]),
+                "avg_latency_ms": round(bucket["_latency_total"] / bucket["_latency_samples"], 2) if bucket["_latency_samples"] else 0.0,
+                "dominant_status": dominant_status,
+                "status_mix": dict(sorted(status_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+            }
+        )
+    top_sources.sort(
+        key=lambda item: (
+            -int(item["build_briefs"]),
+            -int(item["prototype_candidates"]),
+            -int(item["passes"]),
+            -int(item["findings_emitted"]),
+            item["source_name"],
+        )
+    )
+    return {
+        "rows": len(rows),
+        "source_count": len(by_source),
+        "status_mix": dict(sorted(status_mix.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "top_sources": top_sources[:limit],
+    }
+
+
+def build_builder_jobs_view(db, *, run_id: str = "", limit: int = 25) -> list[dict]:
+    if not db or not hasattr(db, "list_build_briefs") or not hasattr(db, "list_build_prep_outputs"):
+        return []
+    briefs = db.list_build_briefs(run_id=run_id or None, limit=max(limit * 4, 100))
+    prep_outputs = db.list_build_prep_outputs(run_id=run_id or None, limit=max(limit * 8, 200))
+    prep_by_brief: dict[int, list] = {}
+    for item in prep_outputs:
+        prep_by_brief.setdefault(int(getattr(item, "build_brief_id", 0) or 0), []).append(item)
+
+    state_map = {
+        "prototype_candidate": "queued",
+        "prototype_ready": "scoped",
+        "build_ready": "ready_to_build",
+        "launched": "shipped",
+        "iterate": "reviewed",
+        "expand": "shipped",
+        "archive": "failed",
+    }
+    rows: list[dict] = []
+    for brief in briefs:
+        outputs = prep_by_brief.get(int(getattr(brief, "id", 0) or 0), [])
+        output_statuses = collections.Counter(str(getattr(item, "status", "") or "") for item in outputs)
+        output_stages = [str(getattr(item, "prep_stage", "") or "") for item in outputs]
+        rows.append(
+            {
+                "build_brief_id": int(getattr(brief, "id", 0) or 0),
+                "run_id": getattr(brief, "run_id", "") or "",
+                "opportunity_id": int(getattr(brief, "opportunity_id", 0) or 0),
+                "validation_id": int(getattr(brief, "validation_id", 0) or 0),
+                "recommended_output_type": getattr(brief, "recommended_output_type", "") or "",
+                "build_brief_status": getattr(brief, "status", "") or "",
+                "builder_status": state_map.get(str(getattr(brief, "status", "") or ""), "queued"),
+                "ready_for_build": str(getattr(brief, "status", "") or "") == "build_ready",
+                "prep_output_count": len(outputs),
+                "prep_stage_status_mix": dict(sorted(output_statuses.items(), key=lambda kv: (-kv[1], kv[0]))),
+                "prep_stages": sorted([stage for stage in output_stages if stage]),
+                "updated_at": getattr(brief, "updated_at", None),
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            0 if item["ready_for_build"] else 1,
+            item["builder_status"],
+            -(item["build_brief_id"] or 0),
+        )
+    )
+    return rows[:limit]
+
+
+def build_operator_report(app: AutoResearcher, *, limit: int = 10) -> dict:
+    from src.pipeline_health import compute_pipeline_health
+
+    if not app.db:
+        return {
+            "runtime": app.runtime_paths(),
+            "current_run_id": app.current_run_id,
+            "pipeline_health": {},
+            "source_health": {},
+            "money_surface": {},
+            "operator_focus": {"recommended_focus": "initialize_pipeline", "primary_blocker": "database_unavailable", "notes": []},
+            "recent_logs": app.status_tracker.status.get("logs", [])[-12:],
+        }
+
+    decision_surface = app.db.get_candidate_workbench(limit=max(limit * 3, 25), run_id=app.current_run_id) if hasattr(app.db, "get_candidate_workbench") else []
+    builder_jobs = build_builder_jobs_view(app.db, run_id=app.current_run_id, limit=max(limit * 3, 25))
+    validation_rows = app.validation_report(limit=1000)
+    action_mix = collections.Counter(
+        str(item.get("next_recommended_action") or "")
+        for item in decision_surface
+        if str(item.get("next_recommended_action") or "")
+    )
+    builder_status_mix = collections.Counter(
+        str(item.get("builder_status") or "")
+        for item in builder_jobs
+        if str(item.get("builder_status") or "")
+    )
+    prototype_now_count = sum(1 for item in decision_surface if item.get("next_recommended_action") == "prototype_now")
+    build_ready_count = sum(1 for item in builder_jobs if item.get("ready_for_build"))
+
+    pipeline_health = compute_pipeline_health(app.db)
+    source_health = build_source_health_summary(app.db, limit=limit)
+    blockers = list((pipeline_health.get("interpretation") or {}).get("likely_blockers") or [])
+    hints = list((pipeline_health.get("interpretation") or {}).get("hints") or [])
+    notes = [*blockers[:1], *hints[:2]]
+
+    if prototype_now_count > 0:
+        recommended_focus = "prototype_now"
+    elif build_ready_count > 0:
+        recommended_focus = "prepare_build_queue"
+    elif pipeline_health.get("actionable_qualified_for_pipeline", 0) > 0:
+        recommended_focus = "continue_validation"
+    else:
+        recommended_focus = "refresh_discovery"
+
+    return {
+        "runtime": app.runtime_paths(),
+        "current_run_id": app.current_run_id,
+        "pipeline_health": pipeline_health,
+        "artifact_coverage": {
+            "validations_in_run": len(validation_rows),
+            "build_briefs": len(app.db.list_build_briefs(run_id=app.current_run_id, limit=1000)) if hasattr(app.db, "list_build_briefs") else 0,
+            "build_prep_outputs": len(app.db.list_build_prep_outputs(run_id=app.current_run_id, limit=1000)) if hasattr(app.db, "list_build_prep_outputs") else 0,
+            "builder_jobs": len(builder_jobs),
+        },
+        "source_health": source_health,
+        "money_surface": {
+            "prototype_now_count": prototype_now_count,
+            "build_ready_count": build_ready_count,
+            "action_mix": dict(sorted(action_mix.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "builder_job_status_mix": dict(sorted(builder_status_mix.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "top_ranked_opportunities": decision_surface[:limit],
+            "build_queue": builder_jobs[:limit],
+        },
+        "operator_focus": {
+            "recommended_focus": recommended_focus,
+            "primary_blocker": blockers[0] if blockers else "",
+            "notes": notes[:4],
+        },
+        "recent_logs": app.status_tracker.status.get("logs", [])[-12:],
+    }
+
+
 def build_verbose_report(app: AutoResearcher, summary: dict) -> dict:
     return {
         "runtime": app.runtime_paths(),
@@ -141,6 +353,11 @@ def build_verbose_report(app: AutoResearcher, summary: dict) -> dict:
         "candidate_workbench": app.db.get_candidate_workbench(limit=10, run_id=app.current_run_id)
         if app.db and hasattr(app.db, "get_candidate_workbench")
         else [],
+        "decision_surface": app.db.get_candidate_workbench(limit=10, run_id=app.current_run_id)
+        if app.db and hasattr(app.db, "get_candidate_workbench")
+        else [],
+        "builder_jobs": build_builder_jobs_view(app.db, run_id=app.current_run_id, limit=10),
+        "operator_report": build_operator_report(app, limit=10),
         "review": app.review_report(limit=10),
         "recent_logs": app.status_tracker.status.get("logs", [])[-12:],
         "summary": summary,
@@ -195,6 +412,9 @@ async def main() -> None:
             "build-briefs",
             "build-prep",
             "workbench",
+            "decision-surface",
+            "operator-report",
+            "builder-jobs",
             "report",
             "gate-diagnostics",
             "pipeline-health",
@@ -376,6 +596,12 @@ async def main() -> None:
             print_json([item.__dict__ for item in app.db.list_build_prep_outputs(limit=100)] if app.db else [])
         elif args.command == "workbench":
             print_json(app.db.get_candidate_workbench(limit=100, run_id=app.current_run_id) if app.db else [])
+        elif args.command == "decision-surface":
+            print_json(app.db.get_candidate_workbench(limit=100, run_id=app.current_run_id) if app.db else [])
+        elif args.command == "operator-report":
+            print_json(build_operator_report(app, limit=min(max(args.limit, 5), 25)))
+        elif args.command == "builder-jobs":
+            print_json(build_builder_jobs_view(app.db, run_id=app.current_run_id, limit=100) if app.db else [])
         elif args.command == "report":
             print_json(build_verbose_report(app, app.snapshot()))
         elif args.command == "gate-diagnostics":

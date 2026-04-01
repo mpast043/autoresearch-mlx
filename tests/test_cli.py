@@ -5,11 +5,18 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from cli import build_discovery_sort_diagnostics, build_verbose_report, render_watch_snapshot
+from cli import (
+    build_builder_jobs_view,
+    build_discovery_sort_diagnostics,
+    build_operator_report,
+    build_verbose_report,
+    render_watch_snapshot,
+)
 
 
 class DummyStatusTracker:
@@ -29,10 +36,24 @@ class DummyDB:
         return {"status_counts": {"screened_out": 1}, "reason_counts": {"generic_review_title": 1}}
 
     def list_build_briefs(self, run_id="", limit=10):
-        return []
+        return [
+            SimpleNamespace(
+                id=11,
+                run_id="run-1",
+                opportunity_id=6,
+                validation_id=5,
+                status="build_ready",
+                recommended_output_type="workflow_reliability_console",
+                updated_at="2026-04-01T10:00:00",
+            )
+        ]
 
     def list_build_prep_outputs(self, run_id="", limit=20):
-        return []
+        return [
+            SimpleNamespace(build_brief_id=11, prep_stage="solution_framing", status="ready"),
+            SimpleNamespace(build_brief_id=11, prep_stage="experiment_design", status="ready"),
+            SimpleNamespace(build_brief_id=11, prep_stage="spec_generation", status="ready"),
+        ]
 
     def get_candidate_workbench(self, limit=10, run_id=""):
         return [
@@ -48,20 +69,51 @@ class DummyDB:
             }
         ]
 
+    def get_discovery_feedback(self, source_name=None):
+        rows = [
+            {
+                "source_name": "reddit",
+                "query_text": "spreadsheet handoff failures",
+                "runs": 4,
+                "docs_seen": 12,
+                "findings_emitted": 3,
+                "validations": 2,
+                "passes": 1,
+                "prototype_candidates": 1,
+                "build_briefs": 1,
+                "last_latency_ms": 340,
+                "last_status": "ok",
+            }
+        ]
+        if source_name:
+            return [row for row in rows if row["source_name"] == source_name]
+        return rows
+
     def get_findings(self, limit=100):
         class _F:
-            def __init__(self, source, status, evidence):
+            def __init__(self, finding_id, source, status, evidence):
+                self.id = finding_id
                 self.source = source
                 self.status = status
                 self.evidence = evidence
+                self.source_class = "pain_signal"
 
         return [
-            _F("reddit-problem/smallbusiness", "qualified", {"discovery_sort": "new", "run_id": "run-1"}),
-            _F("reddit-problem/smallbusiness", "parked", {"discovery_sort": "top", "run_id": "run-1"}),
-            _F("reddit-problem/webdev", "qualified", {"discovery_sort": "new", "run_id": "run-1"}),
-            _F("reddit-problem/webdev", "killed", {"discovery_sort": "comments", "run_id": "run-2"}),
-            _F("github-problem", "qualified", {"run_id": "run-1"}),
+            _F(5, "reddit-problem/smallbusiness", "qualified", {"discovery_sort": "new", "run_id": "run-1"}),
+            _F(6, "reddit-problem/smallbusiness", "parked", {"discovery_sort": "top", "run_id": "run-1"}),
+            _F(7, "reddit-problem/webdev", "qualified", {"discovery_sort": "new", "run_id": "run-1"}),
+            _F(8, "reddit-problem/webdev", "killed", {"discovery_sort": "comments", "run_id": "run-2"}),
+            _F(9, "github-problem", "qualified", {"run_id": "run-1"}),
         ]
+
+    def get_raw_signals_by_finding(self, finding_id):
+        return [{"id": 1}] if finding_id == 5 else []
+
+    def get_problem_atoms_by_finding(self, finding_id):
+        return [{"id": 1}] if finding_id == 5 else []
+
+    def get_validation_review(self, limit=25, run_id=None):
+        return [{"id": 5, "finding_id": 5}]
 
 
 class DummyApp:
@@ -123,8 +175,31 @@ def test_build_verbose_report_includes_runtime_paths_counts_and_logs():
     assert report["screening_all_time"]["parked"] == 2
     assert report["actionable_screening"]["parked"] == 1
     assert report["candidate_workbench"][0]["next_recommended_action"] == "prototype_now"
+    assert report["decision_surface"][0]["next_recommended_action"] == "prototype_now"
+    assert report["builder_jobs"][0]["builder_status"] == "ready_to_build"
+    assert report["operator_report"]["money_surface"]["prototype_now_count"] == 1
     assert report["review"][0]["finding_id"] == 5
     assert "stage=discovery" in report["recent_logs"][0]
+
+
+def test_build_builder_jobs_view_derives_queue_from_briefs_and_prep_outputs():
+    rows = build_builder_jobs_view(DummyDB(), run_id="run-1", limit=10)
+
+    assert rows[0]["build_brief_id"] == 11
+    assert rows[0]["builder_status"] == "ready_to_build"
+    assert rows[0]["prep_output_count"] == 3
+    assert rows[0]["ready_for_build"] is True
+
+
+def test_build_operator_report_combines_health_sources_and_build_queue():
+    report = build_operator_report(DummyApp(), limit=5)
+
+    assert report["pipeline_health"]["actionable_qualified_for_pipeline"] == 1
+    assert report["source_health"]["top_sources"][0]["source_name"] == "reddit"
+    assert report["money_surface"]["prototype_now_count"] == 1
+    assert report["money_surface"]["build_ready_count"] == 1
+    assert report["money_surface"]["builder_job_status_mix"]["ready_to_build"] == 1
+    assert report["operator_focus"]["recommended_focus"] == "prototype_now"
 
 
 def test_render_watch_snapshot_shows_runtime_and_live_counts():
