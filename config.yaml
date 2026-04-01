@@ -170,8 +170,8 @@ validation:
     recurrence_budget_seconds: 45.0
     competitor_budget_seconds: 20.0
     max_results_per_domain: 2
-    # DuckDuckGo provider backend: "api" (default) or "duckduckgo" (HTML, may be blocked in some networks)
-    ddgs_backend: api
+    # DuckDuckGo provider backend: "duckduckgo" (HTML) or "brave" or "google" etc
+    ddgs_backend: duckduckgo
     # Extra results to fetch beyond max_results to allow deduplication headroom
     ddgs_extra_results: 4
     # Result truncation lengths
