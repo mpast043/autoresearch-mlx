@@ -10,10 +10,10 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from reddit_relay import RedditRelayStore
-from reddit_seed import RedditSeeder, build_comment_items, build_post_item, reddit_post_id_from_url
-from research_tools import SearchDocument
-from runtime.paths import PROJECT_ROOT
+from src.reddit_relay import RedditRelayStore
+from src.reddit_seed import RedditSeeder, build_comment_items, build_post_item, reddit_post_id_from_url
+from src.research_tools import SearchDocument
+from src.runtime.paths import PROJECT_ROOT
 
 
 def test_reddit_post_id_from_url_extracts_id():

@@ -12,9 +12,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from messaging import MessageType
+from src.messaging import MessageType
 
-from database import (
+from src.database import (
     CorroborationRecord,
     Database,
     EvidenceLedgerEntry,
@@ -28,7 +28,7 @@ from database import (
     ValidationExperiment,
 )
 from run import AutoResearcher
-from runtime.paths import DEFAULT_CONFIG_PATH
+from src.runtime.paths import DEFAULT_CONFIG_PATH
 
 
 def test_autoresearcher_resolves_runtime_paths_from_project_root_outside_cwd():

@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from aiohttp.test_utils import make_mocked_request
 
-from reddit_relay import (
+from src.reddit_relay import (
     ALLOW_NO_AUTH_KEY,
     AUTH_TOKEN_KEY,
     STORE_KEY,

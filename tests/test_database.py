@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from database import (  # noqa: E402
+from src.database import (  # noqa: E402
     BuildBrief,
     Database,
     EvidenceLedgerEntry,

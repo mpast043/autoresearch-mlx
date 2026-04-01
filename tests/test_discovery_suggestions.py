@@ -8,8 +8,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from database import Database, Finding, OpportunityCluster, RawSignal
-from discovery_suggestions import build_discovery_suggestions
+from src.database import Database, Finding, OpportunityCluster, RawSignal
+from src.discovery_suggestions import build_discovery_suggestions
 
 
 @pytest.fixture

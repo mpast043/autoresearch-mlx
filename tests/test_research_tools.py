@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from reddit_bridge import BridgeError
-from research_tools import ResearchToolkit, SearchDocument
+from src.reddit_bridge import BridgeError
+from src.research_tools import ResearchToolkit, SearchDocument
 
 
 class FakeDDGS:

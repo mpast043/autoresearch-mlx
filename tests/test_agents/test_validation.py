@@ -10,10 +10,10 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from agents.base import AgentStatus
-from agents.validation import ValidationAgent
-from database import Database, Finding
-from messaging import MessageQueue, MessageType, create_message
+from src.agents.base import AgentStatus
+from src.agents.validation import ValidationAgent
+from src.database import Database, Finding
+from src.messaging import MessageQueue, MessageType, create_message
 
 
 class MockValidationAgent(ValidationAgent):

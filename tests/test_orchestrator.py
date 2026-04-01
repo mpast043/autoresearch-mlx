@@ -10,9 +10,9 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from database import Database
-from messaging import MessageType, create_message
-from orchestrator import Orchestrator
+from src.database import Database
+from src.messaging import MessageType, create_message
+from src.orchestrator import Orchestrator
 
 
 @pytest.fixture

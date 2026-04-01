@@ -6,8 +6,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from database import Database
-from discovery_expander import (
+from src.database import Database
+from src.discovery_expander import (
     get_expanded_config,
     load_expansion_state,
     run_expansion,

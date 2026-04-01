@@ -11,10 +11,10 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from agents.base import AgentStatus
-from agents.discovery import DiscoveryAgent
-from database import Database, Finding, Validation
-from messaging import MessageType
+from src.agents.base import AgentStatus
+from src.agents.discovery import DiscoveryAgent
+from src.database import Database, Finding, Validation
+from src.messaging import MessageType
 
 
 @pytest.fixture

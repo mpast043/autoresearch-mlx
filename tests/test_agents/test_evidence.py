@@ -9,9 +9,9 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from agents.evidence import EvidenceAgent
-from database import Database, Finding, ProblemAtom, RawSignal
-from messaging import MessageQueue, MessageType
+from src.agents.evidence import EvidenceAgent
+from src.database import Database, Finding, ProblemAtom, RawSignal
+from src.messaging import MessageQueue, MessageType
 
 
 class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):

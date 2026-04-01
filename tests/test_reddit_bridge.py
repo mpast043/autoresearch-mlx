@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from reddit_bridge import BridgeError, RedditBridgeClient, normalize_reddit_item
+from src.reddit_bridge import BridgeError, RedditBridgeClient, normalize_reddit_item
 
 
 def test_normalize_reddit_item_enforces_stable_shape():

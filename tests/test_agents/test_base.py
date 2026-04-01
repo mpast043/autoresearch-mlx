@@ -7,8 +7,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from agents.base import AgentStatus, BaseAgent
-from messaging import MessageType, create_message
+from src.agents.base import AgentStatus, BaseAgent
+from src.messaging import MessageType, create_message
 
 
 class DummyAgent(BaseAgent):

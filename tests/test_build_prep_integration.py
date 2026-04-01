@@ -8,11 +8,11 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from agents.build_prep import ExperimentDesignAgent, SolutionFramingAgent, SpecGenerationAgent
-from agents.validation import ValidationAgent
-import agents.validation as validation_module
-from database import Database, Finding
-from messaging import MessageType, create_message
+from src.agents.build_prep import ExperimentDesignAgent, SolutionFramingAgent, SpecGenerationAgent
+from src.agents.validation import ValidationAgent
+import src.agents.validation as validation_module
+from src.database import Database, Finding
+from src.messaging import MessageType, create_message
 
 
 def test_validation_to_build_prep_artifacts_end_to_end():

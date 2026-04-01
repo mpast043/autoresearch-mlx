@@ -6,8 +6,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from database import ProblemAtom, RawSignal
-from opportunity_engine import (
+from src.database import ProblemAtom, RawSignal
+from src.opportunity_engine import (
     OpportunityEngine,
     build_cluster_summary,
     build_problem_atom,

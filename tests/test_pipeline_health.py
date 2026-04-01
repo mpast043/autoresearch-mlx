@@ -6,8 +6,8 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from database import Database, Finding
-from pipeline_health import compute_pipeline_health
+from src.database import Database, Finding
+from src.pipeline_health import compute_pipeline_health
 
 
 def test_pipeline_health_counts_actionable_qualified():
