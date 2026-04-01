@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from src.agents.base import BaseAgent
-from src.messaging import MessageBus, MessageQueue, MessageType, create_message
+from src.messaging import Message, MessageBus, MessageQueue, MessageType, create_message
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +107,12 @@ class Orchestrator:
                 break
             try:
                 msg = await asyncio.wait_for(
-                    self.message_queue.receive(self.name),
+                    self._message_bus.receive(self.name),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
                 break
-            await self.receive_message(msg)
+            await self._handle_orchestrator_message(msg)
             processed += 1
         return processed
 
@@ -190,14 +190,13 @@ class Orchestrator:
             if self._status_tracker:
                 self._status_tracker.set_stage("validation")
                 self._status_tracker.log(f"[unseeded] routing finding {finding_id} directly to validation")
-            validation_msg = Message(
+            # Send via message bus for proper routing
+            await self.send_message(
+                to_agent="validation",
                 msg_type=MessageType.VALIDATION,
                 payload={"finding_id": finding_id},
-                from_agent="orchestrator",
-                to_agent="validation",
-                correlation_id=message.correlation_id,
+                priority=2,
             )
-            await self._agents["validation"].receive_message(validation_msg)
             return
 
         if message.msg_type == MessageType.VALIDATION:
