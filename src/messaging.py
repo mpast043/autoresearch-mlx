@@ -81,10 +81,11 @@ class MessageBus:
     """Per-agent queue implementation for O(1) retrieval and natural backpressure."""
 
     def __init__(self) -> None:
-        self._queues: dict[str, asyncio.Queue[Message]] = {}
+        self._queues: dict[str, asyncio.Queue[tuple[int, Message]]] = {}
         self._lock = asyncio.Lock()
+        self._counter = 0
 
-    async def _get_queue(self, agent_name: str) -> asyncio.Queue[Message]:
+    async def _get_queue(self, agent_name: str) -> asyncio.Queue[tuple[int, Message]]:
         """Get or create queue for an agent."""
         if agent_name not in self._queues:
             async with self._lock:
@@ -93,24 +94,43 @@ class MessageBus:
         return self._queues[agent_name]
 
     async def send(self, message: Message) -> None:
-        """Send a message to its recipient's queue."""
+        """Send a message to its recipient's queue with priority."""
         queue = await self._get_queue(message.to_agent)
-        await queue.put(message)
+        self._counter += 1
+        # Preserve priority as tuple for ordering
+        await queue.put((message.priority, message))
 
     async def put(self, message: Message) -> None:
         """Alias for send() for backward compatibility."""
         await self.send(message)
 
+    async def get_for_agent(self, agent_id: str) -> Optional[Message]:
+        """Get next message for agent, or None if queue empty."""
+        queue = await self._get_queue(agent_id)
+        try:
+            item = queue.get_nowait()
+            if isinstance(item, tuple):
+                return item[1]
+            return item
+        except asyncio.QueueEmpty:
+            return None
+
     async def receive(self, agent_name: str) -> Message:
         """Receive a message from agent's queue (blocks until available)."""
         queue = await self._get_queue(agent_name)
-        return await queue.get()
+        item = await queue.get()
+        if isinstance(item, tuple):
+            return item[1]
+        return item
 
     async def receive_nowait(self, agent_name: str) -> Optional[Message]:
         """Receive immediately or return None if empty."""
         queue = await self._get_queue(agent_name)
         try:
-            return queue.get_nowait()
+            item = queue.get_nowait()
+            if isinstance(item, tuple):
+                return item[1]
+            return item
         except asyncio.QueueEmpty:
             return None
 
