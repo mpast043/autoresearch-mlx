@@ -961,7 +961,7 @@ def test_validation_recurrence_site_search_can_fall_back_to_bing(monkeypatch):
             )
         raise AssertionError(f"unexpected url {url}")
 
-    monkeypatch.setattr("research_tools.requests.get", fake_get)
+    monkeypatch.setattr("src.research_tools.requests.get",fake_get)
 
     docs = asyncio.run(
         toolkit.search_web(
@@ -1008,7 +1008,7 @@ def test_validation_recurrence_stackexchange_site_search_returns_docs(monkeypatc
             }
         )
 
-    monkeypatch.setattr("research_tools.requests.get", fake_get)
+    monkeypatch.setattr("src.research_tools.requests.get",fake_get)
 
     docs = asyncio.run(
         toolkit.search_web(
@@ -1273,7 +1273,7 @@ def test_reddit_bridge_only_hit_returns_results_without_public_fallback(monkeypa
         return ([{"title": "Bridge post", "permalink": "https://reddit.com/r/test/comments/1", "body": "Bridge body", "subreddit": "test"}], "")
 
     monkeypatch.setattr(toolkit.reddit_bridge, "search_posts", fake_search_posts)
-    monkeypatch.setattr("research_tools.requests.get", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("public reddit should not be hit")))
+    monkeypatch.setattr("src.research_tools.requests.get",lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("public reddit should not be hit")))
 
     docs = asyncio.run(toolkit.reddit_search("test", "workflow pain", limit=2))
 
@@ -1293,7 +1293,7 @@ def test_reddit_bridge_only_miss_returns_empty_without_public_fallback(monkeypat
         raise BridgeError("no_cached_result", "no cached search result", 404)
 
     monkeypatch.setattr(toolkit.reddit_bridge, "search_posts", fake_search_posts)
-    monkeypatch.setattr("research_tools.requests.get", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("public reddit should not be hit")))
+    monkeypatch.setattr("src.research_tools.requests.get",lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("public reddit should not be hit")))
 
     docs = asyncio.run(toolkit.reddit_search("test", "workflow pain", limit=2))
 
@@ -1312,7 +1312,7 @@ def test_reddit_bridge_with_fallback_uses_public_reddit_on_miss(monkeypatch):
         raise BridgeError("no_cached_result", "no cached search result", 404)
 
     monkeypatch.setattr(toolkit.reddit_bridge, "search_posts", fake_search_posts)
-    monkeypatch.setattr("research_tools.requests.get", lambda *args, **kwargs: DummyRedditResponse([_reddit_child(title="Fallback post")]))
+    monkeypatch.setattr("src.research_tools.requests.get",lambda *args, **kwargs: DummyRedditResponse([_reddit_child(title="Fallback post")]))
 
     docs = asyncio.run(toolkit.reddit_search("test", "workflow pain", limit=2))
 
@@ -1331,7 +1331,7 @@ def test_reddit_public_direct_bypasses_bridge(monkeypatch):
         raise AssertionError("bridge should not be called in public_direct mode")
 
     monkeypatch.setattr(toolkit.reddit_bridge, "search_posts", should_not_call_bridge)
-    monkeypatch.setattr("research_tools.requests.get", lambda *args, **kwargs: DummyRedditResponse([_reddit_child(title="Direct post")]))
+    monkeypatch.setattr("src.research_tools.requests.get",lambda *args, **kwargs: DummyRedditResponse([_reddit_child(title="Direct post")]))
 
     docs = asyncio.run(toolkit.reddit_search("test", "workflow pain", limit=2))
 

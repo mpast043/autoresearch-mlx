@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 try:
-    from reddit_bridge import BridgeError, RedditBridgeClient
-except Exception:  # pragma: no cover - supports package and direct module usage
     from src.reddit_bridge import BridgeError, RedditBridgeClient
+except Exception:  # pragma: no cover - supports package and direct module usage
+    from reddit_bridge import BridgeError, RedditBridgeClient
 
 try:
-    from search_models import SearchDocument
-except Exception:  # pragma: no cover - supports package and direct module usage
     from src.search_models import SearchDocument
+except Exception:  # pragma: no cover - supports package and direct module usage
+    from search_models import SearchDocument
 
 
 class RedditTransport:

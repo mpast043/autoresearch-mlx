@@ -96,14 +96,14 @@ def test_run_expansion_honors_separate_keyword_and_subreddit_limits(temp_db, tmp
     }
 
     monkeypatch.setattr(
-        "discovery_expander.get_winning_patterns",
+        "src.discovery_expander.get_winning_patterns",
         lambda db, min_score=0.5: {
             "keywords": ["winner one", "winner two", "winner three"],
             "subreddits": ["ops", "excel"],
         },
     )
     monkeypatch.setattr(
-        "discovery_expander.build_discovery_suggestions",
+        "src.discovery_expander.build_discovery_suggestions",
         lambda db, max_keywords=0: {
             "suggested_keywords": ["winner two", "suggested three"],
             "suggested_subreddits_from_findings": ["ops", "finance"],

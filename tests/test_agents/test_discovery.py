@@ -75,7 +75,7 @@ def test_discover_once_refreshes_config_after_expansion(temp_db, tmp_path, monke
         merged["discovery"] = discovery
         return merged
 
-    monkeypatch.setattr("agents.discovery.get_expanded_config", fake_get_expanded_config)
+    monkeypatch.setattr("src.agents.discovery.get_expanded_config", fake_get_expanded_config)
 
     captured = {}
 
@@ -87,7 +87,7 @@ def test_discover_once_refreshes_config_after_expansion(temp_db, tmp_path, monke
         def set_discovery_feedback(self, feedback):
             return None
 
-    monkeypatch.setattr("agents.discovery.ResearchToolkit", DummyToolkit)
+    monkeypatch.setattr("src.agents.discovery.ResearchToolkit", DummyToolkit)
 
     async def no_prime():
         return None
@@ -664,7 +664,7 @@ def test_prime_reddit_relay_includes_learned_theme_queries(temp_db, monkeypatch)
             captured["seed_queries"] = list(queries)
             return FakeSummary()
 
-    monkeypatch.setattr("agents.discovery.RedditSeeder", FakeSeeder)
+    monkeypatch.setattr("src.agents.discovery.RedditSeeder", FakeSeeder)
 
     asyncio.run(agent._prime_reddit_relay())
 
