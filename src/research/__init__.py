@@ -47,8 +47,36 @@ from src.research.scoring import (
     score_corroboration,
 )
 
-# Re-export main toolkit for backward compatibility
+# Re-export research_tools for backward compatibility
 from src.research_tools import (
     ResearchToolkit,
     REDDIT_MODES,
+    SOFTWARE_DOMAINS,
+    NOISY_SEARCH_DOMAINS,
+    SEARCH_ENGINE_RESULT_DOMAINS,
+    STACKEXCHANGE_SITE_ALIASES,
+    QUERY_STOPWORDS,
+    WEAK_VALIDATION_TERMS,
+    RECURRENCE_NOISE_TERMS,
+    COMPETITOR_INTENT_HINTS,
+    NON_PROBLEM_DISCOVERY_PATTERNS,
+    WORKAROUND_SIGNAL_TERMS,
+    FREQUENCY_SIGNAL_TERMS,
+    COST_SIGNAL_TERMS,
+    HELP_URL_PATTERNS,
+    BLOG_LIKE_PATTERNS,
+    VALIDATION_QUERY_PHRASES,
+)
+
+# Re-export utility functions from utils.text for convenience
+from src.utils.text import (
+    compact_text,
+    slugify,
+    domain_for,
+    unwrap_search_result_url,
+    normalize_search_url,
+    url_path,
+    contains_keyword,
+    first_match,
+    infer_recurrence_key,
 )

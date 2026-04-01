@@ -455,6 +455,7 @@ class Idea:
     confidence_score: float = 0.0
     product_type: str = "solution"
     spec_json: str = "{}"
+    build_brief_id: int = 0
     id: Optional[int] = None
     created_at: Optional[str] = None
 
@@ -544,6 +545,8 @@ class Database:
                 recurrence_key TEXT,
                 evidence_json TEXT DEFAULT '{}'
             );
+            CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
+            CREATE INDEX IF NOT EXISTS idx_findings_source ON findings(source);
             CREATE TABLE IF NOT EXISTS raw_signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finding_id INTEGER REFERENCES findings(id),
@@ -633,6 +636,8 @@ class Database:
                 notes_json TEXT DEFAULT '{}',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE INDEX IF NOT EXISTS idx_opportunities_selection_status ON opportunities(selection_status);
+            CREATE INDEX IF NOT EXISTS idx_opportunities_composite_score ON opportunities(composite_score);
             CREATE TABLE IF NOT EXISTS validations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT DEFAULT '',
@@ -760,7 +765,8 @@ class Database:
                 monetization_strategy TEXT DEFAULT '',
                 confidence_score REAL DEFAULT 0,
                 product_type TEXT DEFAULT 'solution',
-                spec_json TEXT DEFAULT '{}'
+                spec_json TEXT DEFAULT '{}',
+                build_brief_id INTEGER REFERENCES build_briefs(id)
             );
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -771,9 +777,11 @@ class Database:
                 name TEXT,
                 location TEXT DEFAULT '',
                 status TEXT DEFAULT 'proposed',
-                metadata_json TEXT DEFAULT '{}',
+                test_results TEXT,
+                tooling_manifest TEXT DEFAULT '{}',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                built_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS resources (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -879,13 +887,27 @@ class Database:
         _ensure_column(conn, "products", "opportunity_id", "INTEGER DEFAULT 0")
         _ensure_column(conn, "products", "validation_id", "INTEGER DEFAULT 0")
         _ensure_column(conn, "products", "location", "TEXT DEFAULT ''")
-        _ensure_column(
-            conn,
-            "products",
-            "updated_at",
-            "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-            backfill_sql="UPDATE products SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)",
-        )
+        _ensure_column(conn, "products", "build_brief_id", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "opportunity_id", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "products", "name", "TEXT")
+        _ensure_column(conn, "products", "status", "TEXT DEFAULT 'proposed'")
+        _ensure_column(conn, "products", "test_results", "TEXT")
+        # Add missing JSON and timestamp columns to products table
+        # SQLite doesn't support DEFAULT CURRENT_TIMESTAMP in ALTER TABLE
+        try:
+            columns = _table_columns(conn, "products")
+            if "metadata_json" not in columns:
+                conn.execute("ALTER TABLE products ADD COLUMN metadata_json TEXT DEFAULT '{}'")
+            if "created_at" not in columns:
+                conn.execute("ALTER TABLE products ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                conn.execute("UPDATE products SET created_at = COALESCE(built_at, CURRENT_TIMESTAMP) WHERE created_at IS NULL")
+            if "updated_at" not in columns:
+                conn.execute("ALTER TABLE products ADD COLUMN updated_at TIMESTAMP")
+                conn.execute(
+                    "UPDATE products SET updated_at = COALESCE(built_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL"
+                )
+        except sqlite3.OperationalError:
+            pass  # Columns may already exist
         _ensure_column(
             conn,
             "clusters",
@@ -903,13 +925,13 @@ class Database:
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_products_build_brief
-            ON products(build_brief_id, created_at DESC)
+            ON products(build_brief_id, built_at DESC)
             """
         )
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_products_idea
-            ON products(idea_id, created_at DESC)
+            ON products(idea_id, built_at DESC)
             """
         )
         conn.commit()
@@ -2497,7 +2519,7 @@ class Database:
     def get_product_for_idea(self, idea_id: int) -> Optional[dict[str, Any]]:
         conn = self._get_connection()
         row = conn.execute(
-            "SELECT * FROM products WHERE idea_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+            "SELECT * FROM products WHERE idea_id = ? ORDER BY built_at DESC, id DESC LIMIT 1",
             (idea_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -2505,7 +2527,7 @@ class Database:
     def get_product_for_build_brief(self, build_brief_id: int) -> Optional[dict[str, Any]]:
         conn = self._get_connection()
         row = conn.execute(
-            "SELECT * FROM products WHERE build_brief_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+            "SELECT * FROM products WHERE build_brief_id = ? ORDER BY built_at DESC, id DESC LIMIT 1",
             (build_brief_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -2628,7 +2650,7 @@ class Database:
 
     def get_products(self, limit: Optional[int] = None) -> list[dict[str, Any]]:
         conn = self._get_connection()
-        sql = "SELECT * FROM products ORDER BY created_at DESC"
+        sql = "SELECT * FROM products ORDER BY built_at DESC"
         params: list[Any] = []
         if limit:
             sql += " LIMIT ?"

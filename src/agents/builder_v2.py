@@ -61,27 +61,83 @@ Write production-quality code. No TODO comments or placeholders.""",
 ## Spec
 {json_spec}
 
-## Requirements
-1. Create ALL files under /tmp/autoresearch_build/{slug}/
-2. Each file must be complete, runnable code (no stubs, no TODOs)
-3. Include package.json with all dependencies (frontend only)
-4. Include requirements.txt (backend only)
-5. Include a README with setup instructions
-6. Include a Makefile or run.sh for one-command startup
-7. Use environment variables for any secrets (put placeholder in .env.example)
-8. Generate realistic mock data so it runs out of the box
+## Product Requirements
+Generate a complete, working product that solves the user's problem. This should be a deployable web application (SaaS) unless the problem specifically calls for a different format.
 
-## Output structure to generate:
-- package.json (frontend)
-- requirements.txt (backend)
-- src/ (frontend components or backend routes)
-- server.py or main.py
-- README.md
+### Product Type Decision
+Based on the problem_statement and job_to_be_done in the spec:
+- If it involves workflow management, automation, or team processes → build a Flask/FastAPI web app
+- If it involves data entry, forms, or databases → build a web app with SQLite
+- If it involves monitoring or alerts → build a web dashboard
+- Default to a Flask web application with SQLite database
+
+### What the product must include:
+1. **A working Flask web application** with real functionality
+2. **Database models** (using SQLAlchemy) that match the problem domain
+3. **Real API endpoints** that do actual things (not just return mock data)
+4. **A frontend** with HTML/CSS/JS templates that show real data
+5. **Actual business logic** that solves the stated problem
+
+### DO NOT:
+- Do NOT generate placeholder code or stub functions
+- Do NOT just return mock data in API responses
+- Do NOT create a project that won't run
+
+### File Structure to generate:
+- app.py (Flask application - use port from env var PORT or default to 5001 to avoid common port conflicts)
+- models.py (SQLAlchemy database models)
+- requirements.txt (Python dependencies - use >= versions, not exact pins, to avoid conflicts. Do NOT include built-in modules like datetime, os, sys, json, etc.)
+- templates/base.html, templates/index.html, templates/*.html (frontend)
+- static/style.css (styling)
 - .env.example
-- run.sh or Makefile
+- run.sh (bash script that creates venv, installs deps, and runs the app - use relative paths)
+- README.md (complete documentation - see below)
+
+### README format (must be proper Markdown):
+```markdown
+# Product Name
+
+## What is this?
+[A clear one-line description of what this product is, e.g., "A web-based tool that automates client onboarding workflows for operations teams"]
+
+## Product Type
+[Is this a SaaS web app, CLI tool, browser extension, mobile app, etc.]
+
+## What problem does it solve?
+[Explain the specific pain point from the spec and how this product addresses it]
+
+## Target Users
+[Who is this for? Be specific]
+
+## Key Features
+- [Feature 1]
+- [Feature 2]
+- [Feature 3]
+
+## Tech Stack
+- Backend: [Flask/FastAPI + SQLAlchemy]
+- Database: [SQLite/PostgreSQL]
+- Frontend: [HTML/CSS/JS]
+
+## How to Run
+1. Install: `pip install -r requirements.txt`
+2. Configure: Copy `.env.example` to `.env` and fill in values
+3. Run: `python app.py` or `bash run.sh`
+4. Access: Open http://localhost:5000 in browser
+
+## API Endpoints
+- GET / - Main page
+- GET/POST /api/... - [describe what each does]
+
+## License
+MIT
+```
+
+IMPORTANT: Return ONLY valid JSON. The content field must be properly escaped JSON (double quotes escaped as \\").
+For example: {{"path": "package.json", "content": "[JSON STRING WITH ESCAPED QUOTES]"}}
 
 Return ONLY the final JSON:
-{{"files": [{{"path": "relative/path/file.ext", "content": "..."}}]}}
+{{"files": [{{"path": "relative/path/file.ext", "content": "FILE_CONTENT_GOES_HERE"}}]}}
 """
 
     @classmethod
@@ -90,8 +146,76 @@ Return ONLY the final JSON:
         return system, cls.USER_TEMPLATE
 
 
+def _fix_nested_json_content(text: str) -> str:
+    """Fix LLM output where content field contains unescaped JSON.
+
+    The LLM often outputs nested JSON like:
+    "content": "{"name": "value"}"
+    or
+    "content": '{"name": "value"}'
+
+    Which is invalid JSON because the inner quotes are not escaped.
+    This function attempts to fix such cases.
+    """
+    def _escape_content_quotes(value: str) -> str:
+        """Escape unescaped double quotes in content value."""
+        result = []
+        i = 0
+        while i < len(value):
+            if value[i] == '\\' and i + 1 < len(value):
+                # Keep escaped character as-is
+                result.append(value[i])
+                result.append(value[i + 1])
+                i += 2
+            elif value[i] == '"':
+                # Escape unescaped quote
+                result.append('\\"')
+                i += 1
+            else:
+                result.append(value[i])
+                i += 1
+        return ''.join(result)
+
+    # Fix pattern: "content": '{...}'
+    # Extract content value, escape quotes, rebuild
+    def fix_single_quoted_content(match):
+        prefix = match.group(1)  # "content": "
+        content = match.group(2)  # The content value between single quotes
+
+        # If wrapped in single quotes, remove them
+        if content.startswith("'") and content.endswith("'"):
+            content = content[1:-1]
+
+        # Escape inner quotes
+        fixed = _escape_content_quotes(content)
+        return f'{prefix}"{fixed}"'
+
+    text = re.sub(r'("content":\s*)\'([^\']+)\'', fix_single_quoted_content, text)
+
+    # Fix pattern: "content": "{...}" where inner quotes aren't escaped
+    def fix_double_quoted_content(match):
+        prefix = match.group(1)  # "content": "
+        content = match.group(2)  # The content value
+
+        # Escape inner quotes
+        fixed = _escape_content_quotes(content)
+        return f'{prefix}"{fixed}"'
+
+    # Match content that's already in double quotes but inner quotes need escaping
+    # This is tricky because we need to find where the content ends
+    # Use a pattern that matches from "content": " to the closing "
+    text = re.sub(r'("content":\s*)"((?:[^{}"]|\{[^{}]*\})*)"', fix_double_quoted_content, text)
+
+    return text
+
+
 def _extract_json_from_response(text: str) -> list[dict]:
     """Find JSON array of {path, content} objects in LLM response."""
+    # Pre-process to fix common LLM issues
+    original_text = text
+
+    # First, try with the original text
+    # Try the original regex first
     match = re.search(r'\{[^{]*"files"\s*:\s*(\[[\s\S]*\])\s*\}', text)
     if match:
         try:
@@ -101,6 +225,7 @@ def _extract_json_from_response(text: str) -> list[dict]:
         except json.JSONDecodeError:
             pass
 
+    # Try parsing the whole text as JSON
     try:
         data = json.loads(text.strip())
         if isinstance(data, list):
@@ -110,6 +235,7 @@ def _extract_json_from_response(text: str) -> list[dict]:
     except json.JSONDecodeError:
         pass
 
+    # Try to find and parse JSON in code blocks
     match = re.search(r"```(?:json)?\s*(\{[\s\S]*\}\s*,\s*\{[\s\S]*\}|\[[\s\S]*\])\s*```", text)
     if match:
         try:
@@ -124,6 +250,7 @@ def _extract_json_from_response(text: str) -> list[dict]:
         except json.JSONDecodeError:
             pass
 
+    # Try to find a JSON array at the end of the text
     match = re.search(r"(\[[\s\S]+\])\s*$", text, re.MULTILINE)
     if match:
         try:
@@ -131,6 +258,7 @@ def _extract_json_from_response(text: str) -> list[dict]:
         except json.JSONDecodeError:
             pass
 
+    # Try to find any bracket-balanced JSON array
     start = text.find("[")
     if start >= 0:
         depth = 0
@@ -144,6 +272,69 @@ def _extract_json_from_response(text: str) -> list[dict]:
                         return json.loads(text[start:i + 1])
                     except json.JSONDecodeError:
                         break
+
+    # Try to fix common LLM JSON issues and re-parse
+    # Fix single quotes used as string delimiters
+    text = text.replace("'", '"')
+    # Remove any trailing commas
+    text = re.sub(r',(\s*[}\]])', r'\1', text)
+
+    try:
+        data = json.loads(text.strip())
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("files"), list):
+            return data["files"]
+    except json.JSONDecodeError:
+        pass
+
+    # Fix single-escaped quotes (e.g., \"name\" -> \\"name\\")
+    text_fixed = text.replace('\\"', '\\\\"')
+
+    try:
+        data = json.loads(text_fixed.strip())
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("files"), list):
+            return data["files"]
+    except json.JSONDecodeError:
+        pass
+
+    # Try to fix nested JSON content issues
+    text = _fix_nested_json_content(original_text)
+    try:
+        data = json.loads(text.strip())
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("files"), list):
+            return data["files"]
+    except json.JSONDecodeError:
+        pass
+
+    # Try to extract files from malformed JSON with nested content
+    # Look for the "files" array and extract it with proper balance
+    files_match = re.search(r'"files"\s*:\s*\[', text)
+    if files_match:
+        start = files_match.end() - 1  # Position at [
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        # Try to parse just the files array
+                        files_str = text[start:i + 1]
+                        # Fix common issues in nested content
+                        files_str = re.sub(r'"content":\s*"({[^}]+})"', r'"content": "\1"', files_str)
+                        files_str = re.sub(r'"content":\s*"(\[.+\])"', r'"content": "\1"', files_str)
+                        result = json.loads(files_str)
+                        if isinstance(result, list):
+                            return result
+                    except json.JSONDecodeError:
+                        break
+
     return []
 
 
@@ -325,6 +516,50 @@ class BuilderV2Agent:
             except Exception as exc:
                 logger.error("Error writing files: %s", exc)
                 return BuildResult(success=False, error=str(exc), duration_s=time.time() - t0)
+
+            # Validate generated code - check for basic issues
+            validation_errors: list[str] = []
+
+            # Check Python files can be parsed/imported
+            app_py = output_dir / "app.py"
+            if app_py.exists():
+                content = app_py.read_text()
+                try:
+                    import ast
+                    ast.parse(content)
+                except SyntaxError as e:
+                    validation_errors.append(f"app.py has syntax error: {e}")
+
+                # Check for deprecated Flask APIs
+                if ".before_first_request" in content:
+                    validation_errors.append("app.py uses deprecated Flask API 'before_first_request' (removed in Flask 2.3)")
+
+            # Check requirements.txt doesn't have fake packages
+            req_txt = output_dir / "requirements.txt"
+            if req_txt.exists():
+                content = req_txt.read_text()
+                # Check for common fake packages (built-in modules)
+                fake_packages = ["datetime", "os", "sys", "json", "re", "logging", "collections"]
+                for pkg in fake_packages:
+                    # Match lines like "datetime==1.0.0" but not imports
+                    if re.search(rf"^{pkg}==", content, re.MULTILINE):
+                        validation_errors.append(f"requirements.txt contains fake package '{pkg}' (it's built-in)")
+
+                # Check for exact pins that might conflict
+                if re.search(r"Flask==2\.1\.", content):
+                    validation_errors.append("requirements.txt has Flask==2.1.x which conflicts with flask_sqlalchemy 3.x")
+
+            if validation_errors:
+                logger.warning("Validation errors found: %s", validation_errors)
+                # Return partial success with warning instead of full failure
+                return BuildResult(
+                    success=False,
+                    error=f"Validation errors: {'; '.join(validation_errors)}",
+                    project_path=output_dir,
+                    files_written=written,
+                    confidence=0.1,
+                    duration_s=time.time() - t0,
+                )
 
             spec_path = output_dir / "SPEC.md"
             spec_path.write_text(spec_json)
