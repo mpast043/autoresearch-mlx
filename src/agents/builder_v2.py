@@ -139,6 +139,16 @@ Based on the problem_statement in the spec:
 2. Run: `python app.py`
 3. Access: http://localhost:5000
 ```
+
+### CRITICAL: Requirements.txt Must Include ALL Dependencies
+When generating Flask code:
+- If you use `from flask_sqlalchemy import SQLAlchemy` → must add `flask-sqlalchemy>=3.0` to requirements.txt
+- If you use `from flask import ...` → Flask is already included
+- DO NOT rely on transitive dependencies - list EVERYTHING explicitly
+
+### CRITICAL: Do NOT Use Deprecated Flask APIs
+- DO NOT use `@app.before_first_request` - removed in Flask 2.3, use `with app.app_context(): db.create_all()` at module level
+- DO NOT use `flask.ext.` imports - use `flask_xxx` directly
 """
 
     @classmethod
@@ -343,6 +353,36 @@ class BuilderV2Agent:
             message = await self._message_queue.receive(self.name)
             await self.process(message)
 
+    def _fix_common_issues(self, output_dir: Path, written: list[str]) -> None:
+        """Fix common issues in generated code after writing files."""
+        import re
+
+        # Fix 1: Add flask-sqlalchemy to requirements.txt if needed
+        app_py = output_dir / "app.py"
+        req_txt = output_dir / "requirements.txt"
+
+        if app_py.exists() and req_txt.exists():
+            app_content = app_py.read_text()
+            req_content = req_txt.read_text()
+
+            # Check if flask_sqlalchemy is used but not in requirements
+            if "from flask_sqlalchemy" in app_content and "flask-sqlalchemy" not in req_content:
+                req_content += "\nflask-sqlalchemy>=3.0"
+                req_txt.write_text(req_content)
+                logger.info("Added flask-sqlalchemy to requirements.txt")
+
+            # Fix deprecated @before_first_request
+            if "@app.before_first_request" in app_content:
+                fixed = app_content.replace(
+                    "@app.before_first_request\ndef create_tables():",
+                    "# Create tables on startup"
+                ).replace(
+                    "def create_tables():\n    with app.app_context():\n        db.create_all()",
+                    "with app.app_context():\n    db.create_all()"
+                )
+                app_py.write_text(fixed)
+                logger.info("Fixed deprecated @before_first_request in app.py")
+
     async def build_from_spec(self, spec: dict, idea_id: Optional[int] = None) -> BuildResult:
         """Generate a complete project from a spec dict."""
         t0 = time.time()
@@ -421,6 +461,9 @@ class BuilderV2Agent:
             spec_path = output_dir / "SPEC.md"
             spec_path.write_text(spec_json)
             written.append("SPEC.md")
+
+            # Post-build validation and fixes
+            self._fix_common_issues(output_dir, written)
 
             confidence = min(1.0, len(written) / 5 * 0.6 + 0.3)
             logger.info("BuilderV2: wrote %s files to %s", len(written), output_dir)
