@@ -96,11 +96,14 @@ Based on the problem_statement in the spec:
 - Default to a Flask web application with SQLite database
 
 ### What the product must include:
-1. **A landing page with hero section** - first impression matters, make it demo-worthy
-2. **Navigation and branding** - header with logo, nav links
-3. **A working Flask web application** with real functionality
-4. **Database models** (using SQLAlchemy) that match the problem domain
-5. **Real API endpoints** that do actual things (not just return mock data)
+1. **Professional landing page with hero section** - bold headline, value proposition, CTA
+2. **Navigation with branding** - include product name, SVG logo, nav links (#features, #pricing, etc)
+3. **Features section** - 6 cards with icons explaining what the product does
+4. **How it Works section** - 3-step process with numbered steps
+5. **Pricing section** - 3 pricing tiers (Starter/Pro/Enterprise)
+6. **A working Flask web application** with real functionality
+7. **Database models** (using SQLAlchemy) that match the problem domain
+8. **Real API endpoints** that do actual things (not just return mock data)
 6. **A frontend** with HTML/CSS/JS templates that show real data
 7. **Actual business logic** that solves the stated problem
 
@@ -114,8 +117,17 @@ Based on the problem_statement in the spec:
 - app.py (Flask application - use port from env var PORT or default to 5001)
 - models.py (SQLAlchemy database models)
 - requirements.txt (Python dependencies - use >= versions)
-- templates/base.html, templates/index.html, templates/*.html (frontend with hero section)
-- static/style.css (styling - make it look professional)
+- templates/base.html (nav with brand/logo, footer)
+- templates/index.html (hero, features, how-it-works, pricing, CTA sections)
+- static/style.css (professional CSS with distinctive design - NO generic AI slop)
+
+### CRITICAL Frontend Design Requirements:
+- Use distinctive fonts: Instrument Serif (display) + DM Sans (body) from Google Fonts
+- NO Arial, Roboto, Inter, or system fonts
+- Professional color scheme: dark accent (#1a1a2e) with highlights, NOT purple gradients
+- Include: hero with stats, 6 feature cards, 3-step process, 3-tier pricing
+- Static files go in /static/, not templates/
+- Use CSS variables for consistency
 - .env.example
 - run.sh (bash script that creates venv, installs deps, runs app)
 - README.md (complete documentation)
