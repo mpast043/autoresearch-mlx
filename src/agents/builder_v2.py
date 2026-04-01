@@ -201,6 +201,45 @@ def _extract_json_from_response(text: str) -> list[dict]:
                         return json.loads(text[start:i + 1])
                     except json.JSONDecodeError:
                         break
+    # Fallback: parse raw file output when LLM outputs code directly
+    # Looks for patterns like "filename.ext\n```language\ncode\n```"
+    files = []
+    # Match file blocks: filename on first line, then code block
+    file_pattern = re.compile(r"^([a-zA-Z0-9_\-./]+\.(?:py|js|ts|html|css|json|md|sh|txt|yml|yaml))\s*```[\w]*\s*\n(.*?)\s*```", re.MULTILINE | re.DOTALL)
+    for match in file_pattern.finditer(text):
+        filename = match.group(1).strip()
+        content = match.group(2).strip()
+        if filename and content:
+            files.append({"path": filename, "content": content})
+
+    if files:
+        logger.info(f"Parsed {len(files)} files from raw code blocks")
+        return files
+
+    # Fallback: look for lines like "filename: content" or "filename\n```...```"
+    lines = text.split("\n")
+    current_file = None
+    current_content = []
+
+    for line in lines:
+        # Check for file header line
+        if line and not line.startswith("#") and not line.startswith("```") and not line.startswith("import ") and not line.startswith("from "):
+            # Check if it looks like a filename
+            if re.match(r"^[a-zA-Z0-9_\-./]+\.(?:py|js|ts|html|css|json|md|sh|txt|yml|yaml)\s*$", line.strip()):
+                if current_file and current_content:
+                    files.append({"path": current_file, "content": "\n".join(current_content)})
+                current_file = line.strip()
+                current_content = []
+        elif current_file:
+            current_content.append(line)
+
+    if current_file and current_content:
+        files.append({"path": current_file, "content": "\n".join(current_content)})
+
+    if files:
+        logger.info(f"Parsed {len(files)} files from raw line format")
+        return files
+
     return []
 
 
