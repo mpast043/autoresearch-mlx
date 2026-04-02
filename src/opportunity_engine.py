@@ -142,6 +142,30 @@ META_GUIDANCE_PATTERNS = [
     "internal task",
     "meta guidance",
     "evaluation harness",
+    # Developer solicitation / idea gathering - NOT actual pain
+    "looking to build",
+    "want to automate for free",
+    "what problem should i solve",
+    "what problems should i solve",
+    "what problem would you like",
+    "most annoying manual task",
+    "weekend puzzle",
+    "automate it for free",
+    "looking for a weekend",
+    "tell me your most annoying",
+    "i can help automate",
+    "developer looking to",
+    "building a new tool",
+    "looking to automate",
+    "working on some automation",
+    "building custom systems",
+    "help me build",
+    "what should i build",
+    "what should i automate",
+    # Meta requests
+    "would like to automate",
+    "think about automating",
+    "consider automating",
 ]
 DEMAND_SIGNAL_PATTERNS = [
     "search volume",
@@ -282,6 +306,83 @@ def _is_generic_phrase(text: str) -> bool:
     }
 
 
+# Patterns that indicate low-quality signals (meta-posts, generic questions)
+LOW_QUALITY_PATTERNS = [
+    r"^what (is|are) .* (annoying|frustrating|painful)",
+    r"looking to build",
+    r"want to automate (for free|it)",
+    r"what problem (should i|would you)",
+    r"automate it for free",
+    r"weekend puzzle",
+    r"tell me your most annoying",
+    r"i can help automate",
+    r"developer looking to",
+    r"building a new tool",
+    r"working on some automation",
+    r"what should i build",
+    r"what should i automate",
+]
+
+
+def _signal_quality_score(text: str, atom_payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Score signal quality. Returns dict with:
+    - quality_score: 0.0-1.0 (higher is better)
+    - is_low_quality: bool
+    - quality_issues: list of issues found
+    """
+    lowered = _normalized(text)
+    issues: list[str] = []
+    score = 1.0
+
+    # Check for meta-prompt patterns
+    for pattern in LOW_QUALITY_PATTERNS:
+        if re.search(pattern, lowered):
+            issues.append("meta_prompt_pattern")
+            score -= 0.4
+            break
+
+    # Check for meta-prompt in classification
+    if _looks_like_meta_prompt(text):
+        issues.append("meta_guidance_detected")
+        score -= 0.3
+
+    # Check if pain statement is too short or empty
+    if not atom_payload.get("pain_statement") or len(atom_payload.get("pain_statement", "")) < 30:
+        issues.append("no_specific_pain")
+        score -= 0.25
+
+    # Check if too generic JTBD
+    if _is_generic_phrase(atom_payload.get("job_to_be_done", "")):
+        issues.append("generic_jtbd")
+        score -= 0.2
+
+    # Check for question marks (likely asking for help, not complaining)
+    if lowered.endswith("?"):
+        issues.append("question_not_complaint")
+        score -= 0.15
+
+    # Check for first-person building intent
+    if re.search(r"\bi('m| am) (building|working on|creating|developing)", lowered):
+        issues.append("builder_not_user")
+        score -= 0.3
+
+    # Bonus: has specific workaround
+    if atom_payload.get("current_workaround"):
+        score += 0.1
+
+    # Bonus: has cost/time clues
+    if atom_payload.get("cost_consequence_clues"):
+        score += 0.1
+
+    score = clamp(score)
+    return {
+        "quality_score": score,
+        "is_low_quality": score < 0.5,
+        "quality_issues": issues,
+    }
+
+
 def _has_phrase(text: str, phrases: list[str]) -> bool:
     lowered = _normalized(text)
     return any(phrase in lowered for phrase in phrases)
@@ -366,6 +467,260 @@ def _extract_cost_clues(text: str) -> list[str]:
 
 def _normalize_tools(text: str) -> str:
     return compact_text(re.sub(r"\s+", " ", (text or "").replace("|", ",").replace("/", ", ")).strip(" ,"), 120)
+
+
+# Assumptions that can be extracted from signal text
+ASSUMPTION_PATTERNS = {
+    # Team size
+    (r"\bsolo\b", r"\bfounder\b", r"\bi'm a one[- ]?person\b", r"\bone[- ]?person\b"): "team_size:solo",
+    (r"\bsmall team\b", r"\bsmall business\b", r"\bsmb\b", r"\bstartup\b"): "team_size:small",
+    (r"\bmid[- ]?sized\b", r"\b50\+ employees\b", r"\b70\+ employees\b"): "team_size:mid",
+    (r"\benterprise\b", r"\blarge (company|corporation)\b", r"\b100\+ employees\b"): "team_size:enterprise",
+    # Cloud vs local
+    (r"\bcloud\b", r"\bsaas\b", r"\bhosted\b", r"\bonline\b"): "deployment:cloud",
+    (r"\blocal\b", r"\bon[- ]?premise\b", r"\bself[- ]?hosted\b", r"\bdesktop\b"): "deployment:local",
+    (r"\bmicrosoft 365\b", r"\bm365\b", r"\boffice 365\b"): "tool:microsoft_365",
+    (r"\bgoogle (sheets|docs|workspace)\b", r"\bgsuite\b"): "tool:google_workspace",
+    (r"\bquickbooks\b", r"\bstripe\b", r"\bxero\b"): "tool:accounting",
+    # Budget signals
+    (r"\bfree\b", r"\bfree trial\b"): "budget:free_only",
+    (r"\bcheap\b", r"\baffordable\b", r"\bbudget\b"): "budget:low",
+    (r"\bwilling to pay\b", r"\bpay for\b", r"\bpremium\b"): "budget:paid",
+    (r"\bexpensive\b", r"\benterprise pricing\b"): "budget:high",
+    # Integration needs
+    (r"\bapi\b", r"\bintegrate\b", r"\bconnect\b", r"\bwebhook\b"): "needs:integration",
+    (r"\bautomate\b", r"\bautomation\b"): "needs:automation",
+}
+
+
+def _extract_assumptions(text: str) -> dict[str, str]:
+    """Extract implicit assumptions from signal text about team, tools, budget, deployment."""
+    lowered = _normalized(text)
+    assumptions: dict[str, str] = {}
+    for patterns, label in ASSUMPTION_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, lowered):
+                key, value = label.split(":")
+                assumptions[key] = value
+                break
+    return assumptions
+
+
+# ============================================================
+# SPECIFIC PATTERN DETECTION - identifies exact problems
+# ============================================================
+
+# Patterns for specific integration problems (these become product opportunities)
+SPECIFIC_INTEGRATION_PATTERNS = [
+    # Payment processor <-> Accounting
+    (r"stripe.*quickbooks|stripe.*xero|stripe.*accounting", "stripe_to_accounting"),
+    (r"shopify.*quickbooks|shopify.*xero|shopify.*accounting", "shopify_to_accounting"),
+    (r"amazon.*quickbooks|amazon.*xero|amazon.*accounting", "amazon_to_accounting"),
+    # Multi-channel e-commerce
+    (r"amazon.*shopify.*etsy|multi.*channel|channel.*revenue", "multi_channel_ecom"),
+    (r"shopify.*etsy|etsy.*amazon", "channel_to_channel"),
+    # Bank reconciliation
+    (r"bank.*reconcil|reconcil.*bank|bank.*feed", "bank_reconciliation"),
+    (r"csv.*import.*bank|bank.*csv", "csv_bank_import"),
+    # Invoice/Payment
+    (r"unpaid.*invoice|invoice.*reminder|payment.*follow.*up", "invoice_follow_up"),
+    (r"invoice.*sync|invoice.*match", "invoice_matching"),
+    # Spreadsheet specific
+    (r"spreadsheet.*version|version.*control.*spreadsheet|latest.*version.*spreadsheet", "spreadsheet_versioning"),
+    (r"multiple.*spreadsheet|spreadsheet.*sync|spreadsheet.*merge", "spreadsheet_sync"),
+    # Revenue reporting
+    (r"revenue.*report|channel.*profit|sales.*report", "revenue_reporting"),
+    # Payroll/Staffing
+    (r"payroll.*sync|payroll.*reconcil", "payroll_reconciliation"),
+    (r"shift.*schedul.*excel|schedul.*payroll", "scheduling_payroll"),
+]
+
+# Tools mentioned in signals - helps identify what systems are involved
+TOOL_MENTIONS = {
+    r"\bstripe\b": "stripe",
+    r"\bquickbooks\b": "quickbooks",
+    r"\bxero\b": "xero",
+    r"\bshopify\b": "shopify",
+    r"\bamazon\b": "amazon",
+    r"\betsy\b": "etsy",
+    r"\bgoogle.?sheet\b": "google_sheets",
+    r"\bexcel\b": "excel",
+    r"\bmicrosoft.?365\b": "ms365",
+    r"\bnotion\b": "notion",
+    r"\bazure\b": "azure",
+    r"\baws\b": "aws",
+    r"\bwebflow\b": "webflow",
+}
+
+
+# Mapping from detected patterns to focused discovery queries
+# Used when running: python3 cli.py run --pattern <pattern>
+PATTERN_TO_DISCOVERY_QUERIES = {
+    "spreadsheet_versioning": [
+        "spreadsheet version control multiple users",
+        "excel version conflict team",
+        "spreadsheet sync problems",
+        "latest spreadsheet version confusion",
+        "excel file merge conflicts",
+        "shared spreadsheet version tracking",
+    ],
+    "bank_reconciliation": [
+        "bank reconciliation manual process",
+        "bank feed vs csv import small business",
+        "bank statement reconciliation automation",
+        "manual bank reconciliation time",
+    ],
+    "stripe_to_quickbooks": [
+        "stripe quickbooks reconciliation manual",
+        "stripe xero sync automation",
+        "stripe accounting software integration",
+    ],
+    "multi_channel_ecom": [
+        "shopify amazon etsy sales reconciliation",
+        "multi channel ecommerce reporting manual",
+        "amazon shopify etsy revenue tracking",
+    ],
+    "invoice_follow_up": [
+        "unpaid invoice reminder automation",
+        "invoice follow up manual process",
+        "payment reminder automation small business",
+    ],
+}
+
+
+def _extract_specific_patterns(text: str) -> list[dict[str, str]]:
+    """
+    Extract specific integration patterns from signal text.
+    Returns list of {pattern_name, matched_text, confidence}.
+    """
+    lowered = _normalized(text)
+    patterns_found: list[dict[str, str]] = []
+
+    for regex, pattern_name in SPECIFIC_INTEGRATION_PATTERNS:
+        if re.search(regex, lowered):
+            patterns_found.append({
+                "pattern": pattern_name,
+                "confidence": 0.9,  # Specific pattern match = high confidence
+            })
+
+    # Also extract tool mentions
+    tools_found: set[str] = set()
+    for tool_regex, tool_name in TOOL_MENTIONS.items():
+        if re.search(tool_regex, lowered):
+            tools_found.add(tool_name)
+
+    if tools_found and patterns_found:
+        for p in patterns_found:
+            p["tools"] = list(tools_found)
+
+    return patterns_found
+
+
+def _is_specific_problem(text: str, atom_payload: dict[str, Any]) -> bool:
+    """
+    Returns True if the signal describes a SPECIFIC problem (not generic "manual work").
+    Specific = mentions exact tools/systems and specific workflow.
+    """
+    patterns = _extract_specific_patterns(text)
+    if patterns:
+        return True
+
+    # Check for tool combinations (at least 2 tools mentioned)
+    lowered = _normalized(text)
+    tool_count = sum(1 for regex in TOOL_MENTIONS if re.search(regex, lowered))
+
+    # Check for specific workflow language
+    workflow_indicators = [
+        r"reconcile", r"sync", r"import", r"export",
+        r"match.*transaction", r"connect.*api", r"integrate"
+    ]
+    has_workflow = any(re.search(w, lowered) for w in workflow_indicators)
+
+    return tool_count >= 2 or (tool_count >= 1 and has_workflow)
+
+
+def _calculate_pattern_emergence_score(db_path: str, pattern_name: str) -> dict[str, Any]:
+    """
+    Analyze how many signals mention a specific pattern.
+    Returns {count, trend, urgency}.
+    """
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    # Count signals with this pattern in body_excerpt
+    cursor = conn.execute("""
+        SELECT COUNT(*) as cnt
+        FROM raw_signals
+        WHERE LOWER(body_excerpt) LIKE ?
+    """, (f"%{pattern_name.replace('_', ' ')}%",))
+
+    count = cursor.fetchone()["cnt"] if cursor else 0
+
+    # Get cluster count too
+    cursor = conn.execute("""
+        SELECT COUNT(*) as cnt
+        FROM problem_atoms
+        WHERE LOWER(pain_statement) LIKE ? OR LOWER(job_to_be_done) LIKE ?
+    """, (f"%{pattern_name.replace('_', ' ')}%", f"%{pattern_name.replace('_', ' ')}%"))
+
+    cluster_count = cursor.fetchone()["cnt"] if cursor else 0
+    conn.close()
+
+    return {
+        "pattern": pattern_name,
+        "signal_count": count,
+        "atom_count": cluster_count,
+        "urgency": "high" if cluster_count >= 5 else "medium" if cluster_count >= 2 else "low",
+    }
+
+
+def get_patterns_for_discovery(db_path: str, min_atoms: int = 2) -> list[dict[str, Any]]:
+    """
+    Return list of specific patterns that have emerged from signals.
+    Used to guide focused discovery.
+
+    Searches for tool combination patterns in raw signals.
+    """
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    all_patterns = []
+
+    # Define tool pair patterns to search for
+    tool_pairs = [
+        (["stripe", "quickbooks"], "stripe_to_quickbooks"),
+        (["stripe", "xero"], "stripe_to_xero"),
+        (["shopify", "quickbooks"], "shopify_to_quickbooks"),
+        (["shopify", "xero"], "shopify_to_xero"),
+        (["amazon", "quickbooks"], "amazon_to_quickbooks"),
+        (["amazon", "shopify"], "amazon_shopify"),
+        (["amazon", "etsy"], "amazon_etsy"),
+        (["shopify", "etsy"], "shopify_etsy"),
+        (["bank", "reconcil"], "bank_reconciliation"),
+        (["invoice", "unpaid"], "invoice_follow_up"),
+        (["spreadsheet", "version"], "spreadsheet_versioning"),
+    ]
+
+    for tools, pattern_name in tool_pairs:
+        # Build query for multiple terms
+        like_clause = " AND ".join([f"LOWER(body_excerpt) LIKE '%{t}%'" for t in tools])
+        cursor = conn.execute(f"SELECT COUNT(*) as cnt FROM raw_signals WHERE {like_clause}")
+        count = cursor.fetchone()["cnt"] if cursor else 0
+
+        if count >= min_atoms:
+            all_patterns.append({
+                "pattern": pattern_name,
+                "signal_count": count,
+                "tools": tools,
+                "urgency": "high" if count >= 5 else "medium" if count >= 2 else "low",
+            })
+
+    conn.close()
+
+    # Sort by signal count (most common first)
+    all_patterns.sort(key=lambda x: x["signal_count"], reverse=True)
+    return all_patterns
 
 
 def _looks_like_meta_prompt(text: str) -> bool:
@@ -571,6 +926,7 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
     )
     workarounds = _extract_workarounds(text)
     current_tools = _normalize_tools(finding_data.get("tool_used") or "")
+    assumptions = _extract_assumptions(text)
     urgency_clues = _extract_clues(text, URGENCY_TERMS)
     frequency_clues = _extract_clues(text, FREQUENCY_TERMS)
     why_now_clues = _extract_clues(text, WHY_NOW_TERMS)
@@ -615,7 +971,14 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
             cost_clues,
         ]
     )
-    confidence = clamp(0.35 + filled_fields * 0.045)
+
+    # Extract specific integration patterns (the "specific problem" detection)
+    specific_patterns = _extract_specific_patterns(text)
+    is_specific = _is_specific_problem(text, {})
+
+    # Boost confidence for specific problems
+    specific_boost = 0.15 if is_specific and specific_patterns else 0.0
+    confidence = clamp(0.35 + filled_fields * 0.045 + specific_boost)
     emotional_intensity = clamp(0.2 + len(emotional_hits) * 0.16 + min(text.count("!"), 3) * 0.04)
     cluster_key = infer_recurrence_key(f"{segment} {user_role} {job_to_be_done} {failure_mode} {' '.join(workarounds)}")
     return {
@@ -634,14 +997,20 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
         "cost_consequence_clues": ", ".join(cost_clues),
         "why_now_clues": ", ".join(why_now_clues),
         "confidence": confidence,
+        "assumptions": assumptions,
+        "specific_patterns": specific_patterns,
+        "is_specific_problem": is_specific,
         "atom_json": {
             "source_type": signal_payload.get("source_type", "web"),
             "workaround_terms": workarounds,
+            "specific_patterns": specific_patterns,
+            "is_specific_problem": is_specific,
             "urgency_terms": urgency_clues,
             "frequency_terms": frequency_clues,
             "cost_terms": cost_clues,
             "why_now_terms": why_now_clues,
             "emotional_terms": emotional_hits,
+            "assumptions": assumptions,
         },
     }
 

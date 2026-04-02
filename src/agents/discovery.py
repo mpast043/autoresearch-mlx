@@ -101,6 +101,7 @@ class DiscoveryAgent(BaseAgent):
         sources: Optional[list[str]] = None,
         config: Optional[Dict[str, Any]] = None,
         status_tracker: Optional[Any] = None,
+        bypass_cache: bool = False,
     ):
         super().__init__("discovery", message_queue)
         self.db = db
@@ -116,6 +117,7 @@ class DiscoveryAgent(BaseAgent):
         self._cycle_strategy: dict[str, dict[str, Any]] = {}
         self._cycle_counts: dict[str, int] = defaultdict(int)
         self._last_reddit_seed_summary: dict[str, Any] = {}
+        self.bypass_cache = bypass_cache
 
     async def _run_loop(self) -> None:
         while self.status in (AgentStatus.RUNNING, AgentStatus.PAUSED):
@@ -353,7 +355,7 @@ class DiscoveryAgent(BaseAgent):
                     merged_queries.append(query)
             queries = merged_queries
         try:
-            seeder = RedditSeeder(self.config)
+            seeder = RedditSeeder(self.config, bypass_cache=self.bypass_cache)
             baseline_coverage = seeder.coverage_report(subreddits=subreddits, queries=queries)
             self._last_reddit_seed_summary = {
                 "seeded_total_pairs": baseline_coverage.total_pairs,

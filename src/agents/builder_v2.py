@@ -224,21 +224,41 @@ def _extract_json_from_response(text: str) -> list[dict]:
                     except json.JSONDecodeError:
                         break
     # Fallback: parse raw file output when LLM outputs code directly
-    # Looks for patterns like "filename.ext\n```language\ncode\n```"
+    # Looks for patterns like "filename.ext\n```language\ncode\n```" or "**filename**\n```python\ncode\n```"
     files = []
-    # Match file blocks: filename on first line, then code block
-    file_pattern = re.compile(r"^([a-zA-Z0-9_\-./]+\.(?:py|js|ts|html|css|json|md|sh|txt|yml|yaml))\s*```[\w]*\s*\n(.*?)\s*```", re.MULTILINE | re.DOTALL)
+    # Match file blocks: filename on first line (with optional **markdown**), then code block
+    file_pattern = re.compile(r"^\*?\*?([a-zA-Z0-9_\-./]+\.(?:py|js|ts|html|css|json|md|sh|txt|yml|yaml))\*?\*?\s*```[\w]*\s*\n(.*?)\s*```", re.MULTILINE | re.DOTALL)
     for match in file_pattern.finditer(text):
         filename = match.group(1).strip()
         content = match.group(2).strip()
         if filename and content:
             files.append({"path": filename, "content": content})
 
+    # Also match patterns like "app.py" or "**app.py**" on its own line followed by code block
+    alt_pattern = re.compile(r"^\*?\*?([a-zA-Z0-9_\-./]+\.(?:py|js|ts|html|css|json|md|sh|txt|yml|yaml))\*?\*?\s*$", re.MULTILINE)
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if alt_pattern.match(line):
+            # Check next few lines for code block
+            for j in range(i+1, min(i+5, len(lines))):
+                if lines[j].startswith("```"):
+                    # Find end of code block
+                    lang = lines[j][3:].strip()
+                    end_idx = None
+                    for k in range(j+1, len(lines)):
+                        if lines[k].strip() == "```":
+                            end_idx = k
+                            break
+                    if end_idx:
+                        content = "\n".join(lines[j+1:end_idx])
+                        files.append({"path": line.strip().strip("*"), "content": content})
+                        break
+
     if files:
         logger.info(f"Parsed {len(files)} files from raw code blocks")
         return files
 
-    # Fallback: look for lines like "filename: content" or "filename\n```...```"
+    # Fallback: look for lines like "filename: content" or "filename\n```...```" or "**filename**"
     lines = text.split("\n")
     current_file = None
     current_content = []
@@ -246,11 +266,12 @@ def _extract_json_from_response(text: str) -> list[dict]:
     for line in lines:
         # Check for file header line
         if line and not line.startswith("#") and not line.startswith("```") and not line.startswith("import ") and not line.startswith("from "):
-            # Check if it looks like a filename
-            if re.match(r"^[a-zA-Z0-9_\-./]+\.(?:py|js|ts|html|css|json|md|sh|txt|yml|yaml)\s*$", line.strip()):
+            # Check if it looks like a filename (with optional **markdown**)
+            clean_line = line.strip().strip("*")
+            if re.match(r"^[a-zA-Z0-9_\-./]+\.(?:py|js|ts|html|css|json|md|sh|txt|yml|yaml)\s*$", clean_line):
                 if current_file and current_content:
                     files.append({"path": current_file, "content": "\n".join(current_content)})
-                current_file = line.strip()
+                current_file = clean_line
                 current_content = []
         elif current_file:
             current_content.append(line)

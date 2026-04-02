@@ -429,6 +429,7 @@ async def main() -> None:
             "check-bridge",
             "backup-db",
             "suggest-discovery",
+            "patterns",
         ],
         help="Command to execute",
     )
@@ -465,6 +466,17 @@ async def main() -> None:
         choices=["low", "medium", "high"],
         default="low",
         help="suggest-discovery: minimum confidence tier for money claims (default: low)",
+    )
+    parser.add_argument(
+        "--pattern",
+        type=str,
+        default="",
+        help="run/run-once: focus discovery on specific pattern (e.g., spreadsheet_versioning, bank_reconciliation)",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="run-once: bypass signal cache, force fresh discovery (ignores cached results)",
     )
     args = parser.parse_args()
 
@@ -526,11 +538,63 @@ async def main() -> None:
             await app.shutdown()
         return
 
+    if args.command == "patterns":
+        # Show emerging specific patterns from signals
+        from src.opportunity_engine import get_patterns_for_discovery
+
+        db_path = "data/autoresearch.db"
+        patterns = get_patterns_for_discovery(db_path, min_atoms=1)
+
+        print("=== EMERGING PATTERNS ===")
+        print("Specific problems detected from signals:\n")
+        for p in patterns:
+            print(f"  {p['pattern']}")
+            print(f"    Signals: {p['signal_count']}, Urgency: {p['urgency']}")
+            if 'tools' in p:
+                print(f"    Tools: {p['tools']}")
+            print()
+
+        if not patterns:
+            print("  No specific patterns detected yet.")
+            print("  Run more discovery to identify specific integration problems.")
+        return
+
     app = AutoResearcher(config_path=args.config)
 
     if args.command == "run":
         await app.run()
         return
+
+    # Pattern-based focused discovery
+    if args.pattern:
+        from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
+
+        if args.pattern not in PATTERN_TO_DISCOVERY_QUERIES:
+            print(f"Unknown pattern: {args.pattern}")
+            print(f"Available patterns: {list(PATTERN_TO_DISCOVERY_QUERIES.keys())}")
+            return
+
+        queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
+        print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
+        print(f"Queries: {queries[:3]}...")
+
+        # Temporarily override config with focused queries (both web and reddit)
+        original_web = app.config.get("discovery", {}).get("web", {}).get("keywords", [])
+        original_reddit = app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", [])
+
+        if "web" in app.config.get("discovery", {}):
+            app.config["discovery"]["web"]["keywords"] = queries
+
+        # Also override reddit problem_keywords for seed queries
+        if "reddit" in app.config.get("discovery", {}):
+            app.config["discovery"]["reddit"]["problem_keywords"] = queries
+
+        print(f"Running focused discovery with {len(queries)} queries...\n")
+
+    # Set bypass_cache flag if --fresh is specified
+    if args.fresh and "discovery" in app.agents:
+        print("=== FRESH MODE: Bypassing signal cache ===")
+        app.agents["discovery"].bypass_cache = True
 
     if args.command == "run-once":
         summary = await app.run_once()
@@ -538,6 +602,13 @@ async def main() -> None:
             print_json(build_verbose_report(app, summary))
         else:
             print_json(summary)
+
+        # Restore original config after focused run
+        if args.pattern:
+            if "web" in app.config.get("discovery", {}):
+                app.config["discovery"]["web"]["keywords"] = original_web
+            print(f"\n=== Focused discovery complete ===")
+            print(f"Use 'python3 cli.py patterns' to see updated pattern counts")
         return
 
     if args.command == "run-unseeded":

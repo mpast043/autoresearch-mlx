@@ -111,7 +111,7 @@ def build_comment_items(post_item: dict[str, Any], comments: list[str]) -> list[
 class RedditSeeder:
     """Populate the relay cache from configured subreddit/query pairs."""
 
-    def __init__(self, config: dict[str, Any], relay_store: RedditRelayStore | None = None) -> None:
+    def __init__(self, config: dict[str, Any], relay_store: RedditRelayStore | None = None, bypass_cache: bool = False) -> None:
         self.config = config
         self.discovery_config = config.get("discovery", {}).get("reddit", {})
         relay_config = config.get("reddit_relay", {})
@@ -119,6 +119,7 @@ class RedditSeeder:
         max_pairs_value = self.discovery_config.get("seed_pairs")
         self.max_pairs = int(max_pairs_value) if max_pairs_value not in (None, "") else None
         self.cache_ttl_seconds = int(relay_config.get("seed_cache_ttl_seconds", 21600))
+        self.bypass_cache = bypass_cache
         relay_cache_path = str(
             resolve_project_path(relay_config.get("cache_db_path"), default="data/reddit_relay_cache.db")
         )
@@ -157,14 +158,19 @@ class RedditSeeder:
         pairs = self.iter_pairs(subreddits=subreddits, queries=queries)
         summary.total_pairs = len(pairs)
         for subreddit, query in pairs:
-            cached = self.relay_store.has_search(subreddit=subreddit, query=query, sort="relevance", cursor="")
-            fresh = self.relay_store.has_fresh_search(
-                subreddit=subreddit,
-                query=query,
-                sort="relevance",
-                cursor="",
-                max_age_seconds=self.cache_ttl_seconds,
-            )
+            # When bypass_cache is True, treat all searches as uncached
+            if self.bypass_cache:
+                cached = False
+                fresh = False
+            else:
+                cached = self.relay_store.has_search(subreddit=subreddit, query=query, sort="relevance", cursor="")
+                fresh = self.relay_store.has_fresh_search(
+                    subreddit=subreddit,
+                    query=query,
+                    sort="relevance",
+                    cursor="",
+                    max_age_seconds=self.cache_ttl_seconds,
+                )
             if cached:
                 summary.existing_cached_pairs += 1
             if fresh:
@@ -185,9 +191,16 @@ class RedditSeeder:
         summary.total_pairs = len(pairs)
         try:
             for subreddit, query in pairs:
-                if self.relay_store.has_search(subreddit=subreddit, query=query, sort="relevance", cursor=""):
+                # When bypass_cache is True, treat all searches as uncached
+                if self.bypass_cache:
+                    should_skip = False
+                else:
+                    should_skip = self.relay_store.has_search(subreddit=subreddit, query=query, sort="relevance", cursor="")
+
+                if should_skip:
                     summary.existing_cached_pairs += 1
-                if self.relay_store.has_fresh_search(
+
+                if not self.bypass_cache and self.relay_store.has_fresh_search(
                     subreddit=subreddit,
                     query=query,
                     sort="relevance",
@@ -197,6 +210,9 @@ class RedditSeeder:
                     summary.skipped_fresh_pairs += 1
                     logger.info("reddit_seed skipping fresh cache subreddit=%s query=%r", subreddit, query)
                     continue
+
+                if self.bypass_cache:
+                    logger.info("reddit_seed BYPASSING CACHE subreddit=%s query=%r", subreddit, query)
 
                 summary.searched_pairs += 1
                 docs = await toolkit.reddit_search(subreddit, query, limit=self.search_limit)

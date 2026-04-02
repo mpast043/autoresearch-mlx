@@ -88,6 +88,49 @@ When enabled:
 
 Expanded state is stored in `data/discovery_expansion.json` and merged with base config at startup.
 
+## Pattern-Based Discovery
+
+The system detects **specific integration problems** from signals and can focus discovery on them:
+
+```bash
+# View emerging patterns with signal counts
+python3 cli.py patterns
+# Output:
+# === EMERGING PATTERNS ===
+#   spreadsheet_versioning (16 signals, high)
+#   bank_reconciliation (12 signals, high)
+#   stripe_to_quickbooks (1 signal, low)
+```
+
+Detected patterns include:
+- `spreadsheet_versioning` - Excel/Google Sheets version control issues
+- `bank_reconciliation` - Manual bank reconciliation pain
+- `stripe_to_quickbooks` - Stripe ↔ accounting software sync
+- `multi_channel_ecom` - Amazon/Shopify/Etsy sales reconciliation
+
+### Focused Discovery
+
+Run discovery focused on a specific pattern:
+
+```bash
+# Focused discovery on spreadsheet versioning
+python3 cli.py run-once --pattern spreadsheet_versioning
+
+# Focused + fresh (bypass cache)
+python3 cli.py run-once --pattern bank_reconciliation --fresh
+
+# Fresh discovery only (no pattern)
+python3 cli.py run-once --fresh
+```
+
+The `--pattern` flag overrides discovery queries with pattern-specific keywords.
+The `--fresh` flag bypasses the signal cache to force new discovery.
+
+Pattern detection is implemented in [src/opportunity_engine.py](./src/opportunity_engine.py) via:
+- `SPECIFIC_INTEGRATION_PATTERNS` - Regex patterns for tool pairs
+- `_extract_specific_patterns()` - Extracts patterns from signal text
+- `get_patterns_for_discovery()` - Returns patterns sorted by signal count
+
 ## Code Generation (BuilderV2)
 
 When `builder.auto_build: true`, the system uses [BuilderV2Agent](./src/agents/builder_v2.py) to generate functional code:
