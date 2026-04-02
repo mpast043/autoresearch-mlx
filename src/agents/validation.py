@@ -29,6 +29,7 @@ from src.opportunity_engine import (
     plan_validation_experiment,
     score_opportunity,
     stage_decision,
+    CURRENT_SCORING_VERSION,
 )
 from src.research_tools import ResearchToolkit
 from src.source_policy import atom_generation_allowed
@@ -174,6 +175,7 @@ class ValidationAgent(BaseAgent):
             evidence_quality=scorecard["evidence_quality"],
             composite_score=scorecard["composite_score"],
             confidence=scorecard["confidence"],
+            scoring_version=scorecard.get("scoring_version", CURRENT_SCORING_VERSION),
             selection_status="research_more",
             selection_reason="pending_selection",
             notes={

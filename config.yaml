@@ -159,7 +159,7 @@ llm:
   max_tokens: 12000
 
 validation:
-  promotion_threshold: 0.55
+  promotion_threshold: 0.45
   park_threshold: 0.35
   # Evidence/gathering search settings
   search:

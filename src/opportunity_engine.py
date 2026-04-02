@@ -12,6 +12,24 @@ from urllib.parse import urlparse
 from src.database import OpportunityCluster, ProblemAtom, RawSignal, ValidationExperiment
 from src.research_tools import compact_text, infer_recurrence_key
 
+# =============================================================================
+# SCORING VERSION CONTROL
+# =============================================================================
+# Bump this version whenever formula weights, thresholds, or logic change.
+# The version is stored with each scorecard for audit trail.
+#
+# Version History:
+#   v1 (legacy): Original formula with weak penalties (0.12/0.11/0.11)
+#   v2: Stronger penalties (0.18/0.16/0.16), nonlinear evidence multiplier,
+#       lower thresholds (composite 0.45, plausibility 0.55), frequency gate
+CURRENT_SCORING_VERSION = "v2"
+
+# Version-specific thresholds (can be referenced by other code)
+SCORING_THRESHOLDS = {
+    "v1": {"promotion": 0.55, "park": 0.35},
+    "v2": {"promotion": 0.45, "park": 0.35, "plausibility": 0.55},
+}
+
 # Re-export helpers for backward compatibility
 from src.utils.opportunity_helpers import (
     clamp,
@@ -1406,7 +1424,8 @@ def score_opportunity(
 
     corroborating_sources = sum(1 for count in recurrence_results_by_source.values() if count)
 
-    pain_severity = clamp(0.32 + float(_value(atom, "emotional_intensity", 0.0)) * 0.38 + cost_hits * 0.08 + urgency_hits * 0.05)
+    # Fix 1: Removed cost_hits to avoid double-counting (now only in cost_of_inaction)
+    pain_severity = clamp(0.32 + float(_value(atom, "emotional_intensity", 0.0)) * 0.38 + urgency_hits * 0.05)
     frequency_score = clamp(0.24 + recurrence_score * 0.3 + frequency_hits * 0.12 + cross_source_match_score * 0.1)
     cost_of_inaction = clamp(
         0.18
@@ -1498,9 +1517,10 @@ def score_opportunity(
         + cross_source_match_score * 0.08
         + multi_source_value_lift * 0.18
     )
+    # Fix 1: Reduced cost_of_inaction weight to avoid double-counting cost signals
     value_support = clamp(
         value_score * 0.18
-        + cost_of_inaction * 0.22
+        + cost_of_inaction * 0.12
         + willingness_to_pay_proxy * 0.24
         + buyer_intent_score * 0.12
         + demand_score * 0.08
@@ -1512,6 +1532,10 @@ def score_opportunity(
         - generalizability_penalty * 0.2
     )
     evidence_quality = clamp(evidence_sufficiency * 0.72 + corroboration_strength * 0.16 + feasibility * 0.06 + generalizability_score * 0.06)
+
+    # Fix 6: Cap saturated markets - reduce composite if market is saturated
+    saturation = float(scores.get("saturation_score", 0.0) or 0.0)
+    saturation_multiplier = 0.75 if saturation > 0.7 else 1.0
 
     positive = (
         pain_severity * 0.14
@@ -1526,9 +1550,13 @@ def score_opportunity(
         + expansion_potential * 0.06
         + value_support * 0.17
     )
-    penalty = education_burden * 0.12 + dependency_risk * 0.11 + adoption_friction * 0.11
-    evidence_multiplier = 0.6 + evidence_quality * 0.4
-    composite_score = clamp(max(0.0, positive - penalty) * evidence_multiplier)
+    # Fix 2: Strengthened penalty weights to better filter bad ideas
+    penalty = education_burden * 0.18 + dependency_risk * 0.16 + adoption_friction * 0.16
+    # Fix 3: Nonlinear evidence multiplier - weak evidence heavily discounted, strong evidence full weight
+    import math
+    evidence_multiplier = clamp(0.3 + 0.7 * math.sqrt(evidence_quality), 0.3, 1.0)
+    # Apply saturation penalty
+    composite_score = clamp(max(0.0, positive - penalty) * evidence_multiplier * saturation_multiplier)
     confidence = clamp(0.35 + evidence_quality * 0.4 + float(_value(atom, "confidence", 0.0)) * 0.25)
 
     review_feedback_count = 0
@@ -1544,6 +1572,7 @@ def score_opportunity(
         value_support = clamp(value_support + max(0.0, review_feedback_park_bias * 0.3) - max(0.0, review_feedback_kill_bias * 0.2))
 
     return {
+        "scoring_version": CURRENT_SCORING_VERSION,
         "pain_severity": round(pain_severity, 4),
         "frequency_score": round(frequency_score, 4),
         "cost_of_inaction": round(cost_of_inaction, 4),
@@ -1684,8 +1713,9 @@ def stage_decision(
     market_gap: dict[str, Any],
     counterevidence: list[dict[str, Any]],
     *,
-    promotion_threshold: float = 0.62,
-    park_threshold: float = 0.48,
+    # Thresholds adjusted: theoretical max is ~0.59, so 0.50 promote is selective but reachable
+    promotion_threshold: float = 0.50,
+    park_threshold: float = 0.35,
     review_feedback: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     supported_count = sum(1 for check in counterevidence if check.get("status") == "supported")
@@ -1696,6 +1726,8 @@ def stage_decision(
     sufficiency = float(opportunity_scores.get("evidence_sufficiency", 0.0) or 0.0)
     value_support = float(opportunity_scores.get("value_support", 0.0) or 0.0)
     evidence_quality = float(opportunity_scores.get("evidence_quality", 0.0) or 0.0)
+    # Fix 4: Add frequency gate - prevent "loud but rare" problems
+    frequency_score = float(opportunity_scores.get("frequency_score", 0.0) or 0.0)
 
     hard_kill = (
         market_gap.get("market_gap") == "already_solved_well"
@@ -1703,6 +1735,8 @@ def stage_decision(
         or (market_gap.get("market_gap") == "likely_false_signal" and plausibility < 0.45)
         or (composite < park_threshold and plausibility < 0.38 and sufficiency < 0.35)
         or (kill_bias >= 0.12 and plausibility < 0.45 and sufficiency < 0.32)
+        # Fix 4: Kill "loud but rare" problems
+        or (frequency_score < 0.25)
     )
     if hard_kill:
         return {
@@ -1713,7 +1747,8 @@ def stage_decision(
             "park_subreason": "",
         }
 
-    if composite >= promotion_threshold and plausibility >= 0.6 and evidence_quality >= 0.55 and supported_count <= 1 and value_support >= 0.58:
+    # Option B: Lower plausibility threshold from 0.60 to 0.55 for more promotions
+    if composite >= promotion_threshold and plausibility >= 0.55 and evidence_quality >= 0.55 and supported_count <= 1 and value_support >= 0.58:
         return {
             "status": "promoted",
             "recommendation": "promote",
@@ -1752,8 +1787,8 @@ def diagnose_stage_decision(
     market_gap: dict[str, Any],
     counterevidence: list[dict[str, Any]],
     *,
-    promotion_threshold: float = 0.62,
-    park_threshold: float = 0.48,
+    promotion_threshold: float = 0.50,
+    park_threshold: float = 0.35,
     review_feedback: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Human-readable breakdown of ``stage_decision`` inputs vs floors (for gate debugging)."""
@@ -1800,7 +1835,7 @@ def diagnose_stage_decision(
         },
         {
             "id": "problem_plausibility",
-            "pass": plausibility >= 0.6,
+            "pass": plausibility >= 0.55,
             "actual": round(plausibility, 4),
             "floor": 0.6,
         },

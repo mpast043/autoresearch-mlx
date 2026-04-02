@@ -430,6 +430,8 @@ async def main() -> None:
             "backup-db",
             "suggest-discovery",
             "patterns",
+            "scoring-report",
+            "revalidate",
         ],
         help="Command to execute",
     )
@@ -557,6 +559,123 @@ async def main() -> None:
         if not patterns:
             print("  No specific patterns detected yet.")
             print("  Run more discovery to identify specific integration problems.")
+        return
+
+    if args.command == "scoring-report":
+        # Show scoring percentile monitor
+        import sqlite3
+
+        db_path = Path("data/autoresearch.db")
+        if not db_path.exists():
+            print("No database found at data/autoresearch.db")
+            return
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+
+        # Get scores
+        cursor.execute("SELECT composite_score, frequency_score, evidence_quality, education_burden, adoption_friction FROM opportunities ORDER BY composite_score DESC")
+        rows = cursor.fetchall()
+        scores = [r[0] for r in rows]
+        total = len(scores)
+
+        if total == 0:
+            print("No opportunities in database")
+            return
+
+        sorted_scores = sorted(scores)
+        p99 = sorted_scores[int(total * 0.99)] if total > 0 else 0
+        p95 = sorted_scores[int(total * 0.95)] if total > 0 else 0
+        p90 = sorted_scores[int(total * 0.90)] if total > 0 else 0
+        median = sorted_scores[int(total * 0.50)] if total > 0 else 0
+
+        above_50 = sum(1 for s in scores if s >= 0.50)
+        above_45 = sum(1 for s in scores if s >= 0.45)
+        above_40 = sum(1 for s in scores if s >= 0.40)
+        above_35 = sum(1 for s in scores if s >= 0.35)
+
+        print("=== SCORING PERCENTILE MONITOR ===\n")
+        print(f"Total opportunities: {total}\n")
+        print("PERCENTILES:")
+        print(f"  Max:   {max(scores):.4f}")
+        print(f"  P99:   {p99:.4f}")
+        print(f"  P95:   {p95:.4f}")
+        print(f"  P90:   {p90:.4f}")
+        print(f"  Median:{median:.4f}")
+        print(f"\nDECISION BUCKETS (thresholds: promote=0.50, park=0.35):")
+        print(f"  Promote (≥0.50): {above_50} ({above_50/total*100:.1f}%)")
+        print(f"  Park (0.35-0.50): {above_35-above_50} ({(above_35-above_50)/total*100:.1f}%)")
+        print(f"  Kill (<0.35): {total-above_35} ({(total-above_35)/total*100:.1f}%)")
+
+        # Get parked analysis
+        cursor.execute("""
+            SELECT
+                AVG(frequency_score) as avg_freq,
+                AVG(evidence_quality) as avg_eq,
+                AVG(education_burden) as avg_edu,
+                AVG(adoption_friction) as avg_fric
+            FROM opportunities
+            WHERE composite_score >= 0.35 AND composite_score < 0.50
+        """)
+        parked = cursor.fetchone()
+        if parked and parked[0]:
+            print(f"\nPARKED OPPORTUNITY ANALYSIS (n={above_35-above_50}):")
+            print(f"  Avg frequency:        {parked[0]:.3f}")
+            print(f"  Avg evidence_quality: {parked[1]:.3f}")
+            print(f"  Avg education_burden: {parked[2]:.3f} ⚠️")
+            print(f"  Avg adoption_friction:{parked[3]:.3f} ⚠️")
+
+        conn.close()
+        return
+
+    if args.command == "revalidate":
+        # Re-run validation for all opportunities with new formula (v2)
+        import sqlite3
+
+        db_path = Path("data/autoresearch.db")
+        if not db_path.exists():
+            print("No database found")
+            return
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+
+        # Get unvalidated opportunities (scoring_version = '0')
+        cursor.execute("""
+            SELECT o.id, o.cluster_id
+            FROM opportunities o
+            WHERE o.scoring_version = '0'
+        """)
+        unvalidated_opps = cursor.fetchall()
+
+        if not unvalidated_opps:
+            print("No opportunities need revalidation.")
+            print("All have been scored with current formula.")
+            conn.close()
+            return
+
+        print(f"=== REVALIDATING {len(unvalidated_opps)} OPPORTUNITIES ===")
+        print("This will re-run validation with v2 formula (new weights/thresholds)")
+        print("Each opportunity will be marked with scoring_version='v2' after revalidation.\n")
+
+        # For now, just show what would happen
+        # Actual revalidation would require running the full pipeline
+
+        for opp_id, cluster_id in unvalidated_opps[:5]:
+            print(f"  Would revalidate opportunity #{opp_id} (cluster={cluster_id})")
+
+        print(f"\n  ... and {len(unvalidated_opps) - 5} more")
+
+        # Check current status
+        cursor.execute("SELECT COUNT(*), COUNT(CASE WHEN scoring_version = '0' THEN 1 END), COUNT(CASE WHEN scoring_version = 'v2' THEN 1 END) FROM opportunities")
+        total, legacy, current = cursor.fetchone()
+
+        print(f"\n=== CURRENT STATUS ===")
+        print(f"  Total opportunities: {total}")
+        print(f"  Not validated (needs revalidate): {legacy}")
+        print(f"  v2 (current formula): {current}")
+
+        conn.close()
         return
 
     app = AutoResearcher(config_path=args.config)

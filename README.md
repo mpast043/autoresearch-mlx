@@ -205,6 +205,76 @@ When `orchestration.auto_ideate_after_validation: true`, the [IdeationAgent](./s
 
 Ideas are stored in the `ideas` table and can trigger code generation via the builder.
 
+## Scoring Formula
+
+The scoring system evaluates opportunities with composite scoring. Version control is managed via `CURRENT_SCORING_VERSION` in `src/opportunity_engine.py`.
+
+### Scoring Version
+
+Each scorecard is tagged with a `scoring_version` for audit trail:
+- `"0"` - Not yet validated (needs revalidation)
+- `"v2"` - Current formula (as of April 2026)
+
+```bash
+# Check scoring version distribution
+python3 cli.py revalidate
+```
+
+### Composite Score Formula
+
+```
+positive = Σ(weighted positive factors)
+penalty = education_burden × 0.18 + dependency_risk × 0.16 + adoption_friction × 0.16
+composite = max(0, positive - penalty) × evidence_multiplier × saturation_multiplier
+```
+
+### Positive Factors (weights sum to 1.0)
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| pain_severity | 0.14 | How painful is the problem? |
+| frequency_score | 0.10 | How often does it occur? |
+| cost_of_inaction | 0.10 | What's the cost of ignoring it? |
+| workaround_density | 0.08 | Are existing workarounds bad? |
+| urgency_score | 0.08 | Does it need immediate attention? |
+| segment_concentration | 0.07 | Is it concentrated in one segment? |
+| reachability | 0.06 | Can we reach the buyer? |
+| timing_shift | 0.08 | Is this emerging now? |
+| buildability | 0.06 | Can we build it? |
+| expansion_potential | 0.06 | Can it expand to other segments? |
+| value_support | 0.17 | Is there commercial value? |
+
+### Penalty Factors (weights sum to 0.50)
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| education_burden | 0.18 | Must user learn something new? |
+| dependency_risk | 0.16 | Does it depend on other tools? |
+| adoption_friction | 0.16 | Hard to adopt? |
+
+### Evidence Modifiers
+
+- **evidence_multiplier**: `0.3 + 0.7 × √(evidence_quality)`, clamped [0.3, 1.0]
+- **saturation_multiplier**: `0.75` if market saturation > 0.7, else `1.0`
+
+### Decision Thresholds
+
+| Decision | Composite | Frequency | Plausibility | Evidence |
+|----------|-----------|-----------|--------------|----------|
+| Promote | ≥0.45 | ≥0.25 | ≥0.55 | ≥0.55 |
+| Park | 0.35-0.45 | - | - | - |
+| Kill | <0.35 | <0.25 | - | - |
+
+### CLI Commands
+
+```bash
+# View scoring distribution
+python3 cli.py scoring-report
+
+# Check validation status
+python3 cli.py revalidate
+```
+
 ## Key Files
 
 - [CLAUDE.md](./CLAUDE.md): internal operator/developer guide

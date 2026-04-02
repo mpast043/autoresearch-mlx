@@ -229,6 +229,7 @@ class Opportunity:
     evidence_quality: float = 0.0
     composite_score: float = 0.0
     confidence: float = 0.0
+    scoring_version: str = "0"  # "0" = not yet validated, set by validation agent
     selection_status: str = "research_more"
     selection_reason: str = ""
     notes: dict[str, Any] | None = None
@@ -631,6 +632,7 @@ class Database:
                 evidence_quality REAL DEFAULT 0,
                 composite_score REAL DEFAULT 0,
                 confidence REAL DEFAULT 0,
+                scoring_version TEXT DEFAULT 'v1',
                 selection_status TEXT DEFAULT 'research_more',
                 selection_reason TEXT DEFAULT '',
                 notes_json TEXT DEFAULT '{}',
