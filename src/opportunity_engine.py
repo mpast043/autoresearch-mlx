@@ -863,10 +863,16 @@ def build_cluster_summary(atoms: list[Any], signals: list[Any]) -> dict[str, Any
     trigger_summary = Counter(_value(atom, "trigger_event", "") for atom in atoms if _value(atom, "trigger_event", "")).most_common(1)
     dominant_failure = Counter(_value(atom, "failure_mode", "") for atom in atoms if _value(atom, "failure_mode", "")).most_common(1)
     dominant_workaround = Counter(_value(atom, "current_workaround", "") for atom in atoms if _value(atom, "current_workaround", "")).most_common(1)
+    # NEW: Extract specific pain statements for more descriptive labels
+    pain_statements = Counter(_value(atom, "pain_statement", "") for atom in atoms if _value(atom, "pain_statement", "") and len(_value(atom, "pain_statement", "")) > 20).most_common(1)
 
     segment_value = segment[0][0] if segment else "operators with recurring workflow pain"
     user_role_value = user_role[0][0] if user_role else "operator"
     job_value = job[0][0] if job else "keep a recurring workflow on track"
+    # NEW: Get the most specific pain statement available
+    specific_pain = pain_statements[0][0] if pain_statements else ""
+    if not specific_pain and dominant_failure:
+        specific_pain = _normalize_problem_fragment(dominant_failure[0][0], fallback="", limit=96)
     if _is_generic_phrase(job_value) and dominant_failure:
         job_value = _normalize_problem_fragment(dominant_failure[0][0], fallback=job_value, limit=96)
     trigger_value = trigger_summary[0][0] if trigger_summary else ""
@@ -889,9 +895,13 @@ def build_cluster_summary(atoms: list[Any], signals: list[Any]) -> dict[str, Any
         + min(len([atom for atom in atoms if _value(atom, "current_workaround", "")]), 3) * 0.05
     )
 
-    label = f"{user_role_value} - {job_value}"
-    if trigger_value:
-        label += f" when {trigger_value.lower()}"
+    # Use specific pain statement for the label if available, otherwise fall back to generic
+    if specific_pain and len(specific_pain) > 15:
+        label = f"{user_role_value} - {specific_pain}"
+    else:
+        label = f"{user_role_value} - {job_value}"
+        if trigger_value:
+            label += f" when {trigger_value.lower()}"
     label = compact_text(label, 130)
 
     return {
