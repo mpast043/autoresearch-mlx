@@ -222,7 +222,7 @@ def test_cluster_label_prefers_specific_trigger_or_failure():
     summary = build_cluster_summary(atoms, signals)
 
     assert "operations lead" in summary["label"].lower()
-    assert "when" in summary["label"].lower()
+    assert "confirmation emails" in summary["label"].lower()
     assert "bottlenecks" not in summary["label"].lower()
 
 

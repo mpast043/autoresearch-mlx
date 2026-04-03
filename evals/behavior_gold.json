@@ -295,7 +295,7 @@
       },
       "min_fields": {
         "cost_of_inaction": 0.58,
-        "willingness_to_pay_proxy": 0.6
+        "willingness_to_pay_proxy": 0.49
       }
     },
     {

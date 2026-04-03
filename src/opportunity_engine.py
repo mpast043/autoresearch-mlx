@@ -1889,6 +1889,71 @@ def stage_decision(
     supported_count = sum(1 for check in counterevidence if check.get("status") == "supported")
     park_bias = float((review_feedback or {}).get("park_bias", 0.0) or 0.0)
     kill_bias = float((review_feedback or {}).get("kill_bias", 0.0) or 0.0)
+    has_v4_scores = any(
+        key in opportunity_scores for key in ("decision_score", "problem_truth_score", "revenue_readiness_score")
+    )
+
+    if not has_v4_scores:
+        composite = float(opportunity_scores.get("composite_score", 0.0) or 0.0) + park_bias - kill_bias
+        plausibility = float(opportunity_scores.get("problem_plausibility", 0.0) or 0.0)
+        sufficiency = float(opportunity_scores.get("evidence_sufficiency", 0.0) or 0.0)
+        value_support = float(opportunity_scores.get("value_support", 0.0) or 0.0)
+        evidence_quality = float(opportunity_scores.get("evidence_quality", 0.0) or 0.0)
+
+        hard_kill = (
+            market_gap.get("market_gap") == "already_solved_well"
+            or supported_count >= 4
+            or (market_gap.get("market_gap") == "likely_false_signal" and plausibility < 0.45)
+            or (composite < park_threshold and plausibility < 0.38 and sufficiency < 0.35)
+            or (kill_bias >= 0.12 and plausibility < 0.45 and sufficiency < 0.32)
+        )
+        if hard_kill:
+            return {
+                "status": "killed",
+                "recommendation": "kill",
+                "reason": "unlikely_or_economically_weak",
+                "decision_reason": "unlikely_or_economically_weak",
+                "park_subreason": "",
+            }
+
+        if (
+            composite >= promotion_threshold
+            and plausibility >= 0.6
+            and evidence_quality >= 0.55
+            and supported_count <= 1
+            and value_support >= 0.58
+        ):
+            return {
+                "status": "promoted",
+                "recommendation": "promote",
+                "reason": "validated_selection_gate",
+                "decision_reason": "validated_selection_gate",
+                "park_subreason": "",
+            }
+
+        recurrence_short = market_gap.get("market_gap") == "needs_more_recurrence_evidence" or sufficiency < 0.46
+        value_short = value_support < 0.5
+        if recurrence_short and value_short:
+            subreason = "park_both"
+        elif recurrence_short:
+            subreason = "park_recurrence"
+        elif value_short:
+            subreason = "park_value"
+        else:
+            subreason = "plausible_but_unproven"
+
+        if review_feedback:
+            labels = set((review_feedback.get("labels") or {}).keys())
+            if "needs_more_evidence" in labels and subreason == "park_recurrence":
+                subreason = "plausible_but_unproven"
+
+        return {
+            "status": "parked",
+            "recommendation": "park",
+            "reason": subreason,
+            "decision_reason": subreason,
+            "park_subreason": subreason,
+        }
 
     # Get new v4 scores
     decision_score = float(opportunity_scores.get("decision_score", 0.0) or 0.0) + park_bias - kill_bias
