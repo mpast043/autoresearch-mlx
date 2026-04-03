@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from src.messaging import MessageType
+from src.messaging import MessageType, create_message
 from src.runtime.paths import DEFAULT_CONFIG_PATH, resolve_project_path
 
 logger = logging.getLogger(__name__)
@@ -366,7 +366,11 @@ class BuilderV2Agent:
         """Stop the agent."""
         self._shutdown_event.set()
         if self._task:
-            await self._task
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
 
     def _handle_task_result(self, task: asyncio.Task) -> None:
         """Handle task result for better debugging."""
@@ -379,12 +383,16 @@ class BuilderV2Agent:
 
     async def _run_loop(self) -> None:
         """Main message processing loop."""
-        while not self._shutdown_event.is_set():
-            if self._message_queue is None:
-                await asyncio.sleep(0.1)
-                continue
-            message = await self._message_queue.receive(self.name)
-            await self.process(message)
+        try:
+            while not self._shutdown_event.is_set():
+                if self._message_queue is None:
+                    await asyncio.sleep(0.1)
+                    continue
+                message = await self._message_queue.receive(self.name)
+                await self.process(message)
+        except asyncio.CancelledError:
+            if not self._shutdown_event.is_set():
+                raise
 
     def _fix_common_issues(self, output_dir: Path, written: list[str]) -> None:
         """Fix common issues in generated code after writing files."""
@@ -543,6 +551,104 @@ class BuilderV2Agent:
 
         return await self.build_from_spec(spec, idea_id)
 
+    async def _emit_result(self, message, payload: Dict[str, Any]) -> None:
+        if self._message_queue is None:
+            return
+        await self._message_queue.send(
+            create_message(
+                from_agent=self.name,
+                to_agent=message.from_agent,
+                msg_type=MessageType.RESULT,
+                payload=payload,
+                priority=2,
+            )
+        )
+
+    async def _handle_idea_build_request(self, message, idea_id: int) -> Dict[str, Any]:
+        result = await self.build_from_idea(idea_id)
+        payload = {
+            "success": result.success,
+            "idea_id": idea_id,
+            "project_path": str(result.project_path) if result.project_path else None,
+            "files_written": result.files_written,
+            "confidence": result.confidence,
+            "error": result.error,
+            "duration_s": result.duration_s,
+        }
+
+        if result.success and self.db and result.project_path is not None:
+            idea = self.db.get_idea(idea_id)
+            product_id = self.db.upsert_product_for_idea(
+                idea_id=idea_id,
+                name=(idea.title if idea else f"idea-{idea_id}"),
+                location=str(result.project_path),
+                status="completed",
+                metadata={
+                    "files_written": result.files_written,
+                    "confidence": result.confidence,
+                    "duration_s": result.duration_s,
+                },
+            )
+            self.db.update_idea_status(idea_id, "built")
+            payload["product_id"] = product_id
+
+        await self._emit_result(message, payload)
+        return payload
+
+    async def _handle_build_brief_request(self, message, build_brief_id: int) -> Dict[str, Any]:
+        if not self.db:
+            payload = {"success": False, "error": "No database connection", "build_brief_id": build_brief_id}
+            await self._emit_result(message, payload)
+            return payload
+
+        brief = self.db.get_build_brief(build_brief_id)
+        if brief is None:
+            payload = {"success": False, "error": f"Build brief {build_brief_id} not found", "build_brief_id": build_brief_id}
+            await self._emit_result(message, payload)
+            return payload
+
+        spec = dict(brief.brief or {})
+        prep_outputs = self.db.list_build_prep_outputs(build_brief_id=build_brief_id, run_id=brief.run_id, limit=20)
+        for output in prep_outputs:
+            if output.prep_stage == "spec_generation":
+                spec.update(output.output or {})
+
+        result = await self.build_from_spec(spec, None)
+        payload = {
+            "success": result.success,
+            "build_brief_id": build_brief_id,
+            "project_path": str(result.project_path) if result.project_path else None,
+            "files_written": result.files_written,
+            "confidence": result.confidence,
+            "error": result.error,
+            "duration_s": result.duration_s,
+        }
+
+        if result.success and result.project_path is not None:
+            product_id = self.db.upsert_product_for_build(
+                build_brief_id=build_brief_id,
+                opportunity_id=brief.opportunity_id,
+                validation_id=brief.validation_id,
+                name=spec.get("title") or f"build-brief-{build_brief_id}",
+                location=str(result.project_path),
+                status="completed",
+                metadata={
+                    "files_written": result.files_written,
+                    "confidence": result.confidence,
+                    "duration_s": result.duration_s,
+                },
+            )
+            self.db.update_build_brief_status(build_brief_id, "launched")
+            self.db.update_opportunity_selection(
+                brief.opportunity_id,
+                selection_status="launched",
+                selection_reason="builder_v2_completed",
+            )
+            payload["product_id"] = product_id
+
+        await self._emit_result(message, payload)
+        return payload
+
     async def build_from_brief(self, brief_path: Path, idea_id: Optional[int] = None) -> BuildResult:
         """Build from a build brief markdown file (output of SpecGenerationAgent)."""
         if not brief_path.exists():
@@ -595,19 +701,12 @@ class BuilderV2Agent:
         """Handle incoming messages from the orchestrator."""
         if message.msg_type == MessageType.BUILD_REQUEST:
             idea_id = message.payload.get("idea_id")
-            if not idea_id:
-                return {"success": False, "error": "No idea_id in BUILD_REQUEST"}
-
-            result = await self.build_from_idea(idea_id)
-            return {
-                "success": result.success,
-                "idea_id": idea_id,
-                "project_path": str(result.project_path) if result.project_path else None,
-                "files_written": result.files_written,
-                "confidence": result.confidence,
-                "error": result.error,
-                "duration_s": result.duration_s,
-            }
+            build_brief_id = message.payload.get("build_brief_id")
+            if idea_id:
+                return await self._handle_idea_build_request(message, int(idea_id))
+            if build_brief_id:
+                return await self._handle_build_brief_request(message, int(build_brief_id))
+            return {"success": False, "error": "No idea_id or build_brief_id in BUILD_REQUEST"}
 
         return {"processed": True}
 

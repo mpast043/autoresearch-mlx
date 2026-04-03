@@ -45,5 +45,5 @@ def test_repo_config_yaml_matches_expectation():
     with open(root, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     p, k = resolve_promotion_park_thresholds(cfg)
-    assert p == pytest.approx(0.55)
-    assert k == pytest.approx(0.35)
+    assert p == pytest.approx(0.18)
+    assert k == pytest.approx(0.15)

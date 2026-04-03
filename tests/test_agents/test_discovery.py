@@ -652,7 +652,7 @@ def test_prime_reddit_relay_includes_learned_theme_queries(temp_db, monkeypatch)
         unique_urls = 0
 
     class FakeSeeder:
-        def __init__(self, _config):
+        def __init__(self, _config, **_kwargs):
             pass
 
         def coverage_report(self, *, subreddits, queries):
