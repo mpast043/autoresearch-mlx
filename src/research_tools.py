@@ -14,6 +14,7 @@ import sys
 import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import parse_qs, unquote, urlparse, urlunparse
@@ -242,6 +243,46 @@ QUERY_STOPWORDS = {
     "complain",
 }
 
+DISCOVERY_QUERY_GENERIC_TERMS = {
+    "manual",
+    "workflow",
+    "process",
+    "tool",
+    "tools",
+    "software",
+    "issue",
+    "issues",
+    "problem",
+    "problems",
+    "task",
+    "tasks",
+    "steps",
+    "errors",
+    "error",
+    "forum",
+    "forums",
+    "review",
+    "reviews",
+    "latest",
+    "best",
+    "trying",
+    "trying_to",
+}
+
+DISCOVERY_QUERY_ANCHOR_TERMS = [
+    "reconciliation",
+    "spreadsheet",
+    "audit",
+    "compliance",
+    "export",
+    "handoff",
+    "excel",
+    "csv",
+    "shopify",
+    "airtable",
+    "notion",
+]
+
 WEAK_VALIDATION_TERMS = {
     "issue",
     "problem",
@@ -309,6 +350,13 @@ NON_PROBLEM_DISCOVERY_PATTERNS = [
     "best and not too expensive",
     "what do you use",
     "planning to start",
+    "resume help",
+    "resume roast",
+    "review my resume",
+    "landed a senior accounting",
+    "career advice",
+    "ecommerce industry news recap",
+    "this week's top ecommerce news stories",
 ]
 
 WORKAROUND_SIGNAL_TERMS = [
@@ -374,6 +422,98 @@ BLOG_LIKE_PATTERNS = [
     "/learn/",
     "/what-is/",
 ]
+
+WEB_PROBLEM_REJECT_DOMAIN_TOKENS = [
+    "learn.",
+    "support.",
+    "community.",
+    "forum.",
+]
+
+WEB_PROBLEM_REJECT_PATH_TOKENS = [
+    "/answers/",
+    "/forum/",
+    "/forums/",
+    "/thread/",
+    "/threads/",
+    "/board/",
+    "/blog/",
+    "/blogs/",
+    "/guide/",
+    "/guides/",
+    "/tutorial",
+    "/article",
+    "/articles/",
+    "/content/",
+    "/discussion",
+    "/discussions/",
+]
+
+WEB_PROBLEM_REJECT_TEXT_PATTERNS = [
+    "tutorial:",
+    "unlock the secrets",
+    "best for",
+    "read to know",
+    "discover how to",
+    "discover how",
+    "important notice",
+    "cookie policy",
+    "indispensable tool",
+    "navigating version control",
+    "risks and challenges",
+    "fails accounting teams",
+    "solved:",
+]
+
+WEB_PROBLEM_CONTENT_FARM_DOMAINS = {
+    "fastercapital.com",
+}
+
+HIGH_VALUE_DISCOVERY_QUERY_TERMS = {
+    "reddit-problem": {
+        "manual reconciliation": 0.7,
+        "spreadsheet reconciliation": 0.7,
+        "sales tax payment reconciliation": 0.7,
+        "manual handoff": 0.65,
+        "month end close": 0.7,
+        "bank deposit": 0.65,
+        "sales channel": 0.7,
+        "channel profitability": 0.7,
+        "invoice reminder": 0.6,
+        "late payment": 0.6,
+        "pdf collaboration": 0.6,
+        "returns workflow": 0.65,
+        "supplier data": 0.6,
+        "label printed": 0.65,
+        "which spreadsheet is latest": 0.55,
+    },
+    "web-problem": {
+        "spreadsheet version confusion": 0.7,
+        "manual reconciliation forum": 0.7,
+        "manual handoff workflow forum": 0.65,
+        "month end close spreadsheet": 0.65,
+        "sales channel reconciliation": 0.65,
+        "sales tax payment reconciliation": 0.65,
+        "channel profitability spreadsheet": 0.65,
+        "invoice reminder spreadsheet": 0.6,
+        "pdf collaboration version": 0.6,
+        "returns workflow spreadsheet": 0.6,
+        "which spreadsheet is latest": 0.55,
+    },
+}
+
+LOW_SIGNAL_DISCOVERY_QUERY_TERMS = {
+    "reddit-problem": {
+        "annoying manual task": 0.45,
+        "manual process": 0.3,
+        "workaround": 0.25,
+        "wish there was a tool": 0.4,
+    },
+    "web-problem": {
+        '"manual process" every day': 0.35,
+        '"too expensive" current tool': 0.25,
+    },
+}
 
 VALIDATION_QUERY_PHRASES = [
     (r"manual data entry", "manual data entry"),
@@ -665,7 +805,14 @@ class ResearchToolkit:
             user_agent=self.user_agent,
         )
         self.wordpress_review_adapter = WordPressPluginReviewAdapter(self.user_agent)
-        self.shopify_review_adapter = ShopifyAppReviewAdapter(self.user_agent)
+        shopify_review_config = self.config.get("discovery", {}).get("shopify_reviews", {}) or {}
+        self.shopify_review_adapter = ShopifyAppReviewAdapter(
+            self.user_agent,
+            rate_limit_cooldown_seconds=max(
+                60,
+                int(shopify_review_config.get("rate_limit_cooldown_seconds", 900)),
+            ),
+        )
 
     async def close(self) -> None:
         if self.reddit_transport:
@@ -843,24 +990,55 @@ class ResearchToolkit:
 
     def _rank_discovery_queries(self, source_name: str, queries: list[str]) -> list[tuple[str, float, int, int]]:
         feedback = self._discovery_feedback.get(source_name, {})
+        now = datetime.now(UTC)
         ranked: list[tuple[int, float, int, int, str]] = []
         for index, query in enumerate(queries):
+            normalized_query = str(query or "").lower()
             row = feedback.get(query, {})
             runs = int(row.get("runs", 0) or 0)
             findings = int(row.get("findings_emitted", 0) or 0)
+            screened_out = int(row.get("screened_out", 0) or 0)
+            low_signal_count = int(row.get("low_signal_count", 0) or 0)
+            pain_signal_count = int(row.get("pain_signal_count", 0) or 0)
             validations = int(row.get("validations", 0) or 0)
             passes = int(row.get("passes", 0) or 0)
+            kills = int(row.get("kills", 0) or 0)
+            parks = int(row.get("parks", 0) or 0)
+            promotes = int(row.get("promotes", 0) or 0)
+            thin_recurrence_count = int(row.get("thin_recurrence_count", 0) or 0)
+            single_source_only_count = int(row.get("single_source_only_count", 0) or 0)
             prototype_candidates = int(row.get("prototype_candidates", 0) or 0)
             build_briefs = int(row.get("build_briefs", 0) or 0)
             avg_score = float(row.get("avg_validation_score", 0.0) or 0.0)
+            avg_screening_score = float(row.get("avg_screening_score", 0.0) or 0.0)
             docs_seen = int(row.get("docs_seen", 0) or 0)
+            cooldown_until = str(row.get("cooldown_until", "") or "").strip()
+            cooldown_active = False
+            if cooldown_until:
+                try:
+                    cooldown_dt = datetime.fromisoformat(cooldown_until)
+                    if cooldown_dt.tzinfo is None:
+                        cooldown_dt = cooldown_dt.replace(tzinfo=UTC)
+                    cooldown_active = cooldown_dt > now
+                except (ValueError, TypeError):
+                    cooldown_active = False
             positive_yield = passes > 0 or findings > 0 or validations > 0 or prototype_candidates > 0 or build_briefs > 0
             low_yield = runs >= 2 and findings == 0 and validations == 0 and passes == 0 and docs_seen <= 1
-            if positive_yield:
+            noisy_source = runs >= 2 and screened_out >= max(2, findings + 1) and pain_signal_count == 0
+            thin_validation_trap = (
+                validations >= 2
+                and prototype_candidates == 0
+                and build_briefs == 0
+                and promotes == 0
+                and (thin_recurrence_count >= 2 or single_source_only_count >= 2 or parks >= 2 or kills >= 2)
+            )
+            if positive_yield and not cooldown_active:
                 bucket = 0
             elif runs == 0:
                 bucket = 1
-            elif low_yield:
+            elif cooldown_active:
+                bucket = 4
+            elif low_yield or noisy_source or thin_validation_trap:
                 bucket = 3
             else:
                 bucket = 2
@@ -868,17 +1046,116 @@ class ResearchToolkit:
                 build_briefs * 5.0
                 + prototype_candidates * 3.5
                 + passes * 4.0
+                + promotes * 2.5
                 + avg_score * 2.0
+                + avg_screening_score * 0.8
                 + findings * 1.2
+                + pain_signal_count * 0.3
                 + validations * 0.8
                 + min(docs_seen, 20) * 0.05
                 - runs * 0.08
             )
+            for term, boost in (HIGH_VALUE_DISCOVERY_QUERY_TERMS.get(source_name, {}) or {}).items():
+                if term in normalized_query:
+                    score += boost
+            for term, penalty in (LOW_SIGNAL_DISCOVERY_QUERY_TERMS.get(source_name, {}) or {}).items():
+                if term in normalized_query:
+                    score -= penalty
             if validations >= 2 and prototype_candidates == 0 and build_briefs == 0 and passes == 0:
                 score -= 0.35
+            score -= min(screened_out, 8) * 0.22
+            score -= min(low_signal_count, 6) * 0.18
+            score -= min(kills, 4) * 0.2
+            score -= min(parks, 4) * 0.12
+            score -= min(thin_recurrence_count, 4) * 0.18
+            score -= min(single_source_only_count, 4) * 0.2
+            if cooldown_active:
+                score -= 5.0
             ranked.append((bucket, score, runs, index, query))
         ranked.sort(key=lambda item: (item[0], -item[1], item[2], item[3]))
         return [(query, score, runs, index) for bucket, score, runs, index, query in ranked]
+
+    @staticmethod
+    def discovery_query_family_key(query: str) -> str:
+        tokens = ResearchToolkit._discovery_query_family_tokens(query)
+        if not tokens:
+            normalized = " ".join(str(query or "").lower().split())
+            return normalized[:80]
+        for anchor in DISCOVERY_QUERY_ANCHOR_TERMS:
+            if anchor in tokens:
+                return anchor
+        return " ".join(sorted(tokens))
+
+    @staticmethod
+    def _discovery_query_family_tokens(query: str) -> set[str]:
+        text = str(query or "").lower()
+        raw_tokens = re.findall(r"[a-z0-9]+", text)
+        tokens: list[str] = []
+        for token in raw_tokens:
+            if len(token) <= 2:
+                continue
+            if token in QUERY_STOPWORDS or token in DISCOVERY_QUERY_GENERIC_TERMS:
+                continue
+            normalized = token
+            if normalized.endswith("ies") and len(normalized) > 4:
+                normalized = normalized[:-3] + "y"
+            elif normalized.endswith("s") and len(normalized) > 4:
+                normalized = normalized[:-1]
+            tokens.append(normalized)
+        return set(tokens)
+
+    @classmethod
+    def _queries_are_near_duplicates(cls, left: str, right: str) -> bool:
+        left_tokens = cls._discovery_query_family_tokens(left)
+        right_tokens = cls._discovery_query_family_tokens(right)
+        if not left_tokens or not right_tokens:
+            left_norm = " ".join(str(left or "").lower().split())
+            right_norm = " ".join(str(right or "").lower().split())
+            return bool(left_norm and right_norm and (left_norm in right_norm or right_norm in left_norm))
+        overlap = len(left_tokens & right_tokens)
+        if overlap == 0:
+            return False
+        union = len(left_tokens | right_tokens)
+        if union == 0:
+            return False
+        similarity = overlap / union
+        return similarity >= 0.5 or left_tokens <= right_tokens or right_tokens <= left_tokens
+
+    @staticmethod
+    def _is_discovery_query_searchable(query: str) -> bool:
+        normalized = " ".join(str(query or "").strip().lower().split())
+        if not normalized:
+            return False
+        if len(normalized) > 90:
+            return False
+        tokens = re.findall(r"[a-z0-9]+", normalized)
+        if len(tokens) > 10:
+            return False
+        conversational_markers = (
+            "i am",
+            "i'm",
+            "we are",
+            "we're",
+            "trying to",
+            "how do you",
+            "does anyone",
+            "what are you",
+            "when i am",
+            "please help",
+        )
+        if any(marker in normalized for marker in conversational_markers):
+            return False
+        return True
+
+    @staticmethod
+    def _rotate_candidates(items: list[dict[str, Any]], take: int, cycle_index: int) -> tuple[list[dict[str, Any]], int]:
+        if take <= 0 or not items:
+            return [], 0
+        if len(items) <= take:
+            return list(items), 0
+        offset = (cycle_index * take) % len(items)
+        rotated = [items[(offset + step) % len(items)] for step in range(take)]
+        return rotated, offset
 
     def build_discovery_query_plan(
         self,
@@ -888,13 +1165,119 @@ class ResearchToolkit:
         limit: int,
         cycle_index: int = 0,
     ) -> DiscoveryQueryPlan:
-        if limit <= 0 or not queries:
+        sanitized_queries: list[str] = []
+        for query in queries:
+            normalized = " ".join(str(query or "").strip().split())
+            if not normalized or normalized in sanitized_queries:
+                continue
+            if not self._is_discovery_query_searchable(normalized):
+                continue
+            sanitized_queries.append(normalized)
+
+        if limit <= 0 or not sanitized_queries:
             return DiscoveryQueryPlan(source_name=source_name, queries=[], slice_size=max(0, limit), cycle_index=cycle_index)
 
-        ranked = self._rank_discovery_queries(source_name, queries)
-        ordered = [query for query, _, _, _ in ranked]
+        ranked = self._rank_discovery_queries(source_name, sanitized_queries)
+        feedback = self._discovery_feedback.get(source_name, {})
+        now = datetime.now(UTC)
+        candidates: list[dict[str, Any]] = []
+        overflow: list[dict[str, Any]] = []
+        max_per_concept = max(1, int(self.config.get("discovery", {}).get("max_queries_per_concept", 1)))
+        concept_counts: dict[str, int] = {}
+        for query, score, runs, index in ranked:
+            row = feedback.get(query, {}) or {}
+            cooldown_until = str(row.get("cooldown_until", "") or "").strip()
+            if cooldown_until:
+                try:
+                    cooldown_dt = datetime.fromisoformat(cooldown_until)
+                    if cooldown_dt.tzinfo is None:
+                        cooldown_dt = cooldown_dt.replace(tzinfo=UTC)
+                    if cooldown_dt > now:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            findings = int(row.get("findings_emitted", 0) or 0)
+            validations = int(row.get("validations", 0) or 0)
+            passes = int(row.get("passes", 0) or 0)
+            screened_out = int(row.get("screened_out", 0) or 0)
+            pain_signal_count = int(row.get("pain_signal_count", 0) or 0)
+            prototype_candidates = int(row.get("prototype_candidates", 0) or 0)
+            build_briefs = int(row.get("build_briefs", 0) or 0)
+            promotes = int(row.get("promotes", 0) or 0)
+            parks = int(row.get("parks", 0) or 0)
+            kills = int(row.get("kills", 0) or 0)
+            thin_recurrence_count = int(row.get("thin_recurrence_count", 0) or 0)
+            single_source_only_count = int(row.get("single_source_only_count", 0) or 0)
+            docs_seen = int(row.get("docs_seen", 0) or 0)
+            family_key = self.discovery_query_family_key(query)
+            low_yield = runs >= 2 and findings == 0 and validations == 0 and passes == 0 and docs_seen <= 1
+            noisy_source = runs >= 2 and screened_out >= max(2, findings + 1) and pain_signal_count == 0
+            thin_validation_trap = (
+                validations >= 2
+                and prototype_candidates == 0
+                and build_briefs == 0
+                and promotes == 0
+                and (thin_recurrence_count >= 2 or single_source_only_count >= 2 or parks >= 2 or kills >= 2)
+            )
+            candidate = {
+                "query": query,
+                "score": score,
+                "runs": runs,
+                "index": index,
+                "family_key": family_key,
+                "novel": runs == 0 or (runs <= 1 and findings == 0 and validations == 0),
+                "deprioritized": low_yield or noisy_source or thin_validation_trap,
+            }
+            current_count = concept_counts.get(family_key, 0)
+            duplicate_family = any(
+                self._queries_are_near_duplicates(query, existing["query"])
+                for existing in candidates
+                if existing["family_key"] == family_key
+            )
+            if candidate["deprioritized"] or current_count >= max_per_concept or duplicate_family:
+                overflow.append(candidate)
+                continue
+            concept_counts[family_key] = current_count + 1
+            candidates.append(candidate)
+        if not candidates and overflow:
+            candidates = list(overflow)
+            overflow = []
+        if not candidates:
+            return DiscoveryQueryPlan(source_name=source_name, queries=[], slice_size=0, cycle_index=cycle_index)
+        exploration_slots = max(0, int(self.config.get("discovery", {}).get("exploration_slots_per_cycle", 0)))
+        novel_candidates = [candidate for candidate in candidates if candidate["novel"]]
+        exploration_slots = min(exploration_slots, max(0, limit - 1), len(novel_candidates))
+
+        anchor = candidates[0] if candidates else None
+        if anchor and anchor["novel"]:
+            stable_anchor = next((candidate for candidate in candidates if not candidate["novel"]), None)
+            if stable_anchor is not None:
+                anchor = stable_anchor
+
+        remaining = [candidate for candidate in candidates if not anchor or candidate["query"] != anchor["query"]]
+        exploration_pool = [candidate for candidate in remaining if candidate["novel"]]
+        exploration_selected, _exploration_offset = self._rotate_candidates(exploration_pool, exploration_slots, cycle_index)
+        selected_queries = {candidate["query"] for candidate in exploration_selected}
+        if anchor is not None:
+            selected_queries.add(anchor["query"])
+
+        fill_pool = [candidate for candidate in remaining if candidate["query"] not in selected_queries]
+        fill_selected, offset = self._rotate_candidates(fill_pool, max(0, limit - len(selected_queries)), cycle_index)
+
+        selected: list[dict[str, Any]] = []
+        if anchor is not None:
+            selected.append(anchor)
+        selected.extend(exploration_selected)
+        selected.extend(fill_selected)
+
+        if len(selected) < limit and overflow:
+            overflow_fill = [candidate for candidate in overflow if candidate["query"] not in {item["query"] for item in selected}]
+            extra_selected, _ = self._rotate_candidates(overflow_fill, limit - len(selected), cycle_index)
+            selected.extend(extra_selected)
+
+        ordered = [candidate["query"] for candidate in selected[:limit]]
         slice_size = min(limit, len(ordered))
-        if len(ordered) <= limit:
+        if len(candidates) <= limit and not overflow:
             return DiscoveryQueryPlan(
                 source_name=source_name,
                 queries=ordered,
@@ -902,30 +1285,14 @@ class ResearchToolkit:
                 cycle_index=cycle_index,
                 rotated_queries_used=list(ordered),
             )
-
-        anchor_count = 1 if limit > 1 else 0
-        anchored = ordered[:anchor_count]
-        rotating_pool = ordered[anchor_count:]
-        rotating_limit = min(limit - anchor_count, len(rotating_pool))
-        if rotating_limit <= 0:
-            return DiscoveryQueryPlan(
-                source_name=source_name,
-                queries=anchored[:limit],
-                slice_size=slice_size,
-                cycle_index=cycle_index,
-                rotated_queries_used=list(anchored[:limit]),
-            )
-
-        offset = (cycle_index * rotating_limit) % len(rotating_pool)
-        rotated = [rotating_pool[(offset + step) % len(rotating_pool)] for step in range(rotating_limit)]
         return DiscoveryQueryPlan(
             source_name=source_name,
-            queries=(anchored + rotated)[:limit],
+            queries=ordered,
             slice_size=slice_size,
             cycle_index=cycle_index,
             query_offset=offset,
-            rotation_applied=cycle_index > 0 and len(rotating_pool) > rotating_limit,
-            rotated_queries_used=list(rotated),
+            rotation_applied=cycle_index > 0 and len(fill_pool) > max(0, limit - len(selected_queries)),
+            rotated_queries_used=[candidate["query"] for candidate in fill_selected],
         )
 
     def choose_query_plan(self, source_name: str, queries: list[str], *, limit: int) -> list[str]:
@@ -974,6 +1341,24 @@ class ResearchToolkit:
             return True
         return False
 
+    def _is_low_quality_web_problem_page(self, *, title: str, snippet: str, body: str, url: str) -> bool:
+        domain = domain_for(url)
+        path = url_path(url)
+        haystack = compact_text(f"{title} {snippet} {body} {domain} {path}".lower(), 2200)
+        title_lower = compact_text(title.lower(), 300)
+
+        if domain in WEB_PROBLEM_CONTENT_FARM_DOMAINS:
+            return True
+        if any(token in domain for token in WEB_PROBLEM_REJECT_DOMAIN_TOKENS):
+            return True
+        if any(token in path for token in WEB_PROBLEM_REJECT_PATH_TOKENS):
+            return True
+        if any(pattern in haystack for pattern in WEB_PROBLEM_REJECT_TEXT_PATTERNS):
+            return True
+        if title_lower.startswith("why ") and ("tutorial" in haystack or "compatibility version" in haystack):
+            return True
+        return False
+
     def _is_problem_candidate(self, title: str, body: str, *, source_url: str = "") -> bool:
         """Lightweight heuristic gate used at discovery time.
 
@@ -1014,6 +1399,48 @@ class ResearchToolkit:
                 f"pain={pain_hits} workaround={workaround_hits} freq={frequency_hits} cost={cost_hits} behavioral={behavioral}"
             )
         return score >= min_score
+
+    @staticmethod
+    def _reddit_query_matches_subreddit(subreddit: str, query: str) -> bool:
+        subreddit_norm = str(subreddit or "").strip().lower()
+        query_norm = " ".join(str(query or "").strip().lower().split())
+        if not subreddit_norm or not query_norm:
+            return True
+
+        finance_subreddits = {"accounting"}
+        ecommerce_subreddits = {"ecommerce", "shopify", "etsysellers"}
+        smallbiz_subreddits = {"smallbusiness"}
+        practitioner_subreddits = finance_subreddits | ecommerce_subreddits | smallbiz_subreddits
+
+        finance_terms = (
+            "bank reconciliation",
+            "month end close",
+            "sales tax",
+            "invoice reminder",
+            "late payment",
+        )
+        ecommerce_terms = (
+            "sales channel",
+            "channel profitability",
+            "order level reconciliation",
+            "returns workflow",
+            "supplier data",
+            "label printed",
+        )
+        pdf_terms = (
+            "pdf collaboration",
+            "latest version",
+        )
+
+        if any(term in query_norm for term in finance_terms):
+            return subreddit_norm in finance_subreddits | smallbiz_subreddits
+        if any(term in query_norm for term in ecommerce_terms):
+            return subreddit_norm in ecommerce_subreddits | smallbiz_subreddits
+        if any(term in query_norm for term in pdf_terms):
+            return subreddit_norm in smallbiz_subreddits
+        if subreddit_norm in practitioner_subreddits:
+            return True
+        return True
 
     def _extract_validation_phrases(self, text: str) -> list[str]:
         lowered = compact_text(text.lower(), 500)
@@ -1953,11 +2380,17 @@ class ResearchToolkit:
                 )
             return subreddit, query, docs
 
+        compatible_pairs = [
+            (subreddit, query)
+            for subreddit in subreddits[:max_subs_wave]
+            for query in queries[:max_kw_wave]
+            if self._reddit_query_matches_subreddit(subreddit, query)
+        ]
+
         pair_results = await asyncio.gather(
             *[
                 _fetch_pair(subreddit, query)
-                for subreddit in subreddits[:max_subs_wave]
-                for query in queries[:max_kw_wave]
+                for subreddit, query in compatible_pairs
             ]
         )
 
@@ -2052,6 +2485,13 @@ class ResearchToolkit:
                 seen_urls.add(doc.url)
                 content = await self.fetch_content(doc.url)
                 full_text = compact_text(f"{doc.title} {doc.snippet} {content.get('text', '')}", 2200)
+                if self._is_low_quality_web_problem_page(
+                    title=doc.title,
+                    snippet=doc.snippet,
+                    body=content.get("text", ""),
+                    url=doc.url,
+                ):
+                    continue
                 if not self._is_problem_candidate(doc.title, full_text, source_url=doc.url):
                     continue
                 findings.append(
@@ -3428,11 +3868,16 @@ class ResearchToolkit:
             return []
 
         queries: list[str] = []
+        prioritized_queries: list[str] = []
 
         def add(*parts: str) -> None:
             normalized = self._normalize_recurrence_query(" ".join(part for part in parts if part))
             if normalized and normalized not in queries:
                 queries.append(normalized)
+
+        def prioritize(query: str) -> None:
+            if query in queries and query not in prioritized_queries:
+                prioritized_queries.append(query)
 
         role_seed = " ".join((plan.role_terms or [])[:2])
         segment_seed = " ".join((plan.segment_terms or [])[:2])
@@ -3440,6 +3885,19 @@ class ResearchToolkit:
         failure_seed = self._recurrence_query_seed(plan.failure_phrase, max_terms=4)
         workaround_seed = self._recurrence_query_seed(plan.workaround_phrase, max_terms=3)
         cost_seed = " ".join((plan.cost_terms or [])[:2]) or "time loss"
+        focus_haystack = normalize_content(
+            " ".join(
+                [
+                    getattr(atom, "segment", "") or "",
+                    getattr(atom, "user_role", "") or "",
+                    getattr(atom, "job_to_be_done", "") or "",
+                    getattr(atom, "failure_mode", "") or "",
+                    getattr(atom, "current_workaround", "") or "",
+                    getattr(atom, "trigger_event", "") or "",
+                    getattr(atom, "current_tools", "") or "",
+                ]
+            )
+        )
 
         add("spreadsheet", job_seed or "tracking workflow", failure_seed or "manual cleanup")
         add("manual re-entry", job_seed or "reporting", role_seed or segment_seed or "operations")
@@ -3448,7 +3906,85 @@ class ResearchToolkit:
         add("replace spreadsheet for", job_seed or "reporting", "workflow")
         add("back office workflow", failure_seed or "bottleneck", cost_seed)
         add(workaround_seed or "copy paste workflow", cost_seed, job_seed or "operations")
-        return queries[:5]
+        add("bank reconciliation spreadsheet workflow")
+        add("month end close spreadsheet workflow")
+        add("sales tax payment reconciliation workflow")
+        add("sales channel profitability spreadsheet")
+        add("shopify amazon etsy payout reconciliation")
+        add("channel profitability reporting spreadsheet")
+        add("invoice reminder spreadsheet workflow")
+        add("late payment follow up spreadsheet")
+        add("pdf collaboration version control")
+        add("shared pdf latest version approval")
+
+        is_channel_profitability_focus = any(
+            term in focus_haystack
+            for term in [
+                "amazon",
+                "shopify",
+                "etsy",
+                "sales channel",
+                "channel",
+                "payout",
+                "profitability",
+                "profitable",
+            ]
+        )
+        is_accounting_reconciliation_focus = any(
+            term in focus_haystack
+            for term in [
+                "reconciliation",
+                "bank",
+                "deposit",
+                "month end",
+                "close",
+                "sales tax",
+                "payment reconciliation",
+                "books",
+            ]
+        )
+
+        if is_channel_profitability_focus:
+            prioritize(self._normalize_recurrence_query("sales channel profitability spreadsheet"))
+            prioritize(self._normalize_recurrence_query("shopify amazon etsy payout reconciliation"))
+            prioritize(self._normalize_recurrence_query("channel profitability reporting spreadsheet"))
+
+        if is_accounting_reconciliation_focus:
+            prioritize(self._normalize_recurrence_query("bank reconciliation spreadsheet workflow"))
+            prioritize(self._normalize_recurrence_query("month end close spreadsheet workflow"))
+            prioritize(self._normalize_recurrence_query("sales tax payment reconciliation workflow"))
+
+        if any(
+            term in focus_haystack
+            for term in [
+                "invoice",
+                "invoices",
+                "late payment",
+                "unpaid",
+                "reminder",
+                "accounts receivable",
+                "client reminder",
+            ]
+        ):
+            prioritize(self._normalize_recurrence_query("invoice reminder spreadsheet workflow"))
+            prioritize(self._normalize_recurrence_query("late payment follow up spreadsheet"))
+
+        if any(
+            term in focus_haystack
+            for term in [
+                "pdf",
+                "document",
+                "approval",
+                "latest version",
+                "wrong version",
+                "collaboration",
+            ]
+        ):
+            prioritize(self._normalize_recurrence_query("pdf collaboration version control"))
+            prioritize(self._normalize_recurrence_query("shared pdf latest version approval"))
+
+        ordered_queries = prioritized_queries + [query for query in queries if query not in prioritized_queries]
+        return ordered_queries[:8]
 
     def _is_spreadsheet_operator_admin_cohort(
         self,

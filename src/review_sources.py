@@ -7,6 +7,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
@@ -165,8 +166,10 @@ class WordPressPluginReview:
 class WordPressPluginReviewAdapter:
     """Fetches explicit review records from the WordPress Plugin Directory."""
 
-    def __init__(self, user_agent: str):
+    def __init__(self, user_agent: str, *, rate_limit_cooldown_seconds: int = 900):
         self.user_agent = user_agent or "Mozilla/5.0 (compatible; AutoResearcher/1.0)"
+        self.rate_limit_cooldown_seconds = max(60, int(rate_limit_cooldown_seconds))
+        self._rate_limited_until: Optional[datetime] = None
 
     async def fetch_reviews(
         self,
@@ -424,8 +427,10 @@ class ShopifyAppReviewAdapter:
     SITEMAP_URL = "https://apps.shopify.com/sitemap.xml"
     LISTING_BASE_URL = "https://apps.shopify.com/"
 
-    def __init__(self, user_agent: str):
+    def __init__(self, user_agent: str, *, rate_limit_cooldown_seconds: int = 900):
         self.user_agent = user_agent or "Mozilla/5.0 (compatible; AutoResearcher/1.0)"
+        self.rate_limit_cooldown_seconds = max(60, int(rate_limit_cooldown_seconds))
+        self._rate_limited_until: Optional[datetime] = None
 
     async def fetch_reviews(
         self,
@@ -437,6 +442,12 @@ class ShopifyAppReviewAdapter:
         sort_by: str = "newest",
         use_sitemap_discovery: bool = True,
     ) -> list[ShopifyAppReview]:
+        if self._shopify_rate_limit_active():
+            logger.info(
+                "shopify review fetch skipped reason=rate_limited cooldown_until=%s",
+                self._rate_limited_until.isoformat() if self._rate_limited_until else "",
+            )
+            return []
         rating_filters = rating_filters or [1]
         timeout = aiohttp.ClientTimeout(total=30)
         headers = {"User-Agent": self.user_agent}
@@ -447,17 +458,26 @@ class ShopifyAppReviewAdapter:
             handles = handles[:max_apps]
             if not handles:
                 return []
-            tasks = [
-                self._fetch_app_reviews(
-                    session,
-                    app_handle=handle,
-                    reviews_per_app=reviews_per_app,
-                    rating_filters=rating_filters,
-                    sort_by=sort_by,
-                )
-                for handle in handles
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results: list[list[ShopifyAppReview] | Exception] = []
+            for handle in handles:
+                if self._shopify_rate_limit_active():
+                    logger.info(
+                        "shopify review fetch skipped reason=rate_limited handle=%s cooldown_until=%s",
+                        handle,
+                        self._rate_limited_until.isoformat() if self._rate_limited_until else "",
+                    )
+                    break
+                try:
+                    result = await self._fetch_app_reviews(
+                        session,
+                        app_handle=handle,
+                        reviews_per_app=reviews_per_app,
+                        rating_filters=rating_filters,
+                        sort_by=sort_by,
+                    )
+                except Exception as exc:
+                    result = exc
+                results.append(result)
         reviews: list[ShopifyAppReview] = []
         for handle, result in zip(handles, results):
             if isinstance(result, Exception):
@@ -465,6 +485,14 @@ class ShopifyAppReviewAdapter:
                 continue
             reviews.extend(result)
         return reviews
+
+    def _shopify_rate_limit_active(self) -> bool:
+        if self._rate_limited_until is None:
+            return False
+        return self._rate_limited_until > datetime.now(UTC)
+
+    def _mark_shopify_rate_limited(self) -> None:
+        self._rate_limited_until = datetime.now(UTC) + timedelta(seconds=self.rate_limit_cooldown_seconds)
 
     async def _discover_app_handles_from_sitemap(
         self,
@@ -682,6 +710,15 @@ class ShopifyAppReviewAdapter:
     async def _fetch_html(self, session: aiohttp.ClientSession, url: str) -> str:
         try:
             async with session.get(url) as response:
+                if response.status == 429:
+                    self._mark_shopify_rate_limited()
+                    logger.info(
+                        "shopify fetch skipped url=%s status=%s cooldown_until=%s",
+                        url,
+                        response.status,
+                        self._rate_limited_until.isoformat() if self._rate_limited_until else "",
+                    )
+                    return ""
                 if response.status != 200:
                     logger.info("shopify fetch skipped url=%s status=%s", url, response.status)
                     return ""

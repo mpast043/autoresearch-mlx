@@ -1,349 +1,185 @@
 # AutoResearch MLX
 
-AutoResearch MLX is an evidence-first weak-signal discovery system. It is designed to pull in potential pain signals from multiple public sources, route them through an explicit source-policy layer, enrich them with corroboration and market context, validate them, and only then prepare narrow build briefs for promising opportunities.
+AutoResearch MLX is an evidence-first weak-signal discovery and validation pipeline. It pulls candidate pain signals from public sources, classifies them through an explicit source-policy layer, extracts structured problem atoms, validates recurrence and commercial value, and only then prepares build-facing artifacts.
 
-The current pipeline shell is:
+The active runtime path is:
 
 `discovery -> evidence -> validation -> build_prep`
 
-This repository currently contains the policy, source adapters, evaluation fixtures, state-model documentation, build-prep helpers, tests, data artifacts, and the Reddit bridge scaffold that support that flow.
+Optional downstream stages exist for ideation and code generation, but they sit behind validation and build-prep gates.
 
 ## What The System Does
 
-- Collects source items from multiple public lanes.
-- Separates pain evidence from low-signal summaries, success chatter, demand context, competition context, and meta guidance.
-- Extracts structured problem atoms only from eligible pain signals.
-- Persists corroboration and market enrichment separately.
-- Validates opportunities before any build-prep work happens.
-- Gates validated opportunities into explicit post-validation selection states instead of allowing direct promotion into building.
-- **Self-expanding discovery**: Automatically adds new keywords and subreddits based on what patterns yield validated opportunities.
-- **Idea generation**: Creates product ideas from validated opportunities.
-- **Code generation**: Generates functional prototypes using Ollama (local LLM).
+- Discovers candidate pain signals from Reddit, web search, GitHub, WordPress reviews, Shopify reviews, and YouTube lanes.
+- Routes source material through source-policy classification so only `pain_signal` evidence can become `raw_signals` and `problem_atoms`.
+- Clusters similar atoms into recurring opportunities.
+- Runs recurrence, corroboration, and market/value enrichment before making `promote` / `park` / `kill` decisions.
+- Persists build briefs and build-prep outputs only for `prototype_candidate` opportunities.
+- Learns from both good yield and bad yield to adjust discovery scope over time.
+- Supports autonomous Reddit keyword/subreddit expansion while still preserving curated practitioner lanes.
 
-## Full Pipeline
-
-The complete pipeline is:
-
-`discovery -> evidence -> validation -> build_prep -> ideation -> builder`
-
-- **Discovery**: Finds pain signals from configured sources
-- **Evidence**: Gathers corroboration and market enrichment
-- **Validation**: Clusters atoms, scores opportunities, makes promote/park/kill decisions
-- **Build Prep**: Solution framing, experiment design, spec generation (for prototype_candidate)
-- **Ideation**: Creates product ideas from validated opportunities (optional, via `auto_ideate_after_validation`)
-- **Builder**: Generates functional code from ideas using Ollama (optional, via `auto_build`)
-
-Enable optional stages in `config.yaml`:
-```yaml
-orchestration:
-  auto_ideate_after_validation: true  # Enable idea generation
-
-builder:
-  auto_build: true  # Enable code generation
-```
-
-## Source Families In Scope
-
-The current source-policy-aware lanes include:
-
-- Reddit (problem posts from configured subreddits + r/all)
-- GitHub issues and discussions
-- WordPress Plugin Directory reviews (1-2 star pain)
-- Shopify App Store reviews (1-2 star pain)
-- Web search (DuckDuckGo - problem + success queries)
-- YouTube (comments)
-
-**Deep Research** - Multi-source synthesis agent for targeted vertical exploration:
-```bash
-python cli.py deep-research --vertical <name>  # devtools, ecommerce, etc.
-```
-
-Important policy rules:
-- Reddit `search_time_filter: year` - only recent posts (configurable)
-- review text or issue text can become `pain_signal` only when specific enough
-- ratings, counts, pricing, popularity proxies, and listing metadata are enrichment inputs only
-- vague summaries, marketing copy, generic praise, and thin product-specific noise are screened out
-
-The source-policy implementation lives in [src/source_policy.py](./src/source_policy.py).
-
-## Self-Expanding Discovery
-
-The system can autonomously expand its search scope based on what patterns perform well:
-
-```yaml
-discovery:
-  auto_expand: true
-  expansion:
-    max_keywords_per_wave: 3      # Max new keywords per expansion
-    max_subreddits_per_wave: 2    # Max new subreddits per expansion
-    min_validation_score: 0.5     # Only add from queries with avg_score >= 0.5
-    cooldown_hours: 24            # Hours between expansions
-```
-
-When enabled:
-1. After each discovery wave, the system analyzes validation feedback
-2. Finds keywords/subreddits that yielded prototype_candidate or promote decisions
-3. Uses `discovery_suggestions` logic to find similar patterns
-4. Adds new candidates to the active discovery scope
-
-Expanded state is stored in `data/discovery_expansion.json` and merged with base config at startup.
-
-## Pattern-Based Discovery
-
-The system detects **specific integration problems** from signals and can focus discovery on them:
+## Quick Start
 
 ```bash
-# View emerging patterns with signal counts
-python3 cli.py patterns
-# Output:
-# === EMERGING PATTERNS ===
-#   spreadsheet_versioning (16 signals, high)
-#   bank_reconciliation (12 signals, high)
-#   stripe_to_quickbooks (1 signal, low)
+# Install editable package + console script
+python -m pip install -e .
+
+# Single pass
+autoresearch run-once
+
+# Single pass with operator detail
+autoresearch run-once --verbose
+
+# Discovery-only sample (skip backlog replay)
+autoresearch run-once --skip-backlog --verbose
+
+# Continuous discovery waves
+autoresearch run
+
+# Live status snapshot loop
+autoresearch watch
 ```
 
-Detected patterns include:
-- `spreadsheet_versioning` - Excel/Google Sheets version control issues
-- `bank_reconciliation` - Manual bank reconciliation pain
-- `stripe_to_quickbooks` - Stripe ↔ accounting software sync
-- `multi_channel_ecom` - Amazon/Shopify/Etsy sales reconciliation
+The repo-root entrypoint still works for local development via `python cli.py ...`, but the packaged console script is now the preferred surface.
 
-### Focused Discovery
-
-Run discovery focused on a specific pattern:
+## Key Commands
 
 ```bash
-# Focused discovery on spreadsheet versioning
-python3 cli.py run-once --pattern spreadsheet_versioning
+# Core runtime
+autoresearch run
+autoresearch run-once
+autoresearch run-once --skip-backlog --verbose
+autoresearch watch
 
-# Focused + fresh (bypass cache)
-python3 cli.py run-once --pattern bank_reconciliation --fresh
+# Diagnostics and operator review
+autoresearch report
+autoresearch gate-diagnostics
+autoresearch pipeline-health
+autoresearch backlog-workbench --limit 20
+autoresearch review-queue
+autoresearch review-mark --finding-id 10 --label needs_more_evidence --note "plausible but thin"
 
-# Fresh discovery only (no pattern)
-python3 cli.py run-once --fresh
+# Data inspection
+autoresearch findings
+autoresearch signals
+autoresearch atoms
+autoresearch clusters
+autoresearch opportunities
+autoresearch experiments
+autoresearch ledger
+autoresearch build-briefs
+autoresearch build-prep
+
+# Discovery support
+autoresearch suggest-discovery --min-atoms 2 --limit 25
+autoresearch patterns
+
+# Relay and recovery
+autoresearch check-bridge
+autoresearch reddit-seed
+autoresearch backup-db
+
+# Evaluation
+autoresearch eval
 ```
 
-The `--pattern` flag overrides discovery queries with pattern-specific keywords.
-The `--fresh` flag bypasses the signal cache to force new discovery.
+## Installation
 
-Pattern detection is implemented in [src/opportunity_engine.py](./src/opportunity_engine.py) via:
-- `SPECIFIC_INTEGRATION_PATTERNS` - Regex patterns for tool pairs
-- `_extract_specific_patterns()` - Extracts patterns from signal text
-- `get_patterns_for_discovery()` - Returns patterns sorted by signal count
+```bash
+# Editable local install
+python -m pip install -e .
 
-## Code Generation (BuilderV2)
-
-When `builder.auto_build: true`, the system uses [BuilderV2Agent](./src/agents/builder_v2.py) to generate functional code:
-
-```yaml
-llm:
-  provider: ollama  # or 'anthropic'
-  model: qwen2.5:7b-instruct
-  base_url: http://localhost:11434
-  max_tokens: 8000
+# Verify the console script works outside the repo root
+cd /tmp
+autoresearch eval
 ```
 
-Output types:
-- `workflow_reliability_console` - Python CLI tools
-- `workflow_diagnostic_prototype` - React + FastAPI web apps
-- `operator_evidence_workspace` - Evidence collection tools
+The package now ships:
 
-Generated projects go to `data/generated_projects/{slug}/`.
+- a console entrypoint: `autoresearch`
+- the Python modules needed for `import cli`, `import run`, and `import src...`
+- bundled fallback defaults for `config.yaml` and `evals/behavior_gold.json`
 
-## Active Runtime Model
+That means imports and `autoresearch eval` work correctly even when the current working directory is not the repository root.
 
-The active evidence path is:
+## Runtime Model
+
+The runtime uses:
+
+- `run.py` for process orchestration and lifecycle
+- `src/orchestrator.py` for message routing
+- `src/messaging.py` for the async per-agent message bus
+- `src/database.py` for the SQLite schema and CRUD
+- `src/status_tracker.py` for `output/pipeline_status.json`
+
+The important persisted dataflow is:
 
 `finding -> raw_signal -> problem_atom -> corroboration + market_enrichment -> cluster -> opportunity -> experiment + validation -> build_brief + build_prep_outputs -> ledger`
 
-The most important state-model reference is:
+Run-scoped history is preserved for validations, experiments, corroborations, market enrichments, evidence ledger entries, build briefs, and build-prep outputs.
 
-- [docs/state-model.md](./docs/state-model.md)
+## Discovery And Expansion
 
-That document defines:
+Reddit discovery is now practitioner-first by default. Curated operator-heavy subreddits are front-loaded in capped waves:
 
-- source classes and routing rules
-- source-of-truth tables
-- compatibility tables
-- finding lifecycle states
-- post-validation selection states
-- build-prep handoff records
+- `accounting`
+- `smallbusiness`
+- `ecommerce`
+- `shopify`
+- `EtsySellers`
 
-## Post-Validation Build Prep
+Broader communities such as `projectmanagement`, `automation`, and `indiehackers` can still participate, but they are pushed later in rotation.
 
-The current build-prep layer is intentionally narrow and explicit.
+Autonomous expansion is still enabled through `discovery.auto_expand`. Expanded subreddits and keywords are merged into the runtime pool, then discovery planning ranks and rotates them alongside the curated base set. The result is:
 
-Selection states currently include:
+- curated practitioner lanes stay available every run
+- expanded lanes can enter future waves
+- low-yield pairs can be cooled down instead of permanently polluting the front of the queue
 
-- `research_more`
-- `prototype_candidate` - eligible for build_prep and ideation
-- `prototype_ready`
-- `build_ready` - eligible for builder
-- `launched`
-- `iterate`
-- `expand`
-- `archive`
+## Configuration
 
-There is no direct `validated -> build_ready` path.
+Primary runtime config lives in [config.yaml](/Users/meganpastore/Projects/autoresearch-mlx/config.yaml).
 
-Current build-prep components:
+Important sections:
 
-- [src/build_prep.py](./src/build_prep.py)
-- [src/agents/build_prep.py](./src/agents/build_prep.py)
+- `database.path`
+- `output_dir`
+- `discovery.sources`
+- `discovery.source_selection`
+- `discovery.expansion`
+- `discovery.reddit`
+- `discovery.web`
+- `discovery.shopify_reviews`
+- `discovery.wordpress_reviews`
+- `orchestration`
+- `validation`
+- `builder`
+- `llm`
+- `reddit_bridge`
+- `reddit_relay`
 
-The three build-prep agents are:
+Environment variables are loaded from `.env` at startup via `load_local_env()` in [run.py](/Users/meganpastore/Projects/autoresearch-mlx/run.py).
 
-- `solution_framing`
-- `experiment_design`
-- `spec_generation`
+## Observability
 
-These agents consume a canonical persisted build brief and write traceable outputs back to the runtime store.
+Important runtime artifacts:
 
-## Ideation
+- DB: [data/autoresearch.db](/Users/meganpastore/Projects/autoresearch-mlx/data/autoresearch.db)
+- Log: [output/autoresearcher.log](/Users/meganpastore/Projects/autoresearch-mlx/output/autoresearcher.log)
+- Status JSON: [output/pipeline_status.json](/Users/meganpastore/Projects/autoresearch-mlx/output/pipeline_status.json)
 
-When `orchestration.auto_ideate_after_validation: true`, the [IdeationAgent](./src/agents/ideation.py) creates product ideas from validated opportunities (promote decisions or prototype_candidate status).
+Use these together with `python cli.py report`, `python cli.py gate-diagnostics`, and `python cli.py pipeline-health` when tuning discovery or validation.
 
-Ideas are stored in the `ideas` table and can trigger code generation via the builder.
+## Documentation Map
 
-## Scoring Formula
+- Engineering spec: [docs/ENGINEERING_SPEC.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/ENGINEERING_SPEC.md)
+- State model: [docs/state-model.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/state-model.md)
+- Gates: [docs/gates.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/gates.md)
+- Loop operations: [docs/LOOP.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/LOOP.md)
+- Product loop: [docs/PRODUCT_LOOP.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/PRODUCT_LOOP.md)
 
-The scoring system evaluates opportunities with composite scoring. Version control is managed via `CURRENT_SCORING_VERSION` in `src/opportunity_engine.py`.
-
-### Scoring Version
-
-Each scorecard is tagged with a `scoring_version` for audit trail:
-- `"0"` - Not yet validated (needs revalidation)
-- `"v2"` - Current formula (as of April 2026)
-
-```bash
-# Check scoring version distribution
-python3 cli.py revalidate
-```
-
-### Composite Score Formula
-
-```
-positive = Σ(weighted positive factors)
-penalty = education_burden × 0.18 + dependency_risk × 0.16 + adoption_friction × 0.16
-composite = max(0, positive - penalty) × evidence_multiplier × saturation_multiplier
-```
-
-### Positive Factors (weights sum to 1.0)
-
-| Factor | Weight | Description |
-|--------|--------|-------------|
-| pain_severity | 0.14 | How painful is the problem? |
-| frequency_score | 0.10 | How often does it occur? |
-| cost_of_inaction | 0.10 | What's the cost of ignoring it? |
-| workaround_density | 0.08 | Are existing workarounds bad? |
-| urgency_score | 0.08 | Does it need immediate attention? |
-| segment_concentration | 0.07 | Is it concentrated in one segment? |
-| reachability | 0.06 | Can we reach the buyer? |
-| timing_shift | 0.08 | Is this emerging now? |
-| buildability | 0.06 | Can we build it? |
-| expansion_potential | 0.06 | Can it expand to other segments? |
-| value_support | 0.17 | Is there commercial value? |
-
-### Penalty Factors (weights sum to 0.50)
-
-| Factor | Weight | Description |
-|--------|--------|-------------|
-| education_burden | 0.18 | Must user learn something new? |
-| dependency_risk | 0.16 | Does it depend on other tools? |
-| adoption_friction | 0.16 | Hard to adopt? |
-
-### Evidence Modifiers
-
-- **evidence_multiplier**: `0.3 + 0.7 × √(evidence_quality)`, clamped [0.3, 1.0]
-- **saturation_multiplier**: `0.75` if market saturation > 0.7, else `1.0`
-
-### Decision Thresholds
-
-| Decision | Composite | Frequency | Plausibility | Evidence |
-|----------|-----------|-----------|--------------|----------|
-| Promote | ≥0.45 | ≥0.25 | ≥0.55 | ≥0.55 |
-| Park | 0.35-0.45 | - | - | - |
-| Kill | <0.35 | <0.25 | - | - |
-
-### CLI Commands
+## Tests
 
 ```bash
-# View scoring distribution
-python3 cli.py scoring-report
-
-# Check validation status
-python3 cli.py revalidate
+pytest tests/ -v
 ```
-
-## Key Files
-
-- [CLAUDE.md](./CLAUDE.md): internal operator/developer guide
-- [docs/state-model.md](./docs/state-model.md): runtime state model and active table definitions
-- [docs/production-runtime.md](./docs/production-runtime.md): packaging, environment, and Docker runtime notes
-- [docs/render-deploy.md](./docs/render-deploy.md): Render relay deployment notes
-- [src/source_policy.py](./src/source_policy.py): first-class source routing rules
-- [src/review_sources.py](./src/review_sources.py): review-source adapters and parsing
-- [src/github_sources.py](./src/github_sources.py): GitHub issue/discussion adapter
-- [src/behavior_eval.py](./src/behavior_eval.py): behavioral eval harness
-- [src/build_prep.py](./src/build_prep.py): selection transitions and build-brief helpers
-- [src/agents/build_prep.py](./src/agents/build_prep.py): solution-framing, experiment-design, and spec-generation agents
-- [src/agents/builder_v2.py](./src/agents/builder_v2.py): LLM-powered code generator
-- [src/agents/ideation.py](./src/agents/ideation.py): idea generation from validated opportunities
-- [src/discovery_expander.py](./src/discovery_expander.py): self-expanding discovery logic
-- [src/discovery_suggestions.py](./src/discovery_suggestions.py): keyword/subreddit suggestions from DB
-- [evals/behavior_gold.json](./evals/behavior_gold.json): gold-set behavioral fixtures
-- [bridges/reddit-devvit](./bridges/reddit-devvit): Devvit bridge scaffold for the Reddit relay path
-
-## Repository Layout
-
-- [src](./src): core source adapters, policy modules, and build-prep helpers
-- [tests](./tests): regression and behavior coverage
-- [docs](./docs): system documentation
-- [evals](./evals): behavioral evaluation fixtures
-- [data](./data): runtime databases and backups
-- [output](./output): logs and generated runtime artifacts
-- [dashboard](./dashboard): dashboard/frontend workspace
-- [bridges](./bridges): external bridge integrations, including Reddit Devvit
-
-## Packaging And Runtime
-
-The Python runtime can now be installed from [requirements.txt](./requirements.txt) and packaged with:
-
-- [Dockerfile](./Dockerfile)
-- [docker-compose.yml](./docker-compose.yml)
-- [render.yaml](./render.yaml)
-
-For environment variables, runtime paths, and startup steps, use:
-
-- [docs/production-runtime.md](./docs/production-runtime.md)
-- [docs/render-deploy.md](./docs/render-deploy.md)
-- [docs/codespaces.md](./docs/codespaces.md)
-
-Codespaces support is now included through:
-
-- [.devcontainer/devcontainer.json](./.devcontainer/devcontainer.json)
-- [.env.example](./.env.example)
-
-## Current Guardrails
-
-- Source policy is explicit, not implicit.
-- Wedge activation is default-off and requires fit validation plus runtime sanity checks.
-- Review metadata is enrichment-only.
-- Generic listing copy and vague summaries do not generate atoms.
-- Validated opportunities do not flow directly into build.
-- Build-prep output remains narrow and traceable; broad product generation is intentionally deferred.
-
-## Current Limitations
-
-- Source quality and corroboration depth still matter more than volume.
-- Some runtime entrypoints referenced in internal notes may not be present at the repo root in this snapshot; use [CLAUDE.md](./CLAUDE.md) and [docs/state-model.md](./docs/state-model.md) as the authoritative local references for workflow and state.
-- Public review sources do not always expose install counts or rich reviewer metadata, so some market fields use bounded proxies when necessary.
-
-## Recommended Next Reference
-
-If you are trying to understand how the system behaves at runtime, start with:
-
-1. [docs/state-model.md](./docs/state-model.md)
-2. [src/source_policy.py](./src/source_policy.py)
-3. [src/build_prep.py](./src/build_prep.py)
-4. [evals/behavior_gold.json](./evals/behavior_gold.json)

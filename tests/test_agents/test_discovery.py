@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import time
+from datetime import UTC, datetime
 
 import pytest
 
@@ -311,6 +312,58 @@ def test_github_source_timeout_does_not_stall_discovery(temp_db):
     assert result == []
 
 
+def test_web_success_timeout_does_not_stall_discovery(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["web"],
+        config={"discovery": {"web": {"success_timeout_seconds": 0.01}}},
+    )
+
+    async def slow_success(*, queries, observer=None):
+        await asyncio.sleep(0.1)
+        return [{"source": "web-success/example"}]
+
+    async def fast_market(*, queries, observer=None):
+        return [{"source": "market-problem/example"}]
+
+    async def fast_problem(*, queries, observer=None):
+        return [{"source": "web-problem/example"}]
+
+    agent.toolkit._discover_success_stories_on_web = slow_success
+    agent.toolkit._discover_marketplace_problem_threads = fast_market
+    agent.toolkit._discover_web_problem_threads = fast_problem
+
+    result = asyncio.run(agent._check_source("web"))
+
+    assert [item["source"] for item in result] == ["market-problem/example", "web-problem/example"]
+
+
+def test_web_problem_timeout_does_not_stall_discovery(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["web"],
+        config={"discovery": {"web": {"problem_timeout_seconds": 0.01}}},
+    )
+
+    async def fast_success(*, queries, observer=None):
+        return [{"source": "web-success/example"}]
+
+    async def fast_market(*, queries, observer=None):
+        return [{"source": "market-problem/example"}]
+
+    async def slow_problem(*, queries, observer=None):
+        await asyncio.sleep(0.1)
+        return [{"source": "web-problem/example"}]
+
+    agent.toolkit._discover_success_stories_on_web = fast_success
+    agent.toolkit._discover_marketplace_problem_threads = fast_market
+    agent.toolkit._discover_web_problem_threads = slow_problem
+
+    result = asyncio.run(agent._check_source("web"))
+
+    assert [item["source"] for item in result] == ["web-success/example", "market-problem/example"]
+
+
 def test_plan_queries_uses_configured_slice_limit_and_records_rotation_metadata(temp_db):
     agent = DiscoveryAgent(
         temp_db,
@@ -336,6 +389,120 @@ def test_plan_queries_uses_configured_slice_limit_and_records_rotation_metadata(
     assert second_meta["discovery_rotation_applied"] is True
     assert second_meta["discovery_cycle_query_offset"] > 0
     assert second_meta["rotated_queries_used"]
+
+
+def test_planned_sources_prioritize_high_yield_and_rotate_low_yield(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["reddit", "web", "github", "wordpress_reviews", "shopify_reviews", "youtube", "youtube-comments"],
+        config={
+            "discovery": {
+                "source_selection": {
+                    "always_run": ["reddit", "web"],
+                    "exploratory_low_yield_sources_per_cycle": 1,
+                    "low_yield_min_runs": 10,
+                }
+            }
+        },
+    )
+    agent.toolkit.set_discovery_feedback(
+        [
+            {
+                "source_name": "reddit-problem",
+                "query_text": "manual reconciliation",
+                "runs": 20,
+                "validations": 5,
+                "prototype_candidates": 1,
+                "build_briefs": 1,
+            },
+            {
+                "source_name": "web-problem",
+                "query_text": "manual reconciliation forum",
+                "runs": 20,
+                "validations": 4,
+                "prototype_candidates": 1,
+                "build_briefs": 1,
+            },
+            {
+                "source_name": "github-problem",
+                "query_text": '"csv import" issue workflow',
+                "runs": 20,
+                "validations": 0,
+                "prototype_candidates": 0,
+                "build_briefs": 0,
+            },
+            {
+                "source_name": "wordpress-reviews",
+                "query_text": "wordpress_reviews",
+                "runs": 20,
+                "validations": 0,
+                "prototype_candidates": 0,
+                "build_briefs": 0,
+            },
+            {
+                "source_name": "shopify-reviews",
+                "query_text": "shopify_reviews",
+                "runs": 20,
+                "validations": 0,
+                "prototype_candidates": 0,
+                "build_briefs": 0,
+            },
+            {
+                "source_name": "youtube-success",
+                "query_text": "AI startup success story revenue",
+                "runs": 20,
+                "validations": 0,
+                "prototype_candidates": 0,
+                "build_briefs": 0,
+            },
+            {
+                "source_name": "youtube-comments",
+                "query_text": "shopify app review",
+                "runs": 20,
+                "validations": 0,
+                "prototype_candidates": 0,
+                "build_briefs": 0,
+            },
+        ]
+    )
+
+    planned = agent._planned_sources_for_cycle()
+
+    assert "reddit" in planned
+    assert "web" in planned
+    low_yield_selected = [source for source in planned if source in {"github", "wordpress_reviews", "shopify_reviews", "youtube", "youtube-comments"}]
+    assert len(low_yield_selected) == 1
+
+
+def test_web_source_uses_high_yield_problem_queries(temp_db):
+    agent = DiscoveryAgent(temp_db, sources=["web"])
+    captured: dict[str, list[str]] = {}
+
+    def fake_plan(source_name, candidates, *, default_limit):
+        if source_name == "web-problem":
+            captured["candidates"] = list(candidates)
+        return list(candidates)[:default_limit]
+
+    async def fast_success(*, queries, observer=None):
+        return []
+
+    async def fast_market(*, queries, observer=None):
+        return []
+
+    async def fast_problem(*, queries, observer=None):
+        captured["planned"] = list(queries)
+        return []
+
+    agent._plan_queries = fake_plan
+    agent.toolkit._discover_success_stories_on_web = fast_success
+    agent.toolkit._discover_marketplace_problem_threads = fast_market
+    agent.toolkit._discover_web_problem_threads = fast_problem
+
+    asyncio.run(agent._check_source("web"))
+
+    assert "manual reconciliation forum" in captured["candidates"]
+    assert "manual handoff workflow forum" in captured["candidates"]
+    assert '"manual process" every day' not in captured["candidates"]
 
 
 def test_learned_theme_queries_are_injected_and_recorded(temp_db):
@@ -372,10 +539,10 @@ def test_learned_theme_queries_are_injected_and_recorded(temp_db):
     )
 
     assert len(planned) == 3
-    assert any("duct tape spreadsheets" in query for query in planned)
+    assert any("manual handoff workflow" in query for query in planned)
     strategy = agent._cycle_strategy["reddit-problem"]
     assert strategy["learned_theme_keys"] == ["workflow_fragility"]
-    assert strategy["learned_theme_queries"] == ["duct tape spreadsheets"]
+    assert strategy["learned_theme_queries"] == ["manual handoff workflow"]
 
 
 def test_learned_themes_can_be_refreshed_from_validation_backed_examples(temp_db):
@@ -584,7 +751,11 @@ def test_adaptive_github_timeout_shortens_after_repeated_zero_yield_feedback(tem
 
 
 def test_github_discovery_can_be_skipped_after_repeated_zero_yield_feedback(temp_db):
-    agent = DiscoveryAgent(temp_db, sources=["github"])
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["github"],
+        config={"discovery": {"github": {"hard_skip_after_zero_yield": True}}},
+    )
     agent.toolkit.set_discovery_feedback(
         [
             {
@@ -611,6 +782,36 @@ def test_github_discovery_can_be_skipped_after_repeated_zero_yield_feedback(temp
 
     assert result == []
     assert called["github"] == 0
+
+
+def test_github_discovery_remains_enabled_by_default_after_zero_yield_feedback(temp_db):
+    agent = DiscoveryAgent(temp_db, sources=["github"])
+    agent.toolkit.set_discovery_feedback(
+        [
+            {
+                "source_name": "github-problem",
+                "query_text": f"query-{index}",
+                "runs": 2,
+                "findings_emitted": 0,
+                "validations": 0,
+                "prototype_candidates": 0,
+                "build_briefs": 0,
+            }
+            for index in range(4)
+        ]
+    )
+
+    called = {"github": 0}
+
+    async def fake_github(*, queries, observer=None):
+        called["github"] += 1
+        return [{"source": "github-issue/example/repo"}]
+
+    agent.toolkit._discover_github_problem_threads = fake_github
+    result = asyncio.run(agent._check_source("github"))
+
+    assert result == [{"source": "github-issue/example/repo"}]
+    assert called["github"] == 1
 
 
 def test_prime_reddit_relay_includes_learned_theme_queries(temp_db, monkeypatch):
@@ -670,3 +871,195 @@ def test_prime_reddit_relay_includes_learned_theme_queries(temp_db, monkeypatch)
 
     assert "duct tape spreadsheets" in captured["queries"]
     assert "manual handoff workflow" in captured["queries"]
+
+
+def test_load_learning_feedback_sets_query_cooldown_for_repeated_low_yield(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        config={"discovery": {"query_cooldown_hours": 6, "query_quarantine_min_runs": 3}},
+    )
+    for _ in range(3):
+        temp_db.record_discovery_probe("reddit-problem", "manual reporting", docs_seen=0, latency_ms=10.0, status="ok")
+        temp_db.record_discovery_screening(
+            "reddit-problem",
+            "manual reporting",
+            accepted=False,
+            source_class="low_signal_summary",
+            screening_score=0.1,
+        )
+
+    agent._load_learning_feedback()
+
+    rows = temp_db.get_discovery_feedback("reddit-problem")
+    cooldown_until = rows[0]["cooldown_until"]
+    assert cooldown_until
+    assert datetime.fromisoformat(cooldown_until) > datetime.now(UTC)
+
+
+def test_prime_reddit_relay_caps_seed_query_count(temp_db, monkeypatch):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["reddit"],
+        config={
+            "discovery": {"reddit_seed_query_limit": 3},
+            "reddit_bridge": {"enabled": True, "base_url": "https://bridge.example"},
+        },
+    )
+
+    monkeypatch.setattr(
+        agent,
+        "_plan_queries",
+        lambda source_name, candidates, default_limit: [
+            "latest spreadsheet version confusion",
+            "manual reconciliation workflow",
+            "manual audit evidence collection",
+            "copy paste workflow handoff",
+        ],
+    )
+    monkeypatch.setattr(
+        agent,
+        "_learned_theme_queries",
+        lambda source_name: (["which spreadsheet is latest", "csv import cleanup workflow"], ["workflow_fragility"]),
+    )
+
+    captured = {}
+
+    class FakeCoverage:
+        total_pairs = 3
+        skipped_fresh_pairs = 0
+        existing_cached_pairs = 0
+        uncovered_pairs = 0
+
+    class FakeSummary:
+        total_pairs = 3
+        searched_pairs = 3
+        skipped_fresh_pairs = 0
+        existing_cached_pairs = 0
+        cached_searches = 3
+        cached_threads = 0
+        thread_cache_hits = 0
+        unique_urls = 0
+
+    class FakeSeeder:
+        def __init__(self, config, bypass_cache=False):
+            captured["bypass_cache"] = bypass_cache
+
+        def coverage_report(self, *, subreddits, queries):
+            captured["queries"] = list(queries)
+            captured["subreddits"] = list(subreddits)
+            return FakeCoverage()
+
+        async def seed(self, *, subreddits, queries):
+            captured["seed_queries"] = list(queries)
+            return FakeSummary()
+
+    monkeypatch.setattr("src.agents.discovery.RedditSeeder", FakeSeeder)
+
+    asyncio.run(agent._prime_reddit_relay())
+
+    assert "accounting" in captured["subreddits"]
+    assert "smallbusiness" in captured["subreddits"]
+    assert len(captured["seed_queries"]) == 3
+
+
+def test_prime_reddit_relay_caps_seed_subreddit_count(temp_db, monkeypatch):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["reddit"],
+        config={
+            "discovery": {
+                "reddit": {
+                    "max_subreddits_per_wave": 2,
+                    "problem_subreddits": ["accounting", "smallbusiness", "ecommerce", "shopify"],
+                },
+                "reddit_seed_query_limit": 2,
+            },
+            "reddit_bridge": {"enabled": True, "base_url": "https://bridge.example"},
+        },
+    )
+
+    monkeypatch.setattr(
+        agent,
+        "_plan_queries",
+        lambda source_name, candidates, default_limit: ["manual reconciliation workflow", "csv import cleanup workflow"],
+    )
+    monkeypatch.setattr(agent, "_learned_theme_queries", lambda source_name: ([], []))
+
+    captured = {}
+
+    class FakeCoverage:
+        total_pairs = 4
+        skipped_fresh_pairs = 0
+        existing_cached_pairs = 0
+        uncovered_pairs = 0
+
+    class FakeSummary:
+        total_pairs = 4
+        searched_pairs = 4
+        skipped_fresh_pairs = 0
+        existing_cached_pairs = 0
+        cached_searches = 4
+        cached_threads = 0
+        thread_cache_hits = 0
+        unique_urls = 0
+
+    class FakeSeeder:
+        def __init__(self, config, bypass_cache=False):
+            pass
+
+        def coverage_report(self, *, subreddits, queries):
+            captured["subreddits"] = list(subreddits)
+            captured["queries"] = list(queries)
+            return FakeCoverage()
+
+        async def seed(self, *, subreddits, queries):
+            captured["seed_subreddits"] = list(subreddits)
+            captured["seed_queries"] = list(queries)
+            return FakeSummary()
+
+    monkeypatch.setattr("src.agents.discovery.RedditSeeder", FakeSeeder)
+
+    asyncio.run(agent._prime_reddit_relay())
+
+    assert len(captured["seed_subreddits"]) == 2
+    assert captured["seed_subreddits"] == ["accounting", "smallbusiness"]
+
+
+def test_load_learning_feedback_decays_overused_weak_query_family(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        config={
+            "discovery": {
+                "query_cooldown_hours": 4,
+                "query_quarantine_min_runs": 3,
+                "query_family_decay_hours": 10,
+                "query_family_decay_min_queries": 2,
+            }
+        },
+    )
+
+    for query in ["manual reconciliation workflow", "spreadsheet reconciliation process"]:
+        for _ in range(3):
+            temp_db.record_discovery_probe("reddit-problem", query, docs_seen=3, latency_ms=10.0, status="ok")
+            temp_db.record_discovery_screening(
+                "reddit-problem",
+                query,
+                accepted=True,
+                source_class="pain_signal",
+                screening_score=0.65,
+            )
+            temp_db.record_validation_feedback(
+                "reddit-problem",
+                query,
+                overall_score=0.28,
+                passed=False,
+                selection_status="research_more",
+                decision="park",
+                recurrence_state="thin",
+            )
+
+    agent._load_learning_feedback()
+
+    rows = {row["query_text"]: row for row in temp_db.get_discovery_feedback("reddit-problem")}
+    assert rows["manual reconciliation workflow"]["cooldown_until"]
+    assert rows["spreadsheet reconciliation process"]["cooldown_until"]

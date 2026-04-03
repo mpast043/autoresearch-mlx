@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 from collections import defaultdict
 from typing import Any, Dict, Optional
 
@@ -67,6 +68,45 @@ DISCOVERY_THEME_RULES = [
             "manual reconciliation workflow",
             "spreadsheet reconciliation process",
             "csv import cleanup workflow",
+        ],
+    },
+    {
+        "theme_key": "finance_close_ops",
+        "label": "Finance close and bank matching operations",
+        "terms": [
+            "month end close",
+            "bank deposit",
+            "bank deposits",
+            "payout export",
+            "channel profitability",
+            "sales channel",
+            "close checklist",
+        ],
+        "query_seeds": [
+            "month end close spreadsheet",
+            "bank deposit reconciliation spreadsheet",
+            "sales channel reconciliation spreadsheet",
+            "spreadsheet close checklist",
+        ],
+    },
+    {
+        "theme_key": "ecommerce_ops_handoffs",
+        "label": "Ecommerce fulfillment and returns handoffs",
+        "terms": [
+            "label printed",
+            "order received",
+            "returns workflow",
+            "manual label generation",
+            "supplier data",
+            "product data workflow",
+            "fulfilment",
+            "fulfillment",
+        ],
+        "query_seeds": [
+            '"order received" "label printed" whatsapp spreadsheet',
+            "returns workflow spreadsheet",
+            "supplier data spreadsheet workflow",
+            "manual label generation returns",
         ],
     },
     {
@@ -155,9 +195,15 @@ class DiscoveryAgent(BaseAgent):
         self._load_learning_feedback()
         self._cycle_health = {}
         self._cycle_strategy = {}
+        planned_sources = self._planned_sources_for_cycle()
+        if self.status_tracker:
+            skipped_sources = [source for source in self.sources if source.lower() not in planned_sources]
+            self.status_tracker.log(
+                f"source_selection active={','.join(planned_sources)} skipped={','.join(skipped_sources)}"
+            )
         prime_task = asyncio.create_task(self._prime_reddit_relay())
         grouped_results = await asyncio.gather(
-            *(self._check_source(source) for source in self.sources),
+            *(self._check_source(source) for source in planned_sources),
             return_exceptions=True,
         )
         finding_ids: list[int] = []
@@ -180,6 +226,81 @@ class DiscoveryAgent(BaseAgent):
         self._persist_cycle_health()
         self._publish_cycle_health()
         return finding_ids
+
+    def _feedback_source_names(self, normalized_source: str) -> list[str]:
+        mapping = {
+            "reddit": ["reddit-problem"],
+            "web": ["web-problem", "market-problem", "web-success"],
+            "github": ["github-problem"],
+            "wordpress_reviews": ["wordpress-reviews"],
+            "shopify_reviews": ["shopify-reviews"],
+            "youtube": ["youtube-success"],
+            "youtube-comments": ["youtube-comments"],
+        }
+        return mapping.get(normalized_source, [normalized_source])
+
+    def _feedback_totals_for_source(self, normalized_source: str) -> dict[str, int]:
+        totals = {
+            "runs": 0,
+            "findings_emitted": 0,
+            "validations": 0,
+            "prototype_candidates": 0,
+            "build_briefs": 0,
+        }
+        for source_name in self._feedback_source_names(normalized_source):
+            for row in (self.toolkit._discovery_feedback.get(source_name, {}) or {}).values():
+                for key in totals:
+                    totals[key] += int(row.get(key, 0) or 0)
+        return totals
+
+    def _source_selection_settings(self) -> tuple[set[str], int, int]:
+        selection = self.config.get("discovery", {}).get("source_selection", {}) or {}
+        always_run = {
+            str(source).lower()
+            for source in selection.get("always_run", ["reddit", "web"])
+            if str(source).strip()
+        }
+        exploratory_slots = max(0, int(selection.get("exploratory_low_yield_sources_per_cycle", 2)))
+        min_runs = max(1, int(selection.get("low_yield_min_runs", 50)))
+        return always_run, exploratory_slots, min_runs
+
+    def _rotation_offset(self, key: str, size: int) -> int:
+        if size <= 0:
+            return 0
+        token = f"{self.db.get_active_run_id() or datetime.now(UTC).isoformat()}:{key}"
+        return sum(ord(char) for char in token) % size
+
+    def _planned_sources_for_cycle(self) -> list[str]:
+        always_run, exploratory_slots, min_runs = self._source_selection_settings()
+        selected: list[str] = []
+        exploratory: list[str] = []
+
+        for source in [str(item).lower() for item in self.sources if str(item).strip()]:
+            if source in always_run:
+                selected.append(source)
+                continue
+            totals = self._feedback_totals_for_source(source)
+            low_yield = (
+                totals["runs"] >= min_runs
+                and totals["validations"] == 0
+                and totals["prototype_candidates"] == 0
+                and totals["build_briefs"] == 0
+            )
+            if low_yield:
+                exploratory.append(source)
+            else:
+                selected.append(source)
+
+        if exploratory and exploratory_slots > 0:
+            offset = self._rotation_offset("discovery-source-exploration", len(exploratory))
+            rotated = exploratory[offset:] + exploratory[:offset]
+            selected.extend(rotated[: min(exploratory_slots, len(rotated))])
+
+        deduped: list[str] = []
+        for source in selected:
+            if source not in deduped:
+                deduped.append(source)
+        return deduped
 
     async def _check_source(self, source: str) -> list[dict[str, Any]]:
         normalized = source.lower()
@@ -255,11 +376,11 @@ class DiscoveryAgent(BaseAgent):
             queries = self._plan_queries(
                 "github-problem",
                 [
-                    '"feature request" automation',
-                    '"wish there was" workflow',
-                    '"manual process" tool',
-                    '"too expensive" software',
-                    '"time consuming" issue',
+                    '"csv import" issue workflow',
+                    '"manual reconciliation" issue',
+                    '"spreadsheet workflow" issue',
+                    '"copy paste" automation issue',
+                    '"data cleanup" import issue',
                 ],
                 default_limit=4,
             )
@@ -299,11 +420,11 @@ class DiscoveryAgent(BaseAgent):
             problem_queries = self._plan_queries(
                 "web-problem",
                 [
-                    '"wish there was" software for',
-                    '"too expensive" current tool',
-                    '"manual process" every day',
-                    '"need a better way" automate',
-                    '"frustrating" workflow',
+                    "spreadsheet version confusion forum",
+                    "manual reconciliation forum",
+                    "manual handoff workflow forum",
+                    "which spreadsheet is latest",
+                    "workflow handoff tool too expensive",
                 ],
                 default_limit=4,
             )
@@ -316,12 +437,36 @@ class DiscoveryAgent(BaseAgent):
                 ],
                 default_limit=3,
             )
+            success_timeout = self._web_timeout_seconds("success", default=10.0)
+            market_timeout = self._web_timeout_seconds("market", default=8.0)
+            problem_timeout = self._web_timeout_seconds("problem", default=15.0)
             success_findings, problem_findings = await asyncio.gather(
-                self.toolkit._discover_success_stories_on_web(queries=success_queries, observer=observer),
-                self.toolkit._discover_marketplace_problem_threads(queries=market_queries, observer=observer),
+                self._run_source_with_timeout(
+                    "web-success",
+                    self.toolkit._discover_success_stories_on_web(
+                        queries=success_queries,
+                        observer=observer,
+                    ),
+                    timeout_seconds=success_timeout,
+                    observer=observer,
+                ),
+                self._run_source_with_timeout(
+                    "market-problem",
+                    self.toolkit._discover_marketplace_problem_threads(
+                        queries=market_queries,
+                        observer=observer,
+                    ),
+                    timeout_seconds=market_timeout,
+                    observer=observer,
+                ),
             )
-            web_problem_findings = await self.toolkit._discover_web_problem_threads(
-                queries=problem_queries,
+            web_problem_findings = await self._run_source_with_timeout(
+                "web-problem",
+                self.toolkit._discover_web_problem_threads(
+                    queries=problem_queries,
+                    observer=observer,
+                ),
+                timeout_seconds=problem_timeout,
                 observer=observer,
             )
             return success_findings + problem_findings + web_problem_findings
@@ -342,6 +487,23 @@ class DiscoveryAgent(BaseAgent):
             return
 
         subreddits = reddit_discovery_subreddits(self.config)
+        reddit_config = self.config.get("discovery", {}).get("reddit", {}) or {}
+        try:
+            max_subs_raw = int(reddit_config.get("max_subreddits_per_wave", len(subreddits) or 1))
+        except (TypeError, ValueError):
+            max_subs_raw = len(subreddits) or 1
+        subreddit_limit = len(subreddits) if max_subs_raw <= 0 else min(len(subreddits), max(1, max_subs_raw))
+        subreddit_cycle_key = "reddit-relay-seed-subreddits"
+        subreddit_cycle_index = self._cycle_counts.get(subreddit_cycle_key, 0)
+        subreddit_plan = self.toolkit.build_discovery_query_plan(
+            subreddit_cycle_key,
+            list(subreddits),
+            limit=subreddit_limit,
+            cycle_index=subreddit_cycle_index,
+        )
+        subreddits = list(subreddit_plan.queries)
+        if subreddits:
+            self._cycle_counts[subreddit_cycle_key] = subreddit_cycle_index + 1
         queries = self._plan_queries(
             "reddit-relay-seed",
             reddit_problem_keywords(self.config),
@@ -354,6 +516,23 @@ class DiscoveryAgent(BaseAgent):
                 if query not in merged_queries:
                     merged_queries.append(query)
             queries = merged_queries
+        seed_limit = max(
+            1,
+            int(
+                reddit_config.get(
+                    "reddit_seed_query_limit",
+                    self.config.get("discovery", {}).get("reddit_seed_query_limit", 8),
+                )
+            ),
+        )
+        seed_plan = self.toolkit.build_discovery_query_plan(
+            "reddit-relay-seed",
+            list(queries),
+            limit=min(seed_limit, len(queries)),
+            cycle_index=self._cycle_counts.get("reddit-relay-seed", 0),
+        )
+        queries = list(seed_plan.queries)
+        self._cycle_counts["reddit-relay-seed"] = self._cycle_counts.get("reddit-relay-seed", 0) + 1
         try:
             seeder = RedditSeeder(self.config, bypass_cache=self.bypass_cache)
             baseline_coverage = seeder.coverage_report(subreddits=subreddits, queries=queries)
@@ -416,6 +595,8 @@ class DiscoveryAgent(BaseAgent):
 
         evidence = dict(finding_data.get("evidence", {}) or {})
         evidence.setdefault("run_id", self.db.get_active_run_id())
+        discovery_query = evidence.get("discovery_query")
+        source_plan = evidence.get("source_plan")
         signal_payload = build_raw_signal_payload(finding_data)
         atom_payload = build_problem_atom(signal_payload, finding_data)
         source_classification = classify_source_signal(finding_data, signal_payload, atom_payload)
@@ -444,6 +625,14 @@ class DiscoveryAgent(BaseAgent):
 
         finding_id = self.db.insert_finding(finding)
         self._seen_hashes.add(content_hash)
+        if source_plan and discovery_query:
+            self.db.record_discovery_screening(
+                source_plan,
+                discovery_query,
+                accepted=bool(screening["accepted"]),
+                source_class=source_classification["source_class"],
+                screening_score=float(screening.get("score", 0.0) or 0.0),
+            )
         if not screening["accepted"]:
             logger.info(
                 "screened out finding %s (%s): score=%s negatives=%s",
@@ -497,8 +686,6 @@ class DiscoveryAgent(BaseAgent):
         )
         atom_id = self.db.insert_problem_atom(atom)
 
-        discovery_query = evidence.get("discovery_query")
-        source_plan = evidence.get("source_plan")
         if source_plan and discovery_query:
             self.db.record_discovery_hit(source_plan, discovery_query)
             key = (source_plan, discovery_query)
@@ -547,8 +734,110 @@ class DiscoveryAgent(BaseAgent):
         return finding_id
 
     def _load_learning_feedback(self) -> None:
+        rows = self.db.get_discovery_feedback()
+        self._refresh_query_cooldowns(rows)
         self.toolkit.set_discovery_feedback(self.db.get_discovery_feedback())
         self._refresh_learned_themes()
+
+    def _refresh_query_cooldowns(self, rows: list[dict[str, Any]]) -> None:
+        discovery_config = self.config.get("discovery", {}) or {}
+        cooldown_hours = max(1, int(discovery_config.get("query_cooldown_hours", 12)))
+        min_runs = max(2, int(discovery_config.get("query_quarantine_min_runs", 3)))
+        now = datetime.now(UTC)
+        family_rows: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            source_name = str(row.get("source_name", "") or "")
+            query_text = str(row.get("query_text", "") or "")
+            if not source_name or not query_text:
+                continue
+            family_key = self.toolkit.discovery_query_family_key(query_text)
+            family_rows[(source_name, family_key)].append(row)
+            runs = int(row.get("runs", 0) or 0)
+            findings = int(row.get("findings_emitted", 0) or 0)
+            validations = int(row.get("validations", 0) or 0)
+            passes = int(row.get("passes", 0) or 0)
+            prototype_candidates = int(row.get("prototype_candidates", 0) or 0)
+            build_briefs = int(row.get("build_briefs", 0) or 0)
+            screened_out = int(row.get("screened_out", 0) or 0)
+            low_signal_count = int(row.get("low_signal_count", 0) or 0)
+            thin_recurrence_count = int(row.get("thin_recurrence_count", 0) or 0)
+            single_source_only_count = int(row.get("single_source_only_count", 0) or 0)
+            cooldown_until = str(row.get("cooldown_until", "") or "").strip()
+
+            low_yield_noise = (
+                runs >= min_runs
+                and findings == 0
+                and validations == 0
+                and screened_out >= min_runs
+            )
+            thin_validation_trap = (
+                runs >= min_runs
+                and validations >= min_runs
+                and passes == 0
+                and prototype_candidates == 0
+                and build_briefs == 0
+                and (thin_recurrence_count >= min_runs or single_source_only_count >= min_runs or low_signal_count >= min_runs)
+            )
+            should_cooldown = low_yield_noise or thin_validation_trap
+
+            if should_cooldown:
+                active_cooldown = False
+                if cooldown_until:
+                    try:
+                        cooldown_dt = datetime.fromisoformat(cooldown_until)
+                        if cooldown_dt.tzinfo is None:
+                            cooldown_dt = cooldown_dt.replace(tzinfo=UTC)
+                        active_cooldown = cooldown_dt > now
+                    except (ValueError, TypeError):
+                        active_cooldown = False
+                if not active_cooldown:
+                    self.db.set_discovery_query_cooldown(
+                        source_name,
+                        query_text,
+                        (now + timedelta(hours=cooldown_hours)).isoformat(),
+                    )
+
+        family_decay_hours = max(cooldown_hours + 6, int(discovery_config.get("query_family_decay_hours", cooldown_hours * 2)))
+        family_min_queries = max(2, int(discovery_config.get("query_family_decay_min_queries", 2)))
+        for (source_name, family_key), family in family_rows.items():
+            if not family_key or len(family) < family_min_queries:
+                continue
+            total_runs = sum(int(row.get("runs", 0) or 0) for row in family)
+            total_passes = sum(int(row.get("passes", 0) or 0) for row in family)
+            total_prototypes = sum(int(row.get("prototype_candidates", 0) or 0) for row in family)
+            total_build_briefs = sum(int(row.get("build_briefs", 0) or 0) for row in family)
+            total_promotes = sum(int(row.get("promotes", 0) or 0) for row in family)
+            total_thin = sum(int(row.get("thin_recurrence_count", 0) or 0) for row in family)
+            total_single_source = sum(int(row.get("single_source_only_count", 0) or 0) for row in family)
+            total_parks = sum(int(row.get("parks", 0) or 0) for row in family)
+            if (
+                total_runs < max(min_runs + 1, family_min_queries + 1)
+                or total_passes > 0
+                or total_prototypes > 0
+                or total_build_briefs > 0
+                or total_promotes > 0
+                or (total_thin + total_single_source + total_parks) < max(min_runs + 1, 4)
+            ):
+                continue
+            for row in family:
+                query_text = str(row.get("query_text", "") or "")
+                cooldown_until = str(row.get("cooldown_until", "") or "").strip()
+                active_cooldown = False
+                if cooldown_until:
+                    try:
+                        cooldown_dt = datetime.fromisoformat(cooldown_until)
+                        if cooldown_dt.tzinfo is None:
+                            cooldown_dt = cooldown_dt.replace(tzinfo=UTC)
+                        active_cooldown = cooldown_dt > now
+                    except (ValueError, TypeError):
+                        active_cooldown = False
+                if active_cooldown:
+                    continue
+                self.db.set_discovery_query_cooldown(
+                    source_name,
+                    query_text,
+                    (now + timedelta(hours=family_decay_hours)).isoformat(),
+                )
 
     def _refresh_learned_themes(self) -> None:
         min_hits = max(1, int(self.config.get("discovery", {}).get("theme_min_hits", 2)))
@@ -722,7 +1011,43 @@ class DiscoveryAgent(BaseAgent):
             return min(configured, 6.0)
         return configured
 
+    def _web_timeout_seconds(self, lane: str, *, default: float) -> float:
+        web_config = self.config.get("discovery", {}).get("web", {}) or {}
+        return float(web_config.get(f"{lane}_timeout_seconds", default))
+
+    async def _run_source_with_timeout(
+        self,
+        source_name: str,
+        coro: asyncio.Future,
+        *,
+        timeout_seconds: float,
+        observer=None,
+    ) -> list[dict[str, Any]]:
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "%s discovery timed out after %ss; continuing without findings",
+                source_name,
+                timeout_seconds,
+            )
+            if observer:
+                observer(
+                    {
+                        "source_name": source_name,
+                        "query_text": "[source-timeout]",
+                        "docs_seen": 0,
+                        "latency_ms": round(timeout_seconds * 1000, 2),
+                        "status": "error",
+                        "error": f"{source_name} discovery timeout",
+                    }
+                )
+            return []
+
     def _should_skip_github_discovery(self) -> bool:
+        github_config = self.config.get("discovery", {}).get("github", {}) or {}
+        if not bool(github_config.get("hard_skip_after_zero_yield", False)):
+            return False
         feedback_rows = list((self.toolkit._discovery_feedback.get("github-problem", {}) or {}).values())
         if len(feedback_rows) < 4:
             return False

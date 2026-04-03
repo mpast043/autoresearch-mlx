@@ -614,7 +614,8 @@ class EvidenceAgent(BaseAgent):
             self._processing_count = max(0, self._processing_count - 1)
 
     def busy_count(self) -> int:
-        return int(self._processing_count + len({task for task in self._inflight if not task.done()}))
+        active_inflight = len({task for task in self._inflight if not task.done()})
+        return int(max(self._processing_count, active_inflight))
 
     def reddit_runtime_summary(self) -> dict[str, Any]:
         return self.toolkit.get_reddit_runtime_metrics()

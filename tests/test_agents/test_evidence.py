@@ -1,6 +1,7 @@
 """Tests for the evidence enrichment agent."""
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -125,6 +126,23 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
         self.assertIn("corroboration", queued.payload)
         self.assertIn("market_enrichment", queued.payload)
         json.dumps(queued.payload["evidence_scores"]["evidence"])
+
+    async def test_busy_count_does_not_double_count_inflight_work(self):
+        gate = asyncio.Event()
+
+        async def blocked():
+            await gate.wait()
+
+        task = asyncio.create_task(blocked())
+        self.agent._inflight.add(task)
+        self.agent._processing_count = 1
+
+        try:
+            self.assertEqual(self.agent.busy_count(), 1)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def test_enrichment_passes_structured_atom_into_recurrence_gathering(self):
         observed = {}

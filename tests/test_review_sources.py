@@ -3,6 +3,7 @@
 import asyncio
 import os
 import sys
+from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -201,3 +202,68 @@ def test_shopify_adapter_parses_review_nodes_and_handles_missing_fields():
     assert reviews[0].reviewer_type == "Over 1 year using the app"
     assert reviews[0].review_url.endswith("/reviews/101")
     assert reviews[1].review_title == "Great app"
+
+
+def test_shopify_adapter_skips_fetches_during_rate_limit_cooldown():
+    adapter = ShopifyAppReviewAdapter("Mozilla/5.0", rate_limit_cooldown_seconds=300)
+    adapter._rate_limited_until = datetime.now(UTC) + timedelta(seconds=300)
+
+    result = asyncio.run(
+        adapter.fetch_reviews(
+            app_handles=["backup-and-sync"],
+            max_apps=1,
+            reviews_per_app=1,
+            use_sitemap_discovery=False,
+        )
+    )
+
+    assert result == []
+
+
+def test_shopify_adapter_marks_rate_limit_on_429():
+    adapter = ShopifyAppReviewAdapter("Mozilla/5.0", rate_limit_cooldown_seconds=300)
+
+    class FakeResponse:
+        status = 429
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def text(self):
+            return ""
+
+    class FakeSession:
+        def get(self, url):
+            return FakeResponse()
+
+    html = asyncio.run(adapter._fetch_html(FakeSession(), "https://apps.shopify.com/backup-and-sync"))
+
+    assert html == ""
+    assert adapter._rate_limited_until is not None
+
+
+def test_shopify_adapter_stops_batch_after_first_rate_limit():
+    adapter = ShopifyAppReviewAdapter("Mozilla/5.0", rate_limit_cooldown_seconds=300)
+    seen_handles: list[str] = []
+
+    async def fake_fetch_app_reviews(session, *, app_handle, reviews_per_app, rating_filters, sort_by):
+        seen_handles.append(app_handle)
+        adapter._mark_shopify_rate_limited()
+        return []
+
+    adapter._fetch_app_reviews = fake_fetch_app_reviews
+
+    result = asyncio.run(
+        adapter.fetch_reviews(
+            app_handles=["backup-and-sync", "parcel-intelligence", "matrixify"],
+            max_apps=3,
+            reviews_per_app=1,
+            use_sitemap_discovery=False,
+        )
+    )
+
+    assert result == []
+    assert seen_handles == ["backup-and-sync"]

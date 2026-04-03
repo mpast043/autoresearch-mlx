@@ -321,6 +321,9 @@ class ValidationAgent(BaseAgent):
                 overall_score=overall_score,
                 selection_status=selection_status,
                 build_brief_created=bool(build_brief_id),
+                decision=decision["recommendation"],
+                recurrence_state=evidence.get("recurrence_state", ""),
+                recurrence_failure_class=evidence.get("recurrence_failure_class", ""),
             )
 
         self._record_ledger_entries(opportunity_id, cluster_id, evidence, decision["recommendation"], experiment_id)

@@ -178,6 +178,313 @@ def test_qualify_problem_signal_rejects_problem_solicitation_prompt():
     assert "solicitation_for_problem_examples" in screening["negative_signals"]
 
 
+def test_qualify_problem_signal_rejects_product_complaint_without_workflow_context():
+    finding_data = {
+        "source": "reddit-problem/airtable",
+        "source_url": "https://reddit.com/r/airtable/comments/1",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Airtable should focus on improving normal features, not AI",
+        "body_excerpt": (
+            "I have been using Airtable for years and I'm baffled why it spends so much time on AI "
+            "features instead of improving the basic spreadsheet experience."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "use Airtable",
+        "trigger_event": "now",
+        "pain_statement": "The product keeps shipping AI instead of core improvements",
+        "failure_mode": "feature priorities feel wrong",
+        "current_workaround": "spreadsheets",
+        "urgency_clues": "must",
+        "frequency_clues": "always",
+        "cost_consequence_clues": "",
+        "why_now_clues": "now",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "product_specific_complaint_without_workflow_context" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_keeps_product_thread_with_real_workflow_context():
+    finding_data = {
+        "source": "reddit-problem/notion",
+        "source_url": "https://reddit.com/r/notion/comments/2",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Does anyone else have to use 3 different tools just to collect a form response and payment?",
+        "body_excerpt": (
+            "I run client intake in Notion, but every booking means sending a Typeform, copying the "
+            "response into my client database, sending a payment link, and manually updating records."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "collect client intake and payment without manual cleanup",
+        "trigger_event": "when a new client books",
+        "pain_statement": "client booking intake requires multiple tools and manual updates",
+        "failure_mode": "booking workflow spans form, database, and payment link",
+        "current_workaround": "manual work, copy/paste",
+        "urgency_clues": "",
+        "frequency_clues": "every time",
+        "cost_consequence_clues": "",
+        "why_now_clues": "when",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is True
+    assert "product_specific_complaint_without_workflow_context" not in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_roi_shopping_prompt():
+    finding_data = {
+        "source": "reddit-problem/ecommerce",
+        "source_url": "https://reddit.com/r/ecommerce/comments/roi",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "What was the first automation you paid for, and was it worth the money?",
+        "body_excerpt": (
+            "I'm considering outsourcing an automation project and trying to gauge the ROI. "
+            "What was the first automation you ever paid someone to build?"
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "decide whether to buy an automation project",
+        "trigger_event": "",
+        "pain_statement": "trying to gauge the ROI",
+        "failure_mode": "trying to gauge the ROI",
+        "current_workaround": "custom scripts",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "roi_or_vendor_shopping_prompt" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_advice_seeking_without_stakes():
+    finding_data = {
+        "source": "reddit-problem/ecommerce",
+        "source_url": "https://reddit.com/r/ecommerce/comments/advice",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "How do you handle supplier product data and enrichment?",
+        "body_excerpt": (
+            "I'm looking for advice on optimizing our product data workflow. "
+            "We receive spreadsheets from suppliers and I manually restructure them."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "organize supplier product data",
+        "trigger_event": "when supplier files arrive",
+        "pain_statement": "product onboarding is extremely manual",
+        "failure_mode": "manually restructure supplier files",
+        "current_workaround": "spreadsheets, manual work, copy/paste",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "advice_seeking_without_actionable_stakes" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_career_guidance_thread():
+    finding_data = {
+        "source": "reddit-problem/accounting",
+        "source_url": "https://reddit.com/r/accounting/comments/resume",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Feeling lost with career, please roast my resume.",
+        "body_excerpt": (
+            "Currently working at a local firm and feeling stagnant. "
+            "Please dissect my resume and tell me how to transition to a larger firm."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "improve my resume",
+        "trigger_event": "trying to transition to a larger firm",
+        "pain_statement": "resume feels wordy",
+        "failure_mode": "resume is not strong enough",
+        "current_workaround": "",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "career_guidance_thread" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_instructional_tutorial_post():
+    finding_data = {
+        "source": "reddit-problem/EtsySellers",
+        "source_url": "https://reddit.com/r/EtsySellers/comments/tutorial",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "How to ship via USPS 1st class letter rate with Etsy shipping labels",
+        "body_excerpt": (
+            "I thought I would put this information all together and return the favor. "
+            "Here are the steps I use to ship these orders."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "ship via Etsy labels",
+        "trigger_event": "",
+        "pain_statement": "sharing how I do it",
+        "failure_mode": "manual shipping setup",
+        "current_workaround": "",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "tutorial_or_instructional_post" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_help_choosing_vendor_prompt():
+    finding_data = {
+        "source": "reddit-problem/smallbusiness",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/vendor-prompt",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Help choosing an inventory management system",
+        "body_excerpt": (
+            "I run a frozen food manufacturing business and need help choosing an inventory management system. "
+            "We currently track inventory manually and want recommendations."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "choose an inventory system",
+        "trigger_event": "",
+        "pain_statement": "manual tracking is painful",
+        "failure_mode": "manual inventory tracking",
+        "current_workaround": "weekly physical counts",
+        "urgency_clues": "",
+        "frequency_clues": "weekly",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "generic_request_or_vendor_shopping" in screening["negative_signals"]
+    assert "too_generic_after_review" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_keeps_multistep_workflow_gap_question():
+    finding_data = {
+        "source": "reddit-problem/ecommerce",
+        "source_url": "https://reddit.com/r/ecommerce/comments/workflow",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": 'How are u guys managing fulfilment between "order received" and "label printed"?',
+        "body_excerpt": (
+            "Our workflow looks like Received -> Picking -> Processing -> Packed -> Shipped, "
+            "and the team ends up coordinating through WhatsApp and spreadsheets."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "keep fulfillment handoffs in sync without manual cleanup",
+        "trigger_event": "Received -> Picking -> Processing -> Packed -> Shipped",
+        "pain_statement": "the team coordinates through WhatsApp and spreadsheets",
+        "failure_mode": "manual coordination between order received and label printed",
+        "current_workaround": "spreadsheets, manual work",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "now",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is True
+    assert "advice_seeking_without_actionable_stakes" not in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_vendor_vent_without_transferable_workflow():
+    finding_data = {
+        "source": "reddit-problem/ecommerce",
+        "source_url": "https://reddit.com/r/ecommerce/comments/vent",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "I am done with Avalara",
+        "body_excerpt": (
+            "FYI I am not looking for product recommendations, I just want vent my frustrations. "
+            "Set it and forget it, more like set it and spend the rest of your days doing manual reconciliations."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "use Avalara",
+        "trigger_event": "fyi I am not looking for product recommendations",
+        "pain_statement": "I just want vent my frustrations",
+        "failure_mode": "manual reconciliations",
+        "current_workaround": "manual work",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "consequence",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "venting_without_transferable_workflow_problem" in screening["negative_signals"]
+
+
 def test_cluster_label_prefers_specific_trigger_or_failure():
     atoms = [
         ProblemAtom(

@@ -6,6 +6,14 @@ database:
 discovery:
   # Self-expanding discovery: automatically add new keywords/subreddits based on what works
   auto_expand: true
+  exploration_slots_per_cycle: 1
+  max_queries_per_concept: 1
+  query_family_decay_hours: 18
+  query_family_decay_min_queries: 2
+  source_selection:
+    always_run: ["reddit", "web"]
+    exploratory_low_yield_sources_per_cycle: 1
+    low_yield_min_runs: 50
   expansion:
     max_keywords_per_wave: 5
     max_subreddits_per_wave: 5
@@ -17,6 +25,10 @@ discovery:
     # Use Jina Reader for content extraction (free, no API key)
     # Falls back to MCP fetcher or requests+BeautifulSoup if disabled
     use_jina_reader: true
+    # Hard caps per web lane so run-once stays responsive even when web search is slow.
+    success_timeout_seconds: 10
+    market_timeout_seconds: 8
+    problem_timeout_seconds: 15
 
   # `web` = broad web search + marketplace pain threads (see DiscoveryAgent._check_source).
   sources:
@@ -36,20 +48,20 @@ discovery:
     # Public storefront HTML scrape (no Shopify Partner/Admin API). Slugs: https://apps.shopify.com/<handle>
     # Leave empty to auto-discover from sitemap
     app_handles: []
-    max_apps: 10
-    reviews_per_app: 5
+    max_apps: 3
+    reviews_per_app: 3
     rating_filters: [1, 2]
     sort_by: newest
+    rate_limit_cooldown_seconds: 900
+  github:
+    timeout_seconds: 8
+    hard_skip_after_zero_yield: false
   wordpress_reviews:
     plugin_slugs:
       - woocommerce
-      - elementor
-      - wordfence
-      - wp-rocket
-      - elementor-pro
-      - wordpress-seo
-      - woocommerce-services
       - fluent-crm
+      - wordfence
+      - updraftplus
     reviews_per_plugin: 5
     star_filters: [1, 2]
   # YouTube comments for problem discovery
@@ -65,51 +77,55 @@ discovery:
   reddit:
     # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
     search_time_filter: year
-    # true = search r/all for each keyword (widest Reddit reach; noisier). false = only problem_subreddits below.
-    use_r_all: true
+    # false = search curated operator/problem subreddits instead of noisy r/all.
+    use_r_all: false
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
-    max_subreddits_per_wave: 0
-    max_keywords_per_wave: 0
+    max_subreddits_per_wave: 4
+    max_keywords_per_wave: 4
+    pair_concurrency: 3
+    # Prime only a small, diversified relay seed set per run.
+    reddit_seed_query_limit: 8
     # For each sub×keyword pair, run these Reddit sort modes (all/recent/top/comments).
     search_sorts: ["relevance", "new", "top", "comments"]
     # Per sort mode result limit and hard cap per sub×keyword pair after URL dedupe.
     per_sort_limit: 2
     max_docs_per_pair: 6
     problem_subreddits:
+      - accounting
       - smallbusiness
       - EtsySellers
+      - ecommerce
+      - shopify
+      - projectmanagement
+      - automation
       - sysadmin
+      - msp
+      - devops
+      - excel
+      - notion
+      - airtable
       - webdev
+      - selfhosted
+      - sales
+      - productivity
       - Entrepreneur
       - indiehackers
       - SaaS
       - startups
-      - ecommerce
-      - msp
-      - devops
-      - selfhosted
-      - excel
-      - shopify
-      - sales
       - freelance
-      - productivity
-      - accounting
-      - projectmanagement
-      - automation
-      - notion
-      - airtable
     problem_keywords:
-      - "annoying manual task"
-      - "manual process"
-      - "held together by spreadsheets"
-      - "merging reports manually"
-      - "spreadsheet workaround"
       - "manual reconciliation"
-      - "workaround"
+      - "spreadsheet reconciliation process"
+      - "manual handoff workflow"
+      - "month end close spreadsheet"
+      - "sales channel reconciliation spreadsheet"
+      - "bank deposit reconciliation spreadsheet"
+      - "returns workflow spreadsheet"
+      - "supplier data spreadsheet workflow"
+      - '"order received" "label printed" whatsapp spreadsheet'
+      - "which spreadsheet is latest"
+      - "held together by spreadsheets"
       - "copy paste workflow"
-      - "wish there was a tool"
-      - "too many manual steps"
-      - "can't keep track spreadsheet"
     # Optional buckets for suggest-discovery to return per-theme keyword hints.
     theme_keywords:
       saas:

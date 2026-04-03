@@ -137,9 +137,84 @@ GENERIC_PROMPT_PATTERNS = [
 ]
 GENERIC_REQUEST_PATTERNS = [
     "can anyone suggest",
+    "help choosing",
+    "need help choosing",
     "what app should i use",
     "need a recommendation",
     "what's the best",
+]
+ADVICE_SEEKING_PATTERNS = [
+    "looking for advice",
+    "how do you handle",
+    "how are you managing",
+    "how are u guys managing",
+    "how do you plan on handling",
+    "is this possible",
+]
+ROI_SHOPPING_PATTERNS = [
+    "what was the first automation you paid for",
+    "trying to gauge the roi",
+    "worth the money",
+    "outsourcing an automation project",
+    "break the bank",
+]
+PRODUCT_COMPLAINT_PATTERNS = [
+    "should focus on improving",
+    "pricing is terrible",
+    "pricing change",
+    "pricing of",
+    "custom agents",
+    "approval timeline",
+    "feature request",
+    "roadmap",
+    "useless ai features",
+]
+OPERATIONAL_CONTEXT_HINTS = [
+    "invoice",
+    "payment",
+    "deposit",
+    "reconciliation",
+    "csv",
+    "export",
+    "import",
+    "client",
+    "booking",
+    "handoff",
+    "approval",
+    "permissions",
+    "versioning",
+    "source of truth",
+    "database",
+    "workflow",
+    "order",
+    "intake",
+    "form response",
+]
+ACTIONABLE_WORKFLOW_HINTS = [
+    "->",
+    "through whatsapp",
+    "bank deposit",
+    "bank deposits",
+    "label generation",
+    "keep up",
+    "state between",
+    "returns in january",
+]
+GENERIC_WHY_NOW_FILLERS = {
+    "after",
+    "because",
+    "during",
+    "now",
+    "recently",
+    "suddenly",
+    "when",
+}
+VENTING_PATTERNS = [
+    "i am done with",
+    "just want vent",
+    "not looking for product recommendations",
+    "bane of my existence",
+    "just vent my frustrations",
 ]
 SOLICITATION_PROMPT_PATTERNS = [
     "tell me your most annoying manual",
@@ -159,6 +234,20 @@ HELP_PAGE_PATTERNS = [
     "knowledge base",
     "support article",
     "api reference",
+]
+CAREER_GUIDANCE_PATTERNS = [
+    "roast my resume",
+    "resume review",
+    "review my resume",
+    "feeling lost with career",
+    "transitioning to a larger firm",
+]
+TUTORIAL_SHARE_PATTERNS = [
+    "thought i would put this information all together",
+    "return the favor",
+    "here are the steps",
+    "step by step",
+    "walkthrough",
 ]
 META_GUIDANCE_PATTERNS = [
     "roadmap skill iteration",
@@ -1154,6 +1243,41 @@ def qualify_problem_signal(
     negative_signals: list[str] = []
     score = 0
     source_name = str(finding_data.get("source", "") or "")
+    why_now_text = _normalized(atom_payload.get("why_now_clues", ""))
+    why_now_tokens = {token for token in re.split(r"[\s,;/]+", why_now_text) if token}
+    has_descriptive_why_now = bool(why_now_tokens - GENERIC_WHY_NOW_FILLERS)
+    behavior_signal_count = sum(
+        bool(atom_payload.get(field))
+        for field in [
+            "current_workaround",
+            "failure_mode",
+            "urgency_clues",
+            "frequency_clues",
+            "cost_consequence_clues",
+            "why_now_clues",
+        ]
+    )
+    stakes_signal_count = sum(
+        [
+            bool(atom_payload.get("urgency_clues")),
+            bool(atom_payload.get("frequency_clues")),
+            bool(atom_payload.get("cost_consequence_clues")),
+            has_descriptive_why_now,
+        ]
+    )
+    workflow_context = _normalized(
+        " ".join(
+            [
+                text,
+                atom_payload.get("job_to_be_done", ""),
+                atom_payload.get("trigger_event", ""),
+                atom_payload.get("pain_statement", ""),
+                atom_payload.get("failure_mode", ""),
+                atom_payload.get("current_workaround", ""),
+            ]
+        )
+    )
+    actionable_workflow = _has_phrase(workflow_context, ACTIONABLE_WORKFLOW_HINTS)
 
     if finding_kind in {"pain_point", "problem_signal"}:
         positive_signals.append("problem_finding_kind")
@@ -1195,21 +1319,41 @@ def qualify_problem_signal(
     if _has_phrase(text, HELP_PAGE_PATTERNS):
         negative_signals.append("support_or_help_page")
         score -= 5
+    if _has_phrase(text, CAREER_GUIDANCE_PATTERNS):
+        negative_signals.append("career_guidance_thread")
+        score -= 6
+    title_lower = str(signal_payload.get("title", "") or "").lower().strip()
+    if title_lower.startswith("how to ") and _has_phrase(text, TUTORIAL_SHARE_PATTERNS):
+        negative_signals.append("tutorial_or_instructional_post")
+        score -= 5
     if _has_phrase(text, REVIEW_NEGATIVE_TERMS) and not atom_payload.get("failure_mode"):
         negative_signals.append("vague_negative_review")
         score -= 3
     if _has_phrase(text, PROMOTIONAL_PATTERNS):
         negative_signals.append("promotional_or_celebratory")
         score -= 3
+    if _has_phrase(text, ROI_SHOPPING_PATTERNS):
+        negative_signals.append("roi_or_vendor_shopping_prompt")
+        score -= 5
     if _has_phrase(text, GENERIC_REQUEST_PATTERNS):
         negative_signals.append("generic_request_or_vendor_shopping")
         score -= 3
+    if _has_phrase(text, ADVICE_SEEKING_PATTERNS) and stakes_signal_count == 0 and not actionable_workflow:
+        negative_signals.append("advice_seeking_without_actionable_stakes")
+        score -= 4
     if _has_phrase(text, GENERIC_PROMPT_PATTERNS) and not atom_payload.get("current_workaround"):
         negative_signals.append("generic_prompt_without_behavioral_pain")
         score -= 3
     if _has_phrase(text, SOLICITATION_PROMPT_PATTERNS):
         negative_signals.append("solicitation_for_problem_examples")
         score -= 5
+    if _has_phrase(text, VENTING_PATTERNS) and stakes_signal_count < 2 and behavior_signal_count < 4:
+        negative_signals.append("venting_without_transferable_workflow_problem")
+        score -= 5
+    if _has_phrase(text, PRODUCT_COMPLAINT_PATTERNS):
+        if not _has_phrase(workflow_context, OPERATIONAL_CONTEXT_HINTS):
+            negative_signals.append("product_specific_complaint_without_workflow_context")
+            score -= 5
     if "?" in signal_payload.get("title", "") and not atom_payload.get("current_workaround"):
         negative_signals.append("question_without_workaround")
         score -= 1
@@ -1226,11 +1370,17 @@ def qualify_problem_signal(
         score >= 3
         and "non_problem_finding_kind" not in negative_signals
         and "support_or_help_page" not in negative_signals
+        and "career_guidance_thread" not in negative_signals
+        and "tutorial_or_instructional_post" not in negative_signals
         and "vague_negative_review" not in negative_signals
+        and "roi_or_vendor_shopping_prompt" not in negative_signals
+        and "advice_seeking_without_actionable_stakes" not in negative_signals
         and "solicitation_for_problem_examples" not in negative_signals
+        and "venting_without_transferable_workflow_problem" not in negative_signals
+        and "product_specific_complaint_without_workflow_context" not in negative_signals
         and (not source_class or source_class == "pain_signal")
     )
-    if accepted and _has_phrase(text, GENERIC_REQUEST_PATTERNS) and score < 5:
+    if accepted and _has_phrase(text, GENERIC_REQUEST_PATTERNS) and (score < 7 or not actionable_workflow):
         accepted = False
         negative_signals.append("too_generic_after_review")
 

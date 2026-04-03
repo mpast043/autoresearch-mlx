@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import types
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 
@@ -659,6 +660,80 @@ def test_spreadsheet_operator_admin_cohort_pack_generates_operator_language_quer
     assert all(len(query.split()) <= 10 for query in queries)
 
 
+def test_spreadsheet_operator_admin_queries_prioritize_accounting_reconciliation_cases():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="controller",
+        job_to_be_done="close the books without manual cleanup",
+        failure_mode="manual bank reconciliation and sales tax matching keep delaying month end close",
+        trigger_event="during month end close",
+        current_workaround="spreadsheets and copy paste tie-outs",
+        cost_consequence_clues="time loss",
+        current_tools="excel qbo bank csv",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["manual reconciliation"],
+        finding_kind="problem_signal",
+    )
+
+    queries = toolkit._spreadsheet_operator_admin_web_queries(atom=atom, plan=plan)
+
+    assert queries
+    assert queries[0].startswith("bank reconciliation spreadsheet workflow") or queries[0].startswith("month end close spreadsheet workflow")
+    assert any("sales tax payment reconciliation workflow" in query for query in queries[:4])
+
+
+def test_spreadsheet_operator_admin_queries_prioritize_channel_profitability_cases():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="ecommerce operators",
+        user_role="operator",
+        job_to_be_done="track channel profitability without manual reconciliation",
+        failure_mode="matching amazon shopify and etsy payouts to one bank account is a nightmare",
+        trigger_event="every week after payouts land",
+        current_workaround="spreadsheets and manual work",
+        cost_consequence_clues="time loss",
+        current_tools="amazon shopify etsy spreadsheets",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["sales channel reconciliation spreadsheet"],
+        finding_kind="problem_signal",
+    )
+
+    queries = toolkit._spreadsheet_operator_admin_web_queries(atom=atom, plan=plan)
+
+    assert queries
+    assert queries[0].startswith("sales channel profitability spreadsheet") or queries[0].startswith("shopify amazon etsy payout reconciliation")
+    assert any("channel profitability reporting spreadsheet" in query for query in queries[:4])
+
+
+def test_spreadsheet_operator_admin_queries_prioritize_pdf_version_cases():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business operations",
+        user_role="office manager",
+        job_to_be_done="keep client approval packets on the latest version",
+        failure_mode="pdf approvals keep circulating on the wrong version and comments get lost",
+        trigger_event="during client review rounds",
+        current_workaround="email and spreadsheets",
+        cost_consequence_clues="time loss",
+        current_tools="pdf email spreadsheet",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["which spreadsheet is latest"],
+        finding_kind="problem_signal",
+    )
+
+    queries = toolkit._spreadsheet_operator_admin_web_queries(atom=atom, plan=plan)
+
+    assert queries
+    assert queries[0].startswith("pdf collaboration version control") or queries[0].startswith("shared pdf latest version approval")
+
+
 def test_workflow_fragility_web_queries_capture_brittle_handoff_language():
     toolkit = ResearchToolkit()
     atom = SimpleNamespace(
@@ -1122,6 +1197,43 @@ def test_build_discovery_query_plan_deprioritizes_repeated_zero_yield_queries():
     assert '"frustrating" workflow' not in plan.queries
 
 
+def test_web_problem_filter_rejects_tutorials_forums_and_vendor_blogs():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Excel - Unlock the Secrets of Excel's New Compatibility Version",
+        snippet="Microsoft Excel Tutorial",
+        body="Are you tired of mismatched results when sharing Excel files?",
+        url="https://www.mrexcel.com/board/threads/excel-unlock-the-secrets-of-excels-new-compatibility-version-episode-2663.1267595/",
+    )
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Manual Reconciliation help for multiple BP - SAP Community",
+        snippet="Is there a way we can limit the manual work and get B1 to do this for us?",
+        body="SAP Community thread about manual reconciliation help",
+        url="https://community.sap.com/t5/welcome-corner-discussions/manual-reconciliation-help-for-multiple-bp/td-p/13623987",
+    )
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Why Manual Reconciliation Fails Accounting Teams",
+        snippet="Discover how to streamline the accounting process.",
+        body="Cookie Policy. Read to know about the risks of reconciling accounts manually.",
+        url="https://www.teampay.co/blog/problems-with-manual-reconciliation",
+    )
+
+
+def test_web_problem_filter_keeps_independent_operator_thread():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Our month-end close is held together by spreadsheets and Slack threads",
+        snippet="Independent operations discussion thread",
+        body=(
+            "Every month our ops team spends six hours manually matching payout exports, "
+            "reconciling bank deposits, and fixing broken spreadsheet references."
+        ),
+        url="https://ops-operators.example.com/t/month-end-close-spreadsheet-chaos/123",
+    ) is False
+
+
 def test_build_discovery_query_plan_prefers_queries_that_produced_prototype_candidates():
     toolkit = ResearchToolkit()
     toolkit.set_discovery_feedback(
@@ -1161,6 +1273,236 @@ def test_build_discovery_query_plan_prefers_queries_that_produced_prototype_cand
     )
 
     assert plan.queries[0] == "duct tape spreadsheets"
+
+
+def test_build_discovery_query_plan_skips_queries_under_active_cooldown():
+    toolkit = ResearchToolkit()
+    toolkit.set_discovery_feedback(
+        [
+            {
+                "source_name": "reddit-problem",
+                "query_text": "manual reporting",
+                "runs": 5,
+                "docs_seen": 8,
+                "findings_emitted": 0,
+                "screened_out": 5,
+                "validations": 0,
+                "passes": 0,
+                "cooldown_until": (datetime.now(UTC) + timedelta(hours=6)).isoformat(),
+            }
+        ]
+    )
+
+    plan = toolkit.build_discovery_query_plan(
+        "reddit-problem",
+        ["manual reporting", "duct tape spreadsheets", "latest spreadsheet version confusion"],
+        limit=2,
+        cycle_index=0,
+    )
+
+    assert "manual reporting" not in plan.queries
+
+
+def test_build_discovery_query_plan_penalizes_thin_single_source_traps():
+    toolkit = ResearchToolkit()
+    toolkit.set_discovery_feedback(
+        [
+            {
+                "source_name": "reddit-problem",
+                "query_text": "manual reporting",
+                "runs": 4,
+                "docs_seen": 10,
+                "findings_emitted": 3,
+                "screened_out": 0,
+                "validations": 3,
+                "passes": 0,
+                "parks": 3,
+                "thin_recurrence_count": 3,
+                "single_source_only_count": 3,
+                "prototype_candidates": 0,
+                "build_briefs": 0,
+                "avg_validation_score": 0.41,
+            },
+            {
+                "source_name": "reddit-problem",
+                "query_text": "duct tape spreadsheets",
+                "runs": 3,
+                "docs_seen": 8,
+                "findings_emitted": 2,
+                "screened_out": 0,
+                "validations": 1,
+                "passes": 0,
+                "prototype_candidates": 1,
+                "build_briefs": 1,
+                "avg_validation_score": 0.44,
+            },
+        ]
+    )
+
+    plan = toolkit.build_discovery_query_plan(
+        "reddit-problem",
+        ["manual reporting", "duct tape spreadsheets", "latest spreadsheet version confusion"],
+        limit=2,
+        cycle_index=0,
+    )
+
+    assert plan.queries[0] == "duct tape spreadsheets"
+
+
+def test_build_discovery_query_plan_reserves_novelty_and_skips_near_duplicate_concepts():
+    toolkit = ResearchToolkit({"discovery": {"exploration_slots_per_cycle": 1, "max_queries_per_concept": 1}})
+    toolkit.set_discovery_feedback(
+        [
+            {
+                "source_name": "reddit-problem",
+                "query_text": "latest spreadsheet version confusion",
+                "runs": 4,
+                "docs_seen": 8,
+                "findings_emitted": 3,
+                "validations": 2,
+                "passes": 1,
+                "prototype_candidates": 1,
+                "avg_validation_score": 0.47,
+            },
+            {
+                "source_name": "reddit-problem",
+                "query_text": "manual reconciliation workflow",
+                "runs": 3,
+                "docs_seen": 6,
+                "findings_emitted": 2,
+                "validations": 1,
+                "passes": 0,
+                "avg_validation_score": 0.39,
+            },
+            {
+                "source_name": "reddit-problem",
+                "query_text": "which spreadsheet is latest",
+                "runs": 3,
+                "docs_seen": 7,
+                "findings_emitted": 2,
+                "validations": 1,
+                "passes": 0,
+                "avg_validation_score": 0.37,
+            },
+        ]
+    )
+
+    plan = toolkit.build_discovery_query_plan(
+        "reddit-problem",
+        [
+            "latest spreadsheet version confusion",
+            "which spreadsheet is latest",
+            "manual reconciliation workflow",
+            "manual audit evidence collection",
+        ],
+        limit=3,
+        cycle_index=0,
+    )
+
+    assert "manual audit evidence collection" in plan.queries
+    assert "manual reconciliation workflow" in plan.queries
+    assert sum(query in plan.queries for query in ["latest spreadsheet version confusion", "which spreadsheet is latest"]) == 1
+
+
+def test_build_discovery_query_plan_filters_sentence_shaped_queries():
+    toolkit = ResearchToolkit()
+
+    plan = toolkit.build_discovery_query_plan(
+        "reddit-problem",
+        [
+            "operator - keep operations data in sync without manual cleanup when i am trying to make our month end reconciliation less painful",
+            "manual reconciliation workflow",
+            "channel profitability reporting spreadsheet",
+        ],
+        limit=3,
+        cycle_index=0,
+    )
+
+    assert "manual reconciliation workflow" in plan.queries
+    assert "channel profitability reporting spreadsheet" in plan.queries
+    assert all("trying to make" not in query for query in plan.queries)
+
+
+def test_problem_candidate_rejects_resume_and_news_recap_threads():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_problem_candidate(
+        "Resume help",
+        "Need urgent resume help for accounting interviews and career advice",
+        source_url="https://reddit.com/r/Accounting/comments/example",
+    ) is False
+    assert toolkit._is_problem_candidate(
+        "This week's top ecommerce news stories March 30th",
+        "Weekly ecommerce industry news recap and commentary",
+        source_url="https://reddit.com/r/shopify/comments/example",
+    ) is False
+
+
+def test_reddit_query_matches_subreddit_filters_obvious_mismatches():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._reddit_query_matches_subreddit("accounting", "invoice reminder spreadsheet workflow") is True
+    assert toolkit._reddit_query_matches_subreddit("shopify", "invoice reminder spreadsheet workflow") is False
+    assert toolkit._reddit_query_matches_subreddit("shopify", "channel profitability reporting spreadsheet") is True
+    assert toolkit._reddit_query_matches_subreddit("smallbusiness", "pdf collaboration version control") is True
+    assert toolkit._reddit_query_matches_subreddit("shopify", "pdf collaboration version control") is False
+
+
+def test_discover_reddit_problem_threads_skips_incompatible_query_pairs():
+    toolkit = ResearchToolkit(
+        {
+            "discovery": {
+                "reddit": {
+                    "search_sorts": ["relevance"],
+                    "per_sort_limit": 1,
+                    "max_docs_per_pair": 1,
+                }
+            }
+        }
+    )
+    seen_pairs: list[tuple[str, str]] = []
+
+    async def fake_reddit_search(subreddit, query, limit=2, sort="relevance"):
+        seen_pairs.append((subreddit, query))
+        return [
+            SearchDocument(
+                title=f"{subreddit} {query} workflow breaks",
+                url=f"https://reddit.com/{subreddit}/{query.replace(' ', '-')}",
+                snippet="manual reconciliation keeps breaking every week",
+                source=f"reddit/{subreddit}",
+            )
+        ]
+
+    async def fake_thread_context(url):
+        return {
+            "title": "workflow breaks",
+            "text": "manual reconciliation keeps breaking every week and teams fall back to spreadsheets",
+            "description": "manual reconciliation keeps breaking every week",
+            "comments": [],
+        }
+
+    toolkit.reddit_search = fake_reddit_search
+    toolkit.reddit_thread_context = fake_thread_context
+
+    asyncio.run(
+        toolkit._discover_reddit_problem_threads(
+            subreddits=["accounting", "shopify"],
+            queries=["invoice reminder spreadsheet workflow", "channel profitability reporting spreadsheet"],
+        )
+    )
+
+    assert ("accounting", "invoice reminder spreadsheet workflow") in seen_pairs
+    assert ("shopify", "channel profitability reporting spreadsheet") in seen_pairs
+    assert ("shopify", "invoice reminder spreadsheet workflow") not in seen_pairs
+
+
+def test_discovery_query_family_key_collapses_close_variants():
+    left = ResearchToolkit.discovery_query_family_key("latest spreadsheet version confusion")
+    right = ResearchToolkit.discovery_query_family_key("which spreadsheet is latest")
+    distinct = ResearchToolkit.discovery_query_family_key("manual audit evidence collection")
+
+    assert left == right
+    assert left != distinct
 
 
 def test_discover_reddit_problem_threads_uses_bounded_concurrency():
