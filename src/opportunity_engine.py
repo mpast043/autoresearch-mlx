@@ -22,12 +22,18 @@ from src.research_tools import compact_text, infer_recurrence_key
 #   v1 (legacy): Original formula with weak penalties (0.12/0.11/0.11)
 #   v2: Stronger penalties (0.18/0.16/0.16), nonlinear evidence multiplier,
 #       lower thresholds (composite 0.45, plausibility 0.55), frequency gate
-CURRENT_SCORING_VERSION = "v2"
+#   v3: Removed duplicate counting (urgency_hits, cost_hits, recurrence_score, etc.)
+#   v4: Split scoring into PTS/RRS with blended decision_score
+CURRENT_SCORING_VERSION = "v4"
+CURRENT_FORMULA_VERSION = "pts_rrs_v1"
+CURRENT_THRESHOLD_VERSION = "2025_q2"
 
 # Version-specific thresholds (can be referenced by other code)
 SCORING_THRESHOLDS = {
     "v1": {"promotion": 0.55, "park": 0.35},
     "v2": {"promotion": 0.45, "park": 0.35, "plausibility": 0.55},
+    "v3": {"promotion": 0.45, "park": 0.35},
+    "v4": {"promotion": 0.18, "park": 0.15, "pts_floor": 0.11, "rrs_floor": 0.22},
 }
 
 # Re-export helpers for backward compatibility
@@ -1355,6 +1361,127 @@ def assess_market_gap(cluster_summary: dict[str, Any], validation_evidence: dict
     }
 
 
+# Service-first keywords for income optimization
+SERVICE_FIRST_KEYWORDS = [
+    "consulting", "agency", "implementation", "integration",
+    "setup", "migration", "training", "managed", "support"
+]
+
+
+def detect_service_first_bonus(atom_text: str) -> float:
+    """Detect service-first / productized-service opportunity indicators.
+
+    Returns 0.04 bonus if any keyword found in atom text.
+    """
+    text_lower = atom_text.lower()
+    if any(kw in text_lower for kw in SERVICE_FIRST_KEYWORDS):
+        return 0.04
+    return 0.0
+
+
+def compute_problem_truth_score(scores: dict[str, Any]) -> float:
+    """Compute Problem Truth Score (PTS).
+
+    Answers: Is this a real, recurring, evidenced, costly problem worth solving?
+
+    Formula:
+    PTS = clamp(
+        pain_severity * 0.16
+        + frequency_score * 0.14
+        + cost_of_inaction * 0.12
+        + workaround_density * 0.10
+        + evidence_quality * 0.18
+        + corroboration_strength * 0.10
+        + segment_concentration * 0.08
+        - education_burden * 0.14
+        - dependency_risk * 0.12
+        - adoption_friction * 0.12
+    )
+    """
+    pain_severity = scores.get("pain_severity", 0.3)
+    frequency_score = scores.get("frequency_score", 0.25)
+    cost_of_inaction = scores.get("cost_of_inaction", 0.2)
+    workaround_density = scores.get("workaround_density", 0.2)
+    evidence_quality = scores.get("evidence_quality", 0.3)
+    corroboration_strength = scores.get("corroboration_strength", 0.25)
+    segment_concentration = scores.get("segment_concentration", 0.3)
+    education_burden = scores.get("education_burden", 0.2)
+    dependency_risk = scores.get("dependency_risk", 0.15)
+    adoption_friction = scores.get("adoption_friction", 0.15)
+
+    pts = (
+        pain_severity * 0.16
+        + frequency_score * 0.14
+        + cost_of_inaction * 0.12
+        + workaround_density * 0.10
+        + evidence_quality * 0.18
+        + corroboration_strength * 0.10
+        + segment_concentration * 0.08
+        - education_burden * 0.14
+        - dependency_risk * 0.12
+        - adoption_friction * 0.12
+    )
+
+    return clamp(pts, 0.0, 1.0)
+
+
+def compute_revenue_readiness_score(
+    scores: dict[str, Any],
+    market_enrichment: dict[str, Any],
+    atom_text: str = ""
+) -> float:
+    """Compute Revenue Readiness Score (RRS).
+
+    Answers: Is there a clear buyer, willingness to pay, reachability, path to revenue?
+
+    Formula:
+    RRS = clamp(
+        value_support * 0.18
+        + willingness_to_pay_proxy * 0.16
+        + reachability * 0.14
+        + buildability * 0.10
+        + expansion_potential * 0.08
+        + operational_buyer * 0.14
+        + service_first_bonus * 0.04
+        + cost_of_inaction * 0.06
+    )
+    """
+    value_support = scores.get("value_support", 0.25)
+    willingness_to_pay_proxy = scores.get("willingness_to_pay_proxy", 0.2)
+    reachability = scores.get("reachability", 0.4)
+    buildability = scores.get("buildability", 0.3)
+    expansion_potential = scores.get("expansion_potential", 0.25)
+    cost_of_inaction = scores.get("cost_of_inaction", 0.2)
+
+    operational_buyer = float(market_enrichment.get("operational_buyer_score", 0.0) or 0.0)
+    if not operational_buyer:
+        operational_buyer = 0.15  # fallback if not enriched
+
+    # Service-first bonus
+    service_bonus = detect_service_first_bonus(atom_text)
+
+    rrs = (
+        value_support * 0.18
+        + willingness_to_pay_proxy * 0.16
+        + reachability * 0.14
+        + buildability * 0.10
+        + expansion_potential * 0.08
+        + operational_buyer * 0.14
+        + service_bonus
+        + cost_of_inaction * 0.06
+    )
+
+    return clamp(rrs, 0.0, 1.0)
+
+
+def compute_decision_score(pts: float, rrs: float) -> float:
+    """Compute blended decision score from PTS and RRS.
+
+    Uses 55% PTS / 45% RRS weighting.
+    """
+    return clamp(pts * 0.55 + rrs * 0.45, 0.0, 1.0)
+
+
 def score_opportunity(
     atom: Any,
     signal: Any,
@@ -1425,13 +1552,16 @@ def score_opportunity(
     corroborating_sources = sum(1 for count in recurrence_results_by_source.values() if count)
 
     # Fix 1: Removed cost_hits to avoid double-counting (now only in cost_of_inaction)
-    pain_severity = clamp(0.32 + float(_value(atom, "emotional_intensity", 0.0)) * 0.38 + urgency_hits * 0.05)
+    # Fix 2: Removed urgency_hits to avoid triple-counting (now only in urgency_score)
+    pain_severity = clamp(0.32 + float(_value(atom, "emotional_intensity", 0.0)) * 0.38)
+    # Fix 3: Removed recurrence_score from corroboration_strength and evidence_sufficiency (triple-counted)
+    #      Now only in frequency_score
     frequency_score = clamp(0.24 + recurrence_score * 0.3 + frequency_hits * 0.12 + cross_source_match_score * 0.1)
+    # Fix 2: Removed urgency_hits to avoid triple-counting (now only in urgency_score)
     cost_of_inaction = clamp(
         0.18
         + value_score * 0.18
         + cost_hits * 0.12
-        + urgency_hits * 0.05
         + operational_buyer * 0.14
         + compliance_burden * 0.16
         + cost_pressure * 0.22
@@ -1458,15 +1588,15 @@ def score_opportunity(
         + source_family_diversity / 4.0 * 0.12
         + (0.12 if "workflow" in str(_value(atom, "job_to_be_done", "")).lower() else 0.0)
     )
+    # Fix 6: Removed operational_buyer to avoid triple-counting (now only in cost_of_inaction)
+    # Fix 7: Removed compliance_burden to avoid triple-counting (now only in cost_of_inaction)
+    # Fix 8: Removed wedge_value_lift to avoid triple-counting (now only in cost_of_inaction)
     willingness_to_pay_proxy = clamp(
         0.18
-        + operational_buyer * 0.18
-        + compliance_burden * 0.18
         + cost_of_inaction * 0.18
         + buyer_intent_score * 0.14
         + demand_score * 0.08
         + willingness_to_pay_signal * 0.16
-        + wedge_value_lift * 0.08
     )
     education_burden = clamp(0.2 + (0.18 if recurrence_score < 0.45 else 0.0) + (0.12 if not _value(atom, "user_role", "") else 0.0))
     dependency_risk = clamp(
@@ -1481,53 +1611,53 @@ def score_opportunity(
         + (0.16 if buildability < 0.55 else 0.0)
     )
     recurrence_doc_strength = clamp(min(recurrence_doc_count, 6) / 6 * 0.6 + min(recurrence_domain_count, 4) / 4 * 0.4)
+    # Fix 3: Removed recurrence_score to avoid triple-counting (now only in frequency_score)
     corroboration_strength = clamp(
         max(corroboration_score, 0.0) * 0.45
-        + recurrence_score * 0.22
         + recurrence_coverage * 0.12
         + recurrence_doc_strength * 0.08
         + min(corroborating_sources, 4) / 4 * 0.05
         + cross_source_match_score * 0.05
         + core_source_family_diversity / 4.0 * 0.03
     )
+    # Fix 3: Removed recurrence_score to avoid triple-counting (now only in frequency_score)
     evidence_sufficiency = clamp(
         max(evidence_sufficiency_hint, 0.0) * 0.5
-        + recurrence_score * 0.14
         + recurrence_coverage * 0.08
         + recurrence_doc_strength * 0.08
         + corroboration_strength * 0.1
         + cluster_summary.get("evidence_quality", 0.15) * 0.05
         - generalizability_penalty * 0.2
     )
+    # Fix 4: Removed value_score to avoid triple-counting (now only in cost_of_inaction)
     problem_plausibility = clamp(
         pain_severity * 0.24
         + cost_of_inaction * 0.19
         + workaround_density * 0.14
         + urgency_score * 0.1
         + timing_shift * 0.08
-        + value_score * 0.07
         + clear_trigger * 0.04
         + clear_failure * 0.04
         + generalizability_score * 0.1
     )
+    # Fix 5: Removed cost_pressure to avoid double-counting (now only in cost_of_inaction)
+    # Fix 6: Removed operational_buyer to avoid triple-counting (now only in cost_of_inaction)
+    # Fix 7: Removed compliance_burden to avoid triple-counting (now only in cost_of_inaction)
     operational_value_lift = clamp(
-        operational_buyer * 0.2
-        + compliance_burden * 0.26
-        + cost_pressure * 0.28
-        + cross_source_match_score * 0.08
+        cross_source_match_score * 0.08
         + multi_source_value_lift * 0.18
     )
     # Fix 1: Reduced cost_of_inaction weight to avoid double-counting cost signals
+    # Fix 4: Removed value_score to avoid triple-counting (now only in cost_of_inaction)
+    # Fix 8: Removed wedge_value_lift to avoid triple-counting (now only in cost_of_inaction)
     value_support = clamp(
-        value_score * 0.18
-        + cost_of_inaction * 0.12
+        cost_of_inaction * 0.12
         + willingness_to_pay_proxy * 0.24
         + buyer_intent_score * 0.12
         + demand_score * 0.08
         + trend_score * 0.05
         + review_signal_score * 0.04
         + (1.0 - competition_score) * 0.03
-        + wedge_value_lift * 0.04
         + operational_value_lift * 0.12
         - generalizability_penalty * 0.2
     )
@@ -1571,8 +1701,46 @@ def score_opportunity(
         composite_score = clamp(composite_score + review_feedback_park_bias - review_feedback_kill_bias)
         value_support = clamp(value_support + max(0.0, review_feedback_park_bias * 0.3) - max(0.0, review_feedback_kill_bias * 0.2))
 
+    # Build scores dict for PTS/RRS computation
+    scores_for_rrs = {
+        "pain_severity": pain_severity,
+        "frequency_score": frequency_score,
+        "cost_of_inaction": cost_of_inaction,
+        "workaround_density": workaround_density,
+        "evidence_quality": evidence_quality,
+        "corroboration_strength": corroboration_strength,
+        "segment_concentration": segment_concentration,
+        "education_burden": education_burden,
+        "dependency_risk": dependency_risk,
+        "adoption_friction": adoption_friction,
+        "value_support": value_support,
+        "willingness_to_pay_proxy": willingness_to_pay_proxy,
+        "reachability": reachability,
+        "buildability": buildability,
+        "expansion_potential": expansion_potential,
+    }
+
+    # Compute PTS and RRS
+    problem_truth_score = compute_problem_truth_score(scores_for_rrs)
+
+    # Build atom text for service-first detection
+    atom_text = " ".join([
+        str(_value(atom, "problem_description", "")),
+        str(_value(atom, "job_to_be_done", "")),
+        str(_value(atom, "current_workaround", "")),
+    ])
+    revenue_readiness_score = compute_revenue_readiness_score(scores_for_rrs, market_enrichment, atom_text)
+
+    # Compute blended decision score
+    decision_score = compute_decision_score(problem_truth_score, revenue_readiness_score)
+
     return {
         "scoring_version": CURRENT_SCORING_VERSION,
+        "formula_version": CURRENT_FORMULA_VERSION,
+        "threshold_version": CURRENT_THRESHOLD_VERSION,
+        "problem_truth_score": round(problem_truth_score, 4),
+        "revenue_readiness_score": round(revenue_readiness_score, 4),
+        "decision_score": round(decision_score, 4),
         "pain_severity": round(pain_severity, 4),
         "frequency_score": round(frequency_score, 4),
         "cost_of_inaction": round(cost_of_inaction, 4),
@@ -1713,30 +1881,34 @@ def stage_decision(
     market_gap: dict[str, Any],
     counterevidence: list[dict[str, Any]],
     *,
-    # Thresholds adjusted: theoretical max is ~0.59, so 0.50 promote is selective but reachable
-    promotion_threshold: float = 0.50,
-    park_threshold: float = 0.35,
+    # v4 thresholds: using decision_score + PTS/RRS floors
+    promotion_threshold: float = 0.18,
+    park_threshold: float = 0.15,
     review_feedback: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     supported_count = sum(1 for check in counterevidence if check.get("status") == "supported")
     park_bias = float((review_feedback or {}).get("park_bias", 0.0) or 0.0)
     kill_bias = float((review_feedback or {}).get("kill_bias", 0.0) or 0.0)
-    composite = float(opportunity_scores.get("composite_score", 0.0) or 0.0) + park_bias - kill_bias
+
+    # Get new v4 scores
+    decision_score = float(opportunity_scores.get("decision_score", 0.0) or 0.0) + park_bias - kill_bias
+    problem_truth_score = float(opportunity_scores.get("problem_truth_score", 0.0) or 0.0)
+    revenue_readiness_score = float(opportunity_scores.get("revenue_readiness_score", 0.0) or 0.0)
+
+    # Legacy scores still available for diagnostic
+    composite = float(opportunity_scores.get("composite_score", 0.0) or 0.0)
     plausibility = float(opportunity_scores.get("problem_plausibility", 0.0) or 0.0)
     sufficiency = float(opportunity_scores.get("evidence_sufficiency", 0.0) or 0.0)
     value_support = float(opportunity_scores.get("value_support", 0.0) or 0.0)
     evidence_quality = float(opportunity_scores.get("evidence_quality", 0.0) or 0.0)
-    # Fix 4: Add frequency gate - prevent "loud but rare" problems
     frequency_score = float(opportunity_scores.get("frequency_score", 0.0) or 0.0)
 
+    # Hard kill conditions
     hard_kill = (
         market_gap.get("market_gap") == "already_solved_well"
         or supported_count >= 4
-        or (market_gap.get("market_gap") == "likely_false_signal" and plausibility < 0.45)
-        or (composite < park_threshold and plausibility < 0.38 and sufficiency < 0.35)
-        or (kill_bias >= 0.12 and plausibility < 0.45 and sufficiency < 0.32)
-        # Fix 4: Kill "loud but rare" problems
         or (frequency_score < 0.25)
+        or (problem_truth_score < 0.10)  # Hard PTS floor (below P50)
     )
     if hard_kill:
         return {
@@ -1747,8 +1919,12 @@ def stage_decision(
             "park_subreason": "",
         }
 
-    # Option B: Lower plausibility threshold from 0.60 to 0.55 for more promotions
-    if composite >= promotion_threshold and plausibility >= 0.55 and evidence_quality >= 0.55 and supported_count <= 1 and value_support >= 0.58:
+    # v4 Promote logic: blended score + floors (no longer multi-gate AND)
+    # Primary: decision_score >= promotion_threshold AND PTS >= 0.11 AND RRS >= 0.22 AND frequency >= 0.25
+    if (decision_score >= promotion_threshold
+        and problem_truth_score >= 0.11
+        and revenue_readiness_score >= 0.22
+        and frequency_score >= 0.25):
         return {
             "status": "promoted",
             "recommendation": "promote",
@@ -1757,28 +1933,59 @@ def stage_decision(
             "park_subreason": "",
         }
 
-    recurrence_short = market_gap.get("market_gap") == "needs_more_recurrence_evidence" or sufficiency < 0.46
-    value_short = value_support < 0.5
-    if recurrence_short and value_short:
-        subreason = "park_both"
-    elif recurrence_short:
-        subreason = "park_recurrence"
-    elif value_short:
-        subreason = "park_value"
-    else:
-        subreason = "plausible_but_unproven"
+    # Override 1: High frequency override
+    if decision_score >= 0.40 and frequency_score >= 0.50:
+        return {
+            "status": "promoted",
+            "recommendation": "promote",
+            "reason": "high_frequency_override",
+            "decision_reason": "high_frequency_override",
+            "park_subreason": "",
+        }
 
-    if review_feedback:
-        labels = set((review_feedback.get("labels") or {}).keys())
-        if "needs_more_evidence" in labels and subreason == "park_recurrence":
+    # Override 2: Strong evidence override
+    if decision_score >= 0.38 and evidence_quality >= 0.70:
+        return {
+            "status": "promoted",
+            "recommendation": "promote",
+            "reason": "strong_evidence_override",
+            "decision_reason": "strong_evidence_override",
+            "park_subreason": "",
+        }
+
+    # Park logic: not promoted, not killed, decision_score >= park_threshold
+    if decision_score >= park_threshold:
+        recurrence_short = market_gap.get("market_gap") == "needs_more_recurrence_evidence" or sufficiency < 0.46
+        value_short = value_support < 0.4
+        if recurrence_short and value_short:
+            subreason = "park_both"
+        elif recurrence_short:
+            subreason = "park_recurrence"
+        elif value_short:
+            subreason = "park_value"
+        else:
             subreason = "plausible_but_unproven"
 
+        if review_feedback:
+            labels = set((review_feedback.get("labels") or {}).keys())
+            if "needs_more_evidence" in labels and subreason == "park_recurrence":
+                subreason = "plausible_but_unproven"
+
+        return {
+            "status": "parked",
+            "recommendation": "park",
+            "reason": subreason,
+            "decision_reason": subreason,
+            "park_subreason": subreason,
+        }
+
+    # Default: kill
     return {
-        "status": "parked",
-        "recommendation": "park",
-        "reason": subreason,
-        "decision_reason": subreason,
-        "park_subreason": subreason,
+        "status": "killed",
+        "recommendation": "kill",
+        "reason": "below_threshold",
+        "decision_reason": "below_threshold",
+        "park_subreason": "",
     }
 
 
@@ -1787,8 +1994,8 @@ def diagnose_stage_decision(
     market_gap: dict[str, Any],
     counterevidence: list[dict[str, Any]],
     *,
-    promotion_threshold: float = 0.50,
-    park_threshold: float = 0.35,
+    promotion_threshold: float = 0.18,
+    park_threshold: float = 0.15,
     review_feedback: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Human-readable breakdown of ``stage_decision`` inputs vs floors (for gate debugging)."""
