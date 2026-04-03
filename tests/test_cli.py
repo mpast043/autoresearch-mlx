@@ -77,6 +77,15 @@ class DummyDB:
             }
         ]
 
+    def get_backlog_workbench(self, limit=10):
+        return [
+            {
+                "finding_id": 77,
+                "title": "Spreadsheet-heavy reconciliation backlog",
+                "backlog_priority_score": 8.4,
+            }
+        ]
+
     def get_discovery_feedback(self, source_name=None):
         rows = [
             {
@@ -254,10 +263,11 @@ def test_cli_run_once_restores_pattern_overrides_after_dispatch(monkeypatch):
             self.discovery_bypass_cache = False
             DummyRunOnceApp.last_instance = self
 
-        async def run_once(self):
+        async def run_once(self, *, skip_backlog=False):
             captured["web_keywords_during_run"] = list(self.config["discovery"]["web"]["keywords"])
             captured["reddit_keywords_during_run"] = list(self.config["discovery"]["reddit"]["problem_keywords"])
             captured["bypass_cache_during_run"] = self.discovery_bypass_cache
+            captured["skip_backlog_during_run"] = skip_backlog
             return {"ok": True}
 
     monkeypatch.setattr(cli, "AutoResearcher", DummyRunOnceApp)
@@ -267,10 +277,31 @@ def test_cli_run_once_restores_pattern_overrides_after_dispatch(monkeypatch):
 
     app = DummyRunOnceApp.last_instance
     assert captured["bypass_cache_during_run"] is True
+    assert captured["skip_backlog_during_run"] is False
     assert captured["web_keywords_during_run"][0] == "bank reconciliation manual process"
     assert captured["reddit_keywords_during_run"][0] == "bank reconciliation manual process"
     assert app.config["discovery"]["web"]["keywords"] == ["original web"]
     assert app.config["discovery"]["reddit"]["problem_keywords"] == ["original reddit"]
+
+
+def test_cli_run_once_passes_skip_backlog_flag(monkeypatch):
+    captured = {}
+
+    class DummyRunOnceApp:
+        def __init__(self, config_path=None):
+            self.config = {"discovery": {"web": {"keywords": []}, "reddit": {"problem_keywords": [], "theme_keywords": {}}}}
+            self.discovery_bypass_cache = False
+
+        async def run_once(self, *, skip_backlog=False):
+            captured["skip_backlog"] = skip_backlog
+            return {"ok": True}
+
+    monkeypatch.setattr(cli, "AutoResearcher", DummyRunOnceApp)
+    monkeypatch.setattr(sys, "argv", ["cli.py", "run-once", "--skip-backlog"])
+
+    asyncio.run(cli.main())
+
+    assert captured["skip_backlog"] is True
 
 
 def test_render_watch_snapshot_shows_runtime_and_live_counts():

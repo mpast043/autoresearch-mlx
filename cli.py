@@ -277,6 +277,7 @@ def build_operator_report(app: AutoResearcher, *, limit: int = 10) -> dict:
         }
 
     decision_surface = app.db.get_candidate_workbench(limit=max(limit * 3, 25), run_id=app.current_run_id) if hasattr(app.db, "get_candidate_workbench") else []
+    backlog_workbench = app.db.get_backlog_workbench(limit=max(limit * 3, 25)) if hasattr(app.db, "get_backlog_workbench") else []
     builder_jobs = build_builder_jobs_view(app.db, run_id=app.current_run_id, limit=max(limit * 3, 25))
     validation_rows = app.validation_report(limit=1000)
     action_mix = collections.Counter(
@@ -324,6 +325,7 @@ def build_operator_report(app: AutoResearcher, *, limit: int = 10) -> dict:
             "action_mix": dict(sorted(action_mix.items(), key=lambda kv: (-kv[1], kv[0]))),
             "builder_job_status_mix": dict(sorted(builder_status_mix.items(), key=lambda kv: (-kv[1], kv[0]))),
             "top_ranked_opportunities": decision_surface[:limit],
+            "top_ranked_backlog": backlog_workbench[:limit],
             "build_queue": builder_jobs[:limit],
         },
         "operator_focus": {
@@ -353,6 +355,9 @@ def build_verbose_report(app: AutoResearcher, summary: dict) -> dict:
         } if app.db and hasattr(app.db, "list_build_briefs") and hasattr(app.db, "list_build_prep_outputs") else {},
         "candidate_workbench": app.db.get_candidate_workbench(limit=10, run_id=app.current_run_id)
         if app.db and hasattr(app.db, "get_candidate_workbench")
+        else [],
+        "backlog_workbench": app.db.get_backlog_workbench(limit=10)
+        if app.db and hasattr(app.db, "get_backlog_workbench")
         else [],
         "decision_surface": app.db.get_candidate_workbench(limit=10, run_id=app.current_run_id)
         if app.db and hasattr(app.db, "get_candidate_workbench")
@@ -419,6 +424,7 @@ async def main() -> None:
             "report",
             "gate-diagnostics",
             "pipeline-health",
+            "backlog-workbench",
             "discovery-sort-diagnostics",
             "eval",
             "review-queue",
@@ -481,6 +487,11 @@ async def main() -> None:
         "--fresh",
         action="store_true",
         help="run-once: bypass signal cache, force fresh discovery (ignores cached results)",
+    )
+    parser.add_argument(
+        "--skip-backlog",
+        action="store_true",
+        help="run-once: discovery-only mode; do not requeue existing qualified findings for evidence",
     )
     args = parser.parse_args()
 
@@ -975,7 +986,7 @@ async def main() -> None:
 
     if args.command == "run-once":
         try:
-            summary = await app.run_once()
+            summary = await app.run_once(skip_backlog=bool(args.skip_backlog))
             if args.verbose:
                 print_json(build_verbose_report(app, summary))
             else:
@@ -1067,6 +1078,8 @@ async def main() -> None:
             from src.pipeline_health import compute_pipeline_health
 
             print_json(compute_pipeline_health(app.db))
+        elif args.command == "backlog-workbench":
+            print_json(app.db.get_backlog_workbench(limit=args.limit) if app.db else [])
         elif args.command == "discovery-sort-diagnostics":
             print_json(
                 build_discovery_sort_diagnostics(

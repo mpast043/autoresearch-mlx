@@ -11,14 +11,7 @@ def compute_pipeline_health(db: Any) -> dict[str, Any]:
     findings = db.get_findings(limit=5000)
     by_status = Counter((f.status or "") for f in findings)
 
-    actionable = 0
-    for f in findings:
-        if (f.status or "") != "qualified" or (f.source_class or "") != "pain_signal":
-            continue
-        s = db.get_raw_signals_by_finding(int(f.id or 0))
-        a = db.get_problem_atoms_by_finding(int(f.id or 0))
-        if s and a:
-            actionable += 1
+    actionable = len(db.get_backlog_workbench(limit=5000)) if hasattr(db, "get_backlog_workbench") else 0
 
     n_val = len(db.get_validation_review(limit=10000, run_id=None))
 

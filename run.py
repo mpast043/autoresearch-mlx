@@ -61,6 +61,7 @@ class AutoResearcher:
         self.sources_db = self._load_sources_db()
         self.current_run_id = ""
         self.discovery_bypass_cache = False
+        self._ignore_backlog_for_completion = False
 
     def _load_config(self, path: str | Path) -> dict[str, Any]:
         config_file = resolve_project_path(path, default=DEFAULT_CONFIG_PATH)
@@ -187,8 +188,16 @@ class AutoResearcher:
         """Block until queue/agents idle or deadline. Returns True if drained, False on timeout."""
         deadline = asyncio.get_running_loop().time() + max(5.0, max_wait_seconds)
         quiet_cycles = 0
+        last_log_at = 0.0
+        last_state: dict[str, Any] | None = None
         while asyncio.get_running_loop().time() < deadline and not self.shutdown_event.is_set():
-            if self.completion_state().get("drained"):
+            state = self.completion_state()
+            loop_now = asyncio.get_running_loop().time()
+            if last_state != state or (loop_now - last_log_at) >= 5.0:
+                logger.info("pipeline drain wait state: %s", state)
+                last_log_at = loop_now
+                last_state = dict(state)
+            if state.get("drained"):
                 quiet_cycles += 1
                 if quiet_cycles >= 5:
                     return True
@@ -264,9 +273,10 @@ class AutoResearcher:
                 except asyncio.TimeoutError:
                     pass
 
+        self.status_tracker.complete()
         await self.shutdown()
 
-    async def run_once(self) -> dict[str, Any]:
+    async def run_once(self, *, skip_backlog: bool = False) -> dict[str, Any]:
         await self.initialize()
         assert self.orchestrator is not None
         assert self.db is not None
@@ -276,50 +286,64 @@ class AutoResearcher:
         self.status_tracker.start_run(self.current_run_id)
         self.status_tracker.set_stage("discovery")
 
-        backlog_ids = await self._dispatch_open_qualified_findings()
-        discovery_ids = await self.agents["discovery"]._discover_once()
-        max_wait_seconds = float(self.config.get("orchestration", {}).get("run_once_max_wait_seconds", 60))
-        if not await self._wait_for_pipeline_drained(max_wait_seconds):
-            logger.warning(
-                "run_once reached max wait with pipeline not drained: %s",
-                self.completion_state(),
-            )
+        self._ignore_backlog_for_completion = bool(skip_backlog)
+        try:
+            backlog_ids: list[int] = []
+            if skip_backlog:
+                logger.info("run_once: discovery-only mode enabled; skipping qualified backlog requeue")
+                self.status_tracker.log("discovery_only skip_backlog=true")
+            else:
+                backlog_ids = await self._dispatch_open_qualified_findings()
+            discovery_ids = await self.agents["discovery"]._discover_once()
+            max_wait_seconds = float(self.config.get("orchestration", {}).get("run_once_max_wait_seconds", 60))
+            drained_ok = await self._wait_for_pipeline_drained(max_wait_seconds)
+            if not drained_ok:
+                logger.warning(
+                    "run_once reached max wait with pipeline not drained: %s",
+                    self.completion_state(),
+                )
+                self.status_tracker.log(f"drain_timeout state={self.completion_state()}")
 
-        await asyncio.sleep(0.2)
-        summary = self.snapshot()
-        summary["backlog_ids"] = backlog_ids
-        summary["discovery_ids"] = discovery_ids
-        await self.shutdown()
-        return summary
+            await asyncio.sleep(0.2)
+            summary = self.snapshot()
+            summary["backlog_ids"] = backlog_ids
+            summary["discovery_ids"] = discovery_ids
+            summary["skip_backlog"] = bool(skip_backlog)
+            summary["drained"] = bool(drained_ok)
+            self.status_tracker.complete()
+            await self.shutdown()
+            return summary
+        finally:
+            self._ignore_backlog_for_completion = False
 
     async def _dispatch_open_qualified_findings(self) -> list[int]:
         assert self.db is not None
         assert self.orchestrator is not None
 
         backlog_ids: list[int] = []
-        for finding in self.db.get_findings(limit=500):
-            if finding.status != "qualified" or finding.source_class != "pain_signal":
-                continue
-            signal_rows = self.db.get_raw_signals_by_finding(finding.id or 0)
-            atom_rows = self.db.get_problem_atoms_by_finding(finding.id or 0)
-            if not signal_rows or not atom_rows:
-                continue
-            backlog_ids.append(int(finding.id))
+        backlog_items = (
+            self.db.get_backlog_workbench(limit=500)
+            if hasattr(self.db, "get_backlog_workbench")
+            else []
+        )
+        for item in backlog_items:
+            backlog_ids.append(int(item["finding_id"]))
             await self.orchestrator.send_message(
                 to_agent="orchestrator",
                 msg_type=MessageType.FINDING,
                 payload={
-                    "finding_id": int(finding.id),
-                    "source": finding.source,
-                    "source_url": finding.source_url,
-                    "content_hash": finding.content_hash,
-                    "finding_kind": finding.finding_kind,
-                    "source_class": finding.source_class,
-                    "title": finding.product_built,
-                    "summary": finding.outcome_summary,
-                    "signal_id": int(signal_rows[0].id),
-                    "problem_atom_ids": [int(atom.id) for atom in atom_rows if atom.id is not None],
+                    "finding_id": int(item["finding_id"]),
+                    "source": item["source"],
+                    "source_url": item["source_url"],
+                    "content_hash": item.get("content_hash", ""),
+                    "finding_kind": item.get("finding_kind", "problem_signal"),
+                    "source_class": item["current_source_class"],
+                    "title": item["title"],
+                    "summary": item["summary"],
+                    "signal_id": int(item["signal_id"]),
+                    "problem_atom_ids": list(item["problem_atom_ids"]),
                     "backlog_requeue": True,
+                    "backlog_priority_score": item.get("backlog_priority_score", 0.0),
                 },
                 priority=2,
             )
@@ -330,15 +354,9 @@ class AutoResearcher:
 
     def _count_actionable_qualified_findings(self) -> int:
         assert self.db is not None
-        count = 0
-        for finding in self.db.get_findings(limit=500):
-            if finding.status != "qualified" or finding.source_class != "pain_signal":
-                continue
-            signal_rows = self.db.get_raw_signals_by_finding(finding.id or 0)
-            atom_rows = self.db.get_problem_atoms_by_finding(finding.id or 0)
-            if signal_rows and atom_rows:
-                count += 1
-        return count
+        if hasattr(self.db, "get_backlog_workbench"):
+            return len(self.db.get_backlog_workbench(limit=500))
+        return 0
 
     async def run_unseeded(
         self,
@@ -415,7 +433,8 @@ class AutoResearcher:
         if self.orchestrator is not None:
             queue_empty = self.orchestrator._message_queue.empty()
             queue_size = self.orchestrator._message_queue.qsize()
-        open_qualified = self._count_actionable_qualified_findings() if self.db is not None else 0
+        actual_open_qualified = self._count_actionable_qualified_findings() if self.db is not None else 0
+        open_qualified = 0 if self._ignore_backlog_for_completion else actual_open_qualified
 
         evidence_busy = 0
         validation_busy = 0
@@ -432,6 +451,7 @@ class AutoResearcher:
             "queue_empty": queue_empty,
             "queue_size": queue_size,
             "open_qualified": open_qualified,
+            "actual_open_qualified": actual_open_qualified,
             "evidence_busy": evidence_busy,
             "validation_busy": validation_busy,
             "drained": drained,

@@ -849,13 +849,23 @@ class Database:
                 runs INTEGER DEFAULT 0,
                 docs_seen INTEGER DEFAULT 0,
                 findings_emitted INTEGER DEFAULT 0,
+                screened_out INTEGER DEFAULT 0,
+                low_signal_count INTEGER DEFAULT 0,
+                pain_signal_count INTEGER DEFAULT 0,
                 validations INTEGER DEFAULT 0,
                 passes INTEGER DEFAULT 0,
+                kills INTEGER DEFAULT 0,
+                parks INTEGER DEFAULT 0,
+                promotes INTEGER DEFAULT 0,
+                thin_recurrence_count INTEGER DEFAULT 0,
+                single_source_only_count INTEGER DEFAULT 0,
                 prototype_candidates INTEGER DEFAULT 0,
                 build_briefs INTEGER DEFAULT 0,
                 avg_validation_score REAL DEFAULT 0,
+                avg_screening_score REAL DEFAULT 0,
                 last_latency_ms REAL DEFAULT 0,
                 last_status TEXT DEFAULT '',
+                cooldown_until TEXT DEFAULT '',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(source_name, query_text)
             );
@@ -971,6 +981,16 @@ class Database:
         _ensure_column(conn, "opportunities", "last_rescored_at", "TIMESTAMP")
         _ensure_column(conn, "discovery_feedback", "prototype_candidates", "INTEGER DEFAULT 0")
         _ensure_column(conn, "discovery_feedback", "build_briefs", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "screened_out", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "low_signal_count", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "pain_signal_count", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "kills", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "parks", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "promotes", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "thin_recurrence_count", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "single_source_only_count", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "avg_screening_score", "REAL DEFAULT 0")
+        _ensure_column(conn, "discovery_feedback", "cooldown_until", "TEXT DEFAULT ''")
         _ensure_column(conn, "products", "idea_id", "INTEGER DEFAULT 0")
         _ensure_column(conn, "products", "build_brief_id", "INTEGER DEFAULT 0")
         _ensure_column(conn, "products", "opportunity_id", "INTEGER DEFAULT 0")
@@ -2011,6 +2031,51 @@ class Database:
         )
         conn.commit()
 
+    def record_discovery_screening(
+        self,
+        source_name: str,
+        query_text: str,
+        *,
+        accepted: bool,
+        source_class: str = "",
+        screening_score: float = 0.0,
+    ) -> None:
+        conn = self._get_connection()
+        screened_out = 0 if accepted else 1
+        low_signal_count = 1 if source_class == "low_signal_summary" else 0
+        pain_signal_count = 1 if source_class == "pain_signal" else 0
+        conn.execute(
+            """
+            INSERT INTO discovery_feedback (
+                source_name, query_text, screened_out, low_signal_count, pain_signal_count,
+                avg_screening_score, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(source_name, query_text) DO UPDATE SET
+                screened_out = discovery_feedback.screened_out + ?,
+                low_signal_count = discovery_feedback.low_signal_count + ?,
+                pain_signal_count = discovery_feedback.pain_signal_count + ?,
+                avg_screening_score = (
+                    (discovery_feedback.avg_screening_score * (discovery_feedback.findings_emitted + discovery_feedback.screened_out))
+                    + ?
+                ) / NULLIF(discovery_feedback.findings_emitted + discovery_feedback.screened_out + 1, 0),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                source_name,
+                query_text,
+                screened_out,
+                low_signal_count,
+                pain_signal_count,
+                screening_score,
+                screened_out,
+                low_signal_count,
+                pain_signal_count,
+                screening_score,
+            ),
+        )
+        conn.commit()
+
     def record_validation_feedback(
         self,
         source_name: str,
@@ -2020,20 +2085,37 @@ class Database:
         overall_score: float,
         selection_status: str = "",
         build_brief_created: bool = False,
+        decision: str = "",
+        recurrence_state: str = "",
+        recurrence_failure_class: str = "",
     ) -> None:
         conn = self._get_connection()
         prototype_candidate = 1 if selection_status == "prototype_candidate" else 0
         build_brief_count = 1 if build_brief_created else 0
+        decision_lower = str(decision or "").strip().lower()
+        recurrence_lower = str(recurrence_state or "").strip().lower()
+        recurrence_failure_lower = str(recurrence_failure_class or "").strip().lower()
+        kill_count = 1 if decision_lower == "kill" else 0
+        park_count = 1 if decision_lower == "park" else 0
+        promote_count = 1 if decision_lower == "promote" else 0
+        thin_recurrence = 1 if recurrence_lower == "thin" else 0
+        single_source_only = 1 if recurrence_failure_lower == "single_source_only" else 0
         conn.execute(
             """
             INSERT INTO discovery_feedback (
-                source_name, query_text, validations, passes, prototype_candidates, build_briefs,
+                source_name, query_text, validations, passes, kills, parks, promotes,
+                thin_recurrence_count, single_source_only_count, prototype_candidates, build_briefs,
                 avg_validation_score, updated_at
             )
-            VALUES (?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(source_name, query_text) DO UPDATE SET
                 validations = discovery_feedback.validations + 1,
                 passes = discovery_feedback.passes + ?,
+                kills = discovery_feedback.kills + ?,
+                parks = discovery_feedback.parks + ?,
+                promotes = discovery_feedback.promotes + ?,
+                thin_recurrence_count = discovery_feedback.thin_recurrence_count + ?,
+                single_source_only_count = discovery_feedback.single_source_only_count + ?,
                 prototype_candidates = discovery_feedback.prototype_candidates + ?,
                 build_briefs = discovery_feedback.build_briefs + ?,
                 avg_validation_score = (
@@ -2045,14 +2127,38 @@ class Database:
                 source_name,
                 query_text,
                 1 if passed else 0,
+                kill_count,
+                park_count,
+                promote_count,
+                thin_recurrence,
+                single_source_only,
                 prototype_candidate,
                 build_brief_count,
                 overall_score,
                 1 if passed else 0,
+                kill_count,
+                park_count,
+                promote_count,
+                thin_recurrence,
+                single_source_only,
                 prototype_candidate,
                 build_brief_count,
                 overall_score,
             ),
+        )
+        conn.commit()
+
+    def set_discovery_query_cooldown(self, source_name: str, query_text: str, cooldown_until: str) -> None:
+        conn = self._get_connection()
+        conn.execute(
+            """
+            INSERT INTO discovery_feedback (source_name, query_text, cooldown_until, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(source_name, query_text) DO UPDATE SET
+                cooldown_until = excluded.cooldown_until,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (source_name, query_text, cooldown_until),
         )
         conn.commit()
 
@@ -2552,6 +2658,202 @@ class Database:
             )
             results.append(result)
         return results
+
+    def get_backlog_workbench(self, limit: int = 25) -> list[dict[str, Any]]:
+        findings = self.get_findings(status="qualified", limit=5000)
+        items: list[dict[str, Any]] = []
+        for finding in findings:
+            if (finding.source_class or "") != "pain_signal" or finding.id is None:
+                continue
+            signal_rows = self.get_raw_signals_by_finding(int(finding.id))
+            atom_rows = self.get_problem_atoms_by_finding(int(finding.id))
+            if not signal_rows or not atom_rows:
+                continue
+            signal = signal_rows[0]
+            atom = atom_rows[0]
+            item = self._build_backlog_workbench_item(finding, signal, atom, atom_rows)
+            if item is not None:
+                items.append(item)
+        items.sort(
+            key=lambda item: (
+                -float(item.get("backlog_priority_score", 0.0) or 0.0),
+                -float(item.get("current_screening_score", 0.0) or 0.0),
+                -float(item.get("finding_id", 0) or 0),
+            )
+        )
+        return items[:limit]
+
+    def _build_backlog_workbench_item(
+        self,
+        finding: Finding,
+        signal: RawSignal,
+        atom: ProblemAtom,
+        atom_rows: list[ProblemAtom],
+    ) -> Optional[dict[str, Any]]:
+        from src.opportunity_engine import classify_source_signal, qualify_problem_signal
+
+        atom_evidence = _json_loads(atom.atom_json, {})
+        finding_data = {
+            "source": finding.source,
+            "source_url": finding.source_url,
+            "product_built": finding.product_built,
+            "outcome_summary": finding.outcome_summary,
+            "finding_kind": finding.finding_kind,
+            "source_class": finding.source_class,
+        }
+        signal_payload = {
+            "source_name": signal.source_name,
+            "source_type": signal.source_type,
+            "source_url": signal.source_url,
+            "title": signal.title,
+            "body_excerpt": signal.body_excerpt,
+            "quote_text": signal.quote_text,
+            "role_hint": signal.role_hint,
+            "published_at": signal.published_at,
+            "timestamp_hint": signal.timestamp_hint,
+            "content_hash": signal.content_hash,
+            "metadata_json": signal.metadata or {},
+        }
+        atom_payload = {
+            "segment": atom.segment,
+            "user_role": atom.user_role,
+            "job_to_be_done": atom.job_to_be_done,
+            "trigger_event": atom.trigger_event,
+            "pain_statement": atom.pain_statement,
+            "failure_mode": atom.failure_mode,
+            "current_workaround": atom.current_workaround,
+            "current_tools": atom.current_tools,
+            "urgency_clues": atom.urgency_clues,
+            "frequency_clues": atom.frequency_clues,
+            "cost_consequence_clues": atom.cost_consequence_clues,
+            "why_now_clues": atom.why_now_clues,
+            "atom_json": atom_evidence,
+        }
+        source_classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+        refreshed_finding = {**finding_data, "source_class": source_classification.get("source_class", "")}
+        screening = qualify_problem_signal(refreshed_finding, signal_payload, atom_payload)
+        if source_classification.get("source_class") != "pain_signal" or not screening.get("accepted"):
+            return None
+
+        review_feedback = self.get_review_feedback_summary(finding_id=int(finding.id))
+        discovery_query = str((finding.evidence or {}).get("discovery_query", "") or "")
+        current_workaround_text = str(atom.current_workaround or "").lower()
+        role_text = " ".join([str(atom.user_role or ""), str(atom.segment or "")]).lower()
+        atom_specific_patterns = list(atom_evidence.get("specific_patterns") or [])
+        is_specific_problem = bool(atom_evidence.get("is_specific_problem"))
+
+        operator_terms = (
+            "operator",
+            "ops",
+            "operations",
+            "accounting",
+            "finance",
+            "controller",
+            "bookkeeper",
+            "merchant",
+            "ecommerce",
+            "fulfillment",
+        )
+        workflow_terms = (
+            "spreadsheet",
+            "spreadsheets",
+            "manual",
+            "whatsapp",
+            "csv",
+            "excel",
+            "reconciliation",
+            "handoff",
+        )
+        query_terms = (
+            "manual reconciliation",
+            "spreadsheet reconciliation",
+            "manual handoff",
+            "month end close",
+            "sales channel",
+            "returns workflow",
+            "supplier data",
+            "which spreadsheet is latest",
+            "copy paste workflow",
+        )
+
+        score = 0.0
+        reasons: list[str] = []
+
+        score += min(float(screening.get("score", 0.0) or 0.0), 10.0) * 0.35
+        reasons.append(f"current_gate_score:{round(float(screening.get('score', 0.0) or 0.0), 2)}")
+        if any(term in role_text for term in operator_terms):
+            score += 1.2
+            reasons.append("operator_context")
+        if atom.job_to_be_done:
+            score += 0.8
+            reasons.append("jtbd_present")
+        if atom.failure_mode:
+            score += 1.0
+            reasons.append("failure_mode_present")
+        if atom.current_workaround:
+            score += 0.9
+            reasons.append("workaround_present")
+        if any(term in current_workaround_text for term in workflow_terms):
+            score += 0.8
+            reasons.append("workflow_workaround")
+        if atom.frequency_clues:
+            score += 0.5
+            reasons.append("frequency_clues")
+        if atom.cost_consequence_clues:
+            score += 0.6
+            reasons.append("cost_consequence")
+        if atom.urgency_clues:
+            score += 0.35
+            reasons.append("urgency_clues")
+        if is_specific_problem:
+            score += 1.2
+            reasons.append("specific_problem_pattern")
+        if atom_specific_patterns:
+            score += min(len(atom_specific_patterns), 3) * 0.3
+            reasons.append(f"specific_patterns:{min(len(atom_specific_patterns), 3)}")
+        if any(term in discovery_query.lower() for term in query_terms):
+            score += 0.45
+            reasons.append("high_value_query_family")
+        source_lower = finding.source.lower()
+        if source_lower.startswith("reddit-problem/accounting") or source_lower.startswith("reddit-problem/smallbusiness") or source_lower.startswith("reddit-problem/ecommerce") or source_lower.startswith("reddit-problem/etsy") or source_lower.startswith("reddit-problem/shopify"):
+            score += 0.8
+            reasons.append("operator_source_lane")
+        if any(label in source_lower for label in ("reddit-problem/automation", "reddit-problem/indiehackers", "reddit-problem/productivity")):
+            score -= 0.9
+            reasons.append("meta_source_penalty")
+        strongest_label = str(review_feedback.get("strongest_label", "") or "")
+        if strongest_label in {"false_positive", "should_kill"}:
+            score -= 2.0
+            reasons.append(f"review_penalty:{strongest_label}")
+        elif strongest_label in {"needs_more_evidence", "should_park"}:
+            score -= 0.5
+            reasons.append(f"review_caution:{strongest_label}")
+
+        return {
+            "finding_id": int(finding.id),
+            "signal_id": int(signal.id or 0),
+            "problem_atom_ids": [int(item.id or 0) for item in atom_rows if item.id is not None],
+            "source": finding.source,
+            "source_url": finding.source_url,
+            "content_hash": finding.content_hash,
+            "finding_kind": finding.finding_kind,
+            "title": signal.title or finding.product_built or finding.outcome_summary,
+            "summary": signal.body_excerpt or finding.outcome_summary,
+            "discovery_query": discovery_query,
+            "segment": atom.segment,
+            "user_role": atom.user_role,
+            "job_to_be_done": atom.job_to_be_done,
+            "failure_mode": atom.failure_mode,
+            "current_workaround": atom.current_workaround,
+            "current_source_class": source_classification.get("source_class", ""),
+            "current_source_reasons": source_classification.get("reasons", []),
+            "current_screening_score": float(screening.get("score", 0.0) or 0.0),
+            "current_screening_positive_signals": list(screening.get("positive_signals", []) or []),
+            "current_screening_negative_signals": list(screening.get("negative_signals", []) or []),
+            "backlog_priority_score": round(score, 4),
+            "priority_reasons": reasons,
+            "review_feedback": review_feedback,
+        }
 
     def get_candidate_workbench(self, limit: int = 25, *, run_id: Optional[str] = None) -> list[dict[str, Any]]:
         rows = self.get_validation_review(limit=500, run_id=run_id)

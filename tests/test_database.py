@@ -502,6 +502,104 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(workbench[1]["next_recommended_action"], "watchlist")
         self.assertEqual(workbench[2]["next_recommended_action"], "archive")
 
+    def test_backlog_workbench_requalifies_and_prioritizes_operator_grade_items(self) -> None:
+        valid_finding_id = self.db.insert_finding(
+            Finding(
+                source="reddit-problem/ecommerce",
+                source_url="https://reddit.com/r/ecommerce/comments/1",
+                product_built='How are u guys managing fulfilment between "order received" and "label printed"?',
+                outcome_summary="The team coordinates through WhatsApp and spreadsheets.",
+                content_hash="backlog-valid",
+                status="qualified",
+                finding_kind="problem_signal",
+                source_class="pain_signal",
+                evidence={"discovery_query": '"order received" "label printed" whatsapp spreadsheet'},
+            )
+        )
+        valid_signal_id = self.db.insert_raw_signal(
+            RawSignal(
+                finding_id=valid_finding_id,
+                source_name="reddit-problem",
+                source_type="forum",
+                source_url="https://reddit.com/r/ecommerce/comments/1",
+                title='How are u guys managing fulfilment between "order received" and "label printed"?',
+                body_excerpt="Received -> Picking -> Processing -> Packed -> Shipped. We coordinate through WhatsApp and spreadsheets.",
+                quote_text="We coordinate through WhatsApp and spreadsheets.",
+                role_hint="operator",
+                content_hash="backlog-valid-signal",
+                metadata={"evidence": {"discovery_query": '"order received" "label printed" whatsapp spreadsheet'}},
+            )
+        )
+        self.db.insert_problem_atom(
+            ProblemAtom(
+                signal_id=valid_signal_id,
+                finding_id=valid_finding_id,
+                cluster_key="ops-fulfillment-gap",
+                segment="shopify merchants",
+                user_role="operator",
+                job_to_be_done="keep operations data in sync without manual cleanup",
+                pain_statement="The team coordinates through WhatsApp and spreadsheets.",
+                trigger_event="Received -> Picking -> Processing -> Packed -> Shipped",
+                failure_mode="manual coordination between order received and label printed",
+                current_workaround="spreadsheets, manual work",
+                current_tools="Shopify, WhatsApp",
+                confidence=0.8,
+                atom_json=json.dumps(
+                    {
+                        "is_specific_problem": True,
+                        "specific_patterns": [{"pattern": "fulfillment_gap", "confidence": 0.9}],
+                    }
+                ),
+            )
+        )
+
+        stale_finding_id = self.db.insert_finding(
+            Finding(
+                source="reddit-problem/accounting",
+                source_url="https://reddit.com/r/accounting/comments/2",
+                product_built="Resume roast",
+                outcome_summary="Feeling lost with career, please roast my resume.",
+                content_hash="backlog-stale",
+                status="qualified",
+                finding_kind="problem_signal",
+                source_class="pain_signal",
+                evidence={"discovery_query": "which spreadsheet is latest"},
+            )
+        )
+        stale_signal_id = self.db.insert_raw_signal(
+            RawSignal(
+                finding_id=stale_finding_id,
+                source_name="reddit-problem",
+                source_type="forum",
+                source_url="https://reddit.com/r/accounting/comments/2",
+                title="Feeling lost with career, please roast my resume.",
+                body_excerpt="Please review my resume and help me transition to a larger firm.",
+                content_hash="backlog-stale-signal",
+            )
+        )
+        self.db.insert_problem_atom(
+            ProblemAtom(
+                signal_id=stale_signal_id,
+                finding_id=stale_finding_id,
+                cluster_key="resume-thread",
+                segment="operators with recurring workflow pain",
+                user_role="finance lead",
+                job_to_be_done="improve my resume",
+                pain_statement="Please review my resume.",
+                trigger_event="trying to transition to a larger firm",
+                failure_mode="resume is too wordy",
+                current_workaround="",
+                confidence=0.4,
+            )
+        )
+
+        workbench = self.db.get_backlog_workbench(limit=10)
+
+        self.assertEqual(len(workbench), 1)
+        self.assertEqual(workbench[0]["finding_id"], valid_finding_id)
+        self.assertIn("operator_context", workbench[0]["priority_reasons"])
+        self.assertGreater(workbench[0]["backlog_priority_score"], 4.0)
+
     def test_threading_local_connections(self) -> None:
         results: list[int] = []
 
@@ -526,6 +624,13 @@ class TestDatabase(unittest.TestCase):
 
     def test_discovery_feedback_records_and_updates(self) -> None:
         self.db.record_discovery_probe("reddit-problem", "manual process", docs_seen=3, latency_ms=125.0, status="ok")
+        self.db.record_discovery_screening(
+            "reddit-problem",
+            "manual process",
+            accepted=False,
+            source_class="low_signal_summary",
+            screening_score=0.22,
+        )
         self.db.record_discovery_hit("reddit-problem", "manual process")
         self.db.record_validation_feedback(
             "reddit-problem",
@@ -534,6 +639,9 @@ class TestDatabase(unittest.TestCase):
             overall_score=0.81,
             selection_status="prototype_candidate",
             build_brief_created=True,
+            decision="promote",
+            recurrence_state="thin",
+            recurrence_failure_class="single_source_only",
         )
         rows = self.db.get_discovery_feedback("reddit-problem")
         self.assertEqual(len(rows), 1)
@@ -542,10 +650,22 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(row["runs"], 1)
         self.assertEqual(row["docs_seen"], 3)
         self.assertEqual(row["findings_emitted"], 1)
+        self.assertEqual(row["screened_out"], 1)
+        self.assertEqual(row["low_signal_count"], 1)
+        self.assertEqual(row["pain_signal_count"], 0)
         self.assertEqual(row["validations"], 1)
         self.assertEqual(row["passes"], 1)
+        self.assertEqual(row["promotes"], 1)
+        self.assertEqual(row["thin_recurrence_count"], 1)
+        self.assertEqual(row["single_source_only_count"], 1)
         self.assertEqual(row["prototype_candidates"], 1)
         self.assertEqual(row["build_briefs"], 1)
+        self.assertGreater(row["avg_screening_score"], 0)
+
+    def test_discovery_feedback_can_store_query_cooldown(self) -> None:
+        self.db.set_discovery_query_cooldown("reddit-problem", "manual process", "2099-01-01T00:00:00+00:00")
+        rows = self.db.get_discovery_feedback("reddit-problem")
+        self.assertEqual(rows[0]["cooldown_until"], "2099-01-01T00:00:00+00:00")
 
     def test_discovery_themes_round_trip(self) -> None:
         theme_id = self.db.upsert_discovery_theme(

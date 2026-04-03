@@ -538,6 +538,236 @@ def test_dispatch_open_qualified_findings_requeues_backlog():
         os.rmdir(temp_dir)
 
 
+def test_dispatch_open_qualified_findings_skips_stale_backlog_under_current_gates():
+    temp_dir = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(temp_dir, "test.db")
+        db = Database(db_path)
+        db.init_schema()
+        db.set_active_run_id("test-run")
+
+        valid_finding_id = db.insert_finding(
+            Finding(
+                source="reddit-problem/ecommerce",
+                source_url="https://reddit.com/r/ecommerce/comments/1",
+                entrepreneur="Ops Lead",
+                product_built='How are u guys managing fulfilment between "order received" and "label printed"?',
+                outcome_summary="The team coordinates through WhatsApp and spreadsheets.",
+                content_hash="qualified-valid",
+                status="qualified",
+                finding_kind="problem_signal",
+                source_class="pain_signal",
+                evidence={"discovery_query": '"order received" "label printed" whatsapp spreadsheet'},
+            )
+        )
+        valid_signal_id = db.insert_raw_signal(
+            RawSignal(
+                finding_id=valid_finding_id,
+                source_name="reddit-problem",
+                source_type="forum",
+                source_url="https://reddit.com/r/ecommerce/comments/1",
+                title='How are u guys managing fulfilment between "order received" and "label printed"?',
+                body_excerpt="Received -> Picking -> Processing -> Packed -> Shipped. We coordinate through WhatsApp and spreadsheets.",
+                content_hash="qualified-valid-signal",
+            )
+        )
+        valid_atom_id = db.insert_problem_atom(
+            ProblemAtom(
+                signal_id=valid_signal_id,
+                finding_id=valid_finding_id,
+                cluster_key="ops-fulfillment-gap",
+                segment="shopify merchants",
+                user_role="operator",
+                job_to_be_done="keep operations data in sync without manual cleanup",
+                pain_statement="The team coordinates through WhatsApp and spreadsheets.",
+                trigger_event="Received -> Picking -> Processing -> Packed -> Shipped",
+                failure_mode="manual coordination between order received and label printed",
+                current_workaround="spreadsheets, manual work",
+                current_tools="Shopify, WhatsApp",
+                confidence=0.8,
+                atom_json=json.dumps(
+                    {
+                        "is_specific_problem": True,
+                        "specific_patterns": [{"pattern": "fulfillment_gap", "confidence": 0.9}],
+                    }
+                ),
+            )
+        )
+
+        stale_finding_id = db.insert_finding(
+            Finding(
+                source="reddit-problem/accounting",
+                source_url="https://reddit.com/r/accounting/comments/2",
+                entrepreneur="Analyst",
+                product_built="Resume roast",
+                outcome_summary="Feeling lost with career, please roast my resume.",
+                content_hash="qualified-stale",
+                status="qualified",
+                finding_kind="problem_signal",
+                source_class="pain_signal",
+                evidence={"discovery_query": "which spreadsheet is latest"},
+            )
+        )
+        stale_signal_id = db.insert_raw_signal(
+            RawSignal(
+                finding_id=stale_finding_id,
+                source_name="reddit-problem",
+                source_type="forum",
+                source_url="https://reddit.com/r/accounting/comments/2",
+                title="Feeling lost with career, please roast my resume.",
+                body_excerpt="Please dissect my resume and help me transition to a larger firm.",
+                content_hash="qualified-stale-signal",
+            )
+        )
+        db.insert_problem_atom(
+            ProblemAtom(
+                signal_id=stale_signal_id,
+                finding_id=stale_finding_id,
+                cluster_key="resume-thread",
+                segment="operators with recurring workflow pain",
+                user_role="finance lead",
+                job_to_be_done="improve my resume",
+                pain_statement="Please dissect my resume",
+                trigger_event="trying to transition to a larger firm",
+                failure_mode="resume is too wordy",
+                current_workaround="",
+                confidence=0.4,
+            )
+        )
+
+        app = AutoResearcher(config_path=str(Path(__file__).resolve().parents[1] / "config.yaml"))
+        app.db = db
+        app.current_run_id = "test-run"
+
+        class StubOrchestrator:
+            def __init__(self):
+                self.sent = []
+
+            async def send_message(self, **kwargs):
+                self.sent.append(kwargs)
+
+        app.orchestrator = StubOrchestrator()
+        backlog_ids = asyncio.run(app._dispatch_open_qualified_findings())
+
+        assert backlog_ids == [valid_finding_id]
+        assert len(app.orchestrator.sent) == 1
+        sent = app.orchestrator.sent[0]
+        assert sent["payload"]["finding_id"] == valid_finding_id
+        assert sent["payload"]["signal_id"] == valid_signal_id
+        assert sent["payload"]["problem_atom_ids"] == [valid_atom_id]
+    finally:
+        db.close()
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        os.rmdir(temp_dir)
+
+
+def test_run_once_can_skip_backlog_requeue(monkeypatch):
+    app = AutoResearcher(config_path=str(Path(__file__).resolve().parents[1] / "config.yaml"))
+    app.current_run_id = "test-run"
+
+    async def fake_initialize(start_new_run=True):
+        app.db = object()
+        app.orchestrator = type("OrchestratorStub", (), {"start": _start})()
+        app.agents = {"discovery": type("DiscoveryStub", (), {"_discover_once": _discover_once})()}
+
+    async def _start(self, skip_agents=None):
+        return None
+
+    async def _discover_once(self):
+        return [101]
+
+    async def fake_wait(max_wait_seconds):
+        return True
+
+    async def fake_shutdown():
+        return None
+
+    async def fake_dispatch():
+        raise AssertionError("backlog should not be dispatched in discovery-only mode")
+
+    monkeypatch.setattr(app, "initialize", fake_initialize)
+    monkeypatch.setattr(app, "_dispatch_open_qualified_findings", fake_dispatch)
+    monkeypatch.setattr(app, "_wait_for_pipeline_drained", fake_wait)
+    monkeypatch.setattr(app, "shutdown", fake_shutdown)
+    monkeypatch.setattr(app, "snapshot", lambda: {"ok": True})
+
+    summary = asyncio.run(app.run_once(skip_backlog=True))
+
+    assert summary["backlog_ids"] == []
+    assert summary["discovery_ids"] == [101]
+    assert summary["skip_backlog"] is True
+
+
+def test_completion_state_ignores_backlog_in_discovery_only_mode():
+    temp_dir = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(temp_dir, "test.db")
+        db = Database(db_path)
+        db.init_schema()
+
+        finding_id = db.insert_finding(
+            Finding(
+                source="reddit-problem/smallbusiness",
+                source_url="https://reddit.com/r/smallbusiness/comments/1",
+                entrepreneur="Ops Lead",
+                product_built="Spreadsheet-heavy operations",
+                outcome_summary="Still reconciling everything manually.",
+                content_hash="qualified-finding-discovery-only",
+                status="qualified",
+                finding_kind="problem_signal",
+                source_class="pain_signal",
+            )
+        )
+        signal_id = db.insert_raw_signal(
+            RawSignal(
+                finding_id=finding_id,
+                source_name="reddit",
+                source_type="forum",
+                source_url="https://reddit.com/r/smallbusiness/comments/1",
+                title="Spreadsheet-heavy operations",
+                body_excerpt="Still reconciling everything manually.",
+                content_hash="qualified-signal-discovery-only",
+            )
+        )
+        db.insert_problem_atom(
+            ProblemAtom(
+                signal_id=signal_id,
+                finding_id=finding_id,
+                cluster_key="ops-spreadsheet-discovery-only",
+                segment="small business ops",
+                user_role="ops lead",
+                job_to_be_done="keep operations data in sync",
+                pain_statement="Still reconciling everything manually.",
+                trigger_event="weekly close",
+                failure_mode="manual reconciliation piles up",
+                current_workaround="spreadsheets",
+                current_tools="Excel",
+                confidence=0.8,
+            )
+        )
+
+        app = AutoResearcher(config_path=str(Path(__file__).resolve().parents[1] / "config.yaml"))
+        app.db = db
+        app._ignore_backlog_for_completion = True
+        app.orchestrator = type("OrchestratorStub", (), {"_message_queue": asyncio.Queue()})()
+        app.agents = {
+            "evidence": type("EvidenceStub", (), {"busy_count": lambda self: 0})(),
+            "validation": type("ValidationStub", (), {"busy_count": lambda self: 0})(),
+        }
+
+        state = app.completion_state()
+
+        assert state["actual_open_qualified"] == 1
+        assert state["open_qualified"] == 0
+        assert state["drained"] is True
+    finally:
+        db.close()
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        os.rmdir(temp_dir)
+
+
 def test_snapshot_screening_uses_current_run_counts():
     temp_dir = tempfile.mkdtemp()
     try:
