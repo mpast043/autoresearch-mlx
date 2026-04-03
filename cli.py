@@ -724,8 +724,6 @@ async def main() -> None:
         cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
         with open(cfg_file) as f:
             config = yaml.safe_load(f) or {}
-        from src.database import Database, Opportunity
-
         db_path = Path("data/autoresearch.db")
         if not db_path.exists():
             print("No database found")
@@ -741,12 +739,18 @@ async def main() -> None:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
+        def _has_column(table: str, column: str) -> bool:
+            return any(row["name"] == column for row in cursor.execute(f"PRAGMA table_info({table})").fetchall())
+
+        atom_cluster_expr = "a.cluster_key" if _has_column("problem_atoms", "cluster_key") else "json_extract(a.metadata_json, '$.cluster_key')"
+        cluster_key_expr = "c.cluster_key" if _has_column("opportunity_clusters", "cluster_key") else "json_extract(c.metadata_json, '$.cluster_key')"
+
         # Get all clusters with their atoms for scoring
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT c.id as cluster_id, c.label, c.summary_json,
                    GROUP_CONCAT(a.id) as atom_ids
             FROM opportunity_clusters c
-            LEFT JOIN problem_atoms a ON a.cluster_key = c.cluster_key
+            LEFT JOIN problem_atoms a ON {atom_cluster_expr} = {cluster_key_expr}
             GROUP BY c.id
             ORDER BY c.id
         """)
@@ -781,24 +785,14 @@ async def main() -> None:
 
             atom = dict(atom_row)
 
-            # Get signal from atom's signal_id
-            signal_id = atom.get("signal_id")
+            # Existing rows expose raw_signal_id; signal_id is only present on the dataclass adapter.
+            signal_id = atom.get("raw_signal_id") or atom.get("signal_id")
             signal = {}
             if signal_id:
                 cursor.execute("SELECT * FROM raw_signals WHERE id = ?", (signal_id,))
                 signal_row = cursor.fetchone()
                 if signal_row:
                     signal = dict(signal_row)
-                    # Get finding for source info
-                    finding_id = signal.get("finding_id")
-                    if finding_id:
-                        cursor.execute("SELECT * FROM findings WHERE id = ?", (finding_id,))
-                        finding_row = cursor.fetchone()
-                        if finding_row:
-                            finding = dict(finding_row)
-                            signal["source_type"] = finding.get("source", "web")
-                            signal["url"] = finding.get("source_url", "")
-                            signal["title"] = finding.get("outcome_summary", "")
 
             # Get cluster summary
             import json
@@ -933,53 +927,63 @@ async def main() -> None:
         return
 
     app = AutoResearcher(config_path=args.config)
+    original_web: list[str] | None = None
+    original_reddit: list[str] | None = None
+
+    def apply_discovery_overrides() -> None:
+        nonlocal original_web, original_reddit
+        if args.pattern:
+            from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
+
+            if args.pattern not in PATTERN_TO_DISCOVERY_QUERIES:
+                print(f"Unknown pattern: {args.pattern}")
+                print(f"Available patterns: {list(PATTERN_TO_DISCOVERY_QUERIES.keys())}")
+                raise SystemExit(1)
+
+            queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
+            print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
+            print(f"Queries: {queries[:3]}...")
+
+            original_web = list(app.config.get("discovery", {}).get("web", {}).get("keywords", []))
+            original_reddit = list(app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", []))
+
+            if "web" in app.config.get("discovery", {}):
+                app.config["discovery"]["web"]["keywords"] = queries
+
+            if "reddit" in app.config.get("discovery", {}):
+                app.config["discovery"]["reddit"]["problem_keywords"] = queries
+
+            print(f"Running focused discovery with {len(queries)} queries...\n")
+
+        if args.fresh:
+            print("=== FRESH MODE: Bypassing signal cache ===")
+            app.discovery_bypass_cache = True
+
+    def restore_discovery_overrides() -> None:
+        if args.pattern:
+            if original_web is not None and "web" in app.config.get("discovery", {}):
+                app.config["discovery"]["web"]["keywords"] = original_web
+            if original_reddit is not None and "reddit" in app.config.get("discovery", {}):
+                app.config["discovery"]["reddit"]["problem_keywords"] = original_reddit
+
+    if args.command in {"run", "run-once"}:
+        apply_discovery_overrides()
 
     if args.command == "run":
         await app.run()
         return
 
-    # Pattern-based focused discovery
-    if args.pattern:
-        from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
-
-        if args.pattern not in PATTERN_TO_DISCOVERY_QUERIES:
-            print(f"Unknown pattern: {args.pattern}")
-            print(f"Available patterns: {list(PATTERN_TO_DISCOVERY_QUERIES.keys())}")
-            return
-
-        queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
-        print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
-        print(f"Queries: {queries[:3]}...")
-
-        # Temporarily override config with focused queries (both web and reddit)
-        original_web = app.config.get("discovery", {}).get("web", {}).get("keywords", [])
-        original_reddit = app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", [])
-
-        if "web" in app.config.get("discovery", {}):
-            app.config["discovery"]["web"]["keywords"] = queries
-
-        # Also override reddit problem_keywords for seed queries
-        if "reddit" in app.config.get("discovery", {}):
-            app.config["discovery"]["reddit"]["problem_keywords"] = queries
-
-        print(f"Running focused discovery with {len(queries)} queries...\n")
-
-    # Set bypass_cache flag if --fresh is specified
-    if args.fresh and "discovery" in app.agents:
-        print("=== FRESH MODE: Bypassing signal cache ===")
-        app.agents["discovery"].bypass_cache = True
-
     if args.command == "run-once":
-        summary = await app.run_once()
-        if args.verbose:
-            print_json(build_verbose_report(app, summary))
-        else:
-            print_json(summary)
+        try:
+            summary = await app.run_once()
+            if args.verbose:
+                print_json(build_verbose_report(app, summary))
+            else:
+                print_json(summary)
+        finally:
+            restore_discovery_overrides()
 
-        # Restore original config after focused run
         if args.pattern:
-            if "web" in app.config.get("discovery", {}):
-                app.config["discovery"]["web"]["keywords"] = original_web
             print(f"\n=== Focused discovery complete ===")
             print(f"Use 'python3 cli.py patterns' to see updated pattern counts")
         return

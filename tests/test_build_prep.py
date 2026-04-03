@@ -85,6 +85,31 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertIn("single_family_support", gate["blocked_by"])
         self.assertIn("recurrence_timeout", gate["blocked_by"])
 
+    def test_selection_gate_preserves_promote_decisions_under_v4_scoring(self):
+        status, reason, gate = determine_selection_state(
+            decision="promote",
+            scorecard={
+                "decision_score": 0.19,
+                "problem_truth_score": 0.12,
+                "revenue_readiness_score": 0.23,
+                "frequency_score": 0.30,
+                "evidence_quality": 0.60,
+                "value_support": 0.45,
+                "composite_score": 0.20,
+            },
+            corroboration={
+                "corroboration_score": 0.70,
+                "source_family_diversity": 2,
+                "generalizability_class": "reusable_workflow_pain",
+                "recurrence_state": "supported",
+            },
+            market_enrichment={"wedge_active": False},
+        )
+        self.assertEqual(status, "prototype_candidate")
+        self.assertEqual(reason, "validated_selection_gate")
+        self.assertTrue(gate["eligible"])
+        self.assertIn("validation_recommended_promote", gate["reasons"])
+
     def test_selection_gate_allows_multifamily_near_miss_prototype_candidate(self):
         status, reason, gate = determine_selection_state(
             decision="park",

@@ -60,6 +60,7 @@ class AutoResearcher:
         self.status_tracker = StatusTracker(str(self.output_dir))
         self.sources_db = self._load_sources_db()
         self.current_run_id = ""
+        self.discovery_bypass_cache = False
 
     def _load_config(self, path: str | Path) -> dict[str, Any]:
         config_file = resolve_project_path(path, default=DEFAULT_CONFIG_PATH)
@@ -157,6 +158,7 @@ class AutoResearcher:
                 sources=discovery_sources,
                 config=self.config,
                 status_tracker=self.status_tracker,
+                bypass_cache=self.discovery_bypass_cache,
             ),
             "evidence": EvidenceAgent(self.db, message_queue=message_queue, config=self.config),
             "validation": ValidationAgent(self.db, message_queue=message_queue, config=self.config),

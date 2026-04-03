@@ -56,6 +56,17 @@ def determine_selection_state(
                 "blocked_by": ["decision_kill"],
             },
         )
+    if decision == "promote":
+        return (
+            "prototype_candidate",
+            "validated_selection_gate",
+            {
+                "eligible": True,
+                "gate_version": BUILD_PREP_RULE_VERSION,
+                "reasons": ["validation_recommended_promote"],
+                "blocked_by": [],
+            },
+        )
 
     corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
     # Use source_family_diversity (total unique confirming sources) rather than

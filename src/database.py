@@ -647,7 +647,7 @@ class Database:
                 evidence_quality REAL DEFAULT 0,
                 composite_score REAL DEFAULT 0,
                 confidence REAL DEFAULT 0,
-                scoring_version TEXT DEFAULT 'v1',
+                scoring_version TEXT DEFAULT '0',
                 -- v4 additions: PTS/RRS split scoring
                 problem_truth_score REAL DEFAULT 0,
                 revenue_readiness_score REAL DEFAULT 0,
@@ -670,9 +670,6 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_opportunities_selection_status ON opportunities(selection_status);
             CREATE INDEX IF NOT EXISTS idx_opportunities_composite_score ON opportunities(composite_score);
-            CREATE INDEX IF NOT EXISTS idx_opportunities_decision_score ON opportunities(decision_score);
-            CREATE INDEX IF NOT EXISTS idx_opportunities_scoring_version ON opportunities(scoring_version);
-            CREATE INDEX IF NOT EXISTS idx_opportunities_formula_version ON opportunities(formula_version);
             -- Scoring run audit table
             CREATE TABLE IF NOT EXISTS scoring_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -929,6 +926,49 @@ class Database:
         )
         _ensure_column(conn, "problem_atoms", "metadata_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "opportunity_clusters", "metadata_json", "TEXT DEFAULT '{}'")
+        _ensure_column(
+            conn,
+            "opportunities",
+            "scoring_version",
+            "TEXT DEFAULT '0'",
+            backfill_sql="""
+            UPDATE opportunities
+            SET scoring_version = '0'
+            WHERE scoring_version IS NULL OR scoring_version = ''
+            """,
+        )
+        _ensure_column(conn, "opportunities", "problem_truth_score", "REAL DEFAULT 0")
+        _ensure_column(conn, "opportunities", "revenue_readiness_score", "REAL DEFAULT 0")
+        _ensure_column(conn, "opportunities", "decision_score", "REAL DEFAULT 0")
+        _ensure_column(conn, "opportunities", "problem_plausibility", "REAL DEFAULT 0")
+        _ensure_column(conn, "opportunities", "value_support", "REAL DEFAULT 0")
+        _ensure_column(conn, "opportunities", "corroboration_strength", "REAL DEFAULT 0")
+        _ensure_column(conn, "opportunities", "evidence_sufficiency", "REAL DEFAULT 0")
+        _ensure_column(conn, "opportunities", "willingness_to_pay_proxy", "REAL DEFAULT 0")
+        _ensure_column(
+            conn,
+            "opportunities",
+            "formula_version",
+            "TEXT DEFAULT 'original'",
+            backfill_sql="""
+            UPDATE opportunities
+            SET formula_version = 'original'
+            WHERE formula_version IS NULL OR formula_version = ''
+            """,
+        )
+        _ensure_column(
+            conn,
+            "opportunities",
+            "threshold_version",
+            "TEXT DEFAULT '2025_q1'",
+            backfill_sql="""
+            UPDATE opportunities
+            SET threshold_version = '2025_q1'
+            WHERE threshold_version IS NULL OR threshold_version = ''
+            """,
+        )
+        _ensure_column(conn, "opportunities", "evaluated_at", "TIMESTAMP")
+        _ensure_column(conn, "opportunities", "last_rescored_at", "TIMESTAMP")
         _ensure_column(conn, "discovery_feedback", "prototype_candidates", "INTEGER DEFAULT 0")
         _ensure_column(conn, "discovery_feedback", "build_briefs", "INTEGER DEFAULT 0")
         _ensure_column(conn, "products", "idea_id", "INTEGER DEFAULT 0")
@@ -975,6 +1015,24 @@ class Database:
             """
             CREATE INDEX IF NOT EXISTS idx_products_build_brief
             ON products(build_brief_id, built_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_opportunities_decision_score
+            ON opportunities(decision_score)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_opportunities_scoring_version
+            ON opportunities(scoring_version)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_opportunities_formula_version
+            ON opportunities(formula_version)
             """
         )
         conn.execute(

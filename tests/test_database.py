@@ -119,6 +119,59 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(retrieved.status, "new")
         self.assertEqual(retrieved.product_built, "Test Product")
 
+    def test_init_schema_migrates_legacy_opportunities_scoring_columns(self) -> None:
+        legacy_db_path = os.path.join(self.temp_dir, "legacy.db")
+        conn = sqlite3.connect(legacy_db_path)
+        conn.execute(
+            """
+            CREATE TABLE opportunities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cluster_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                market_gap TEXT NOT NULL,
+                recommendation TEXT NOT NULL,
+                status TEXT NOT NULL,
+                pain_severity REAL DEFAULT 0,
+                frequency_score REAL DEFAULT 0,
+                cost_of_inaction REAL DEFAULT 0,
+                workaround_density REAL DEFAULT 0,
+                urgency_score REAL DEFAULT 0,
+                segment_concentration REAL DEFAULT 0,
+                reachability REAL DEFAULT 0,
+                timing_shift REAL DEFAULT 0,
+                buildability REAL DEFAULT 0,
+                expansion_potential REAL DEFAULT 0,
+                education_burden REAL DEFAULT 0,
+                dependency_risk REAL DEFAULT 0,
+                adoption_friction REAL DEFAULT 0,
+                evidence_quality REAL DEFAULT 0,
+                composite_score REAL DEFAULT 0,
+                confidence REAL DEFAULT 0,
+                selection_status TEXT DEFAULT 'research_more',
+                selection_reason TEXT DEFAULT '',
+                notes_json TEXT DEFAULT '{}',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        legacy_db = Database(legacy_db_path)
+        legacy_db.init_schema()
+        columns = {
+            row[1]
+            for row in sqlite3.connect(legacy_db_path).execute("PRAGMA table_info(opportunities)").fetchall()
+        }
+
+        self.assertIn("scoring_version", columns)
+        self.assertIn("decision_score", columns)
+        self.assertIn("problem_truth_score", columns)
+        self.assertIn("formula_version", columns)
+        self.assertIn("threshold_version", columns)
+        legacy_db.close()
+        os.remove(legacy_db_path)
+
     def test_duplicate_detection_via_hash(self) -> None:
         finding = Finding(source="source1", source_url="https://example.com/1", content_hash="duplicate_hash")
         self.db.insert_finding(finding)

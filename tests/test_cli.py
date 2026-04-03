@@ -210,6 +210,69 @@ def test_build_operator_report_combines_health_sources_and_build_queue():
     assert report["operator_focus"]["recommended_focus"] == "prototype_now"
 
 
+def test_cli_run_applies_pattern_and_fresh_before_dispatch(monkeypatch):
+    captured = {}
+
+    class DummyRunApp:
+        def __init__(self, config_path=None):
+            self.config = {
+                "discovery": {
+                    "web": {"keywords": ["original web"]},
+                    "reddit": {"problem_keywords": ["original reddit"], "theme_keywords": {}},
+                }
+            }
+            self.discovery_bypass_cache = False
+
+        async def run(self):
+            captured["web_keywords"] = list(self.config["discovery"]["web"]["keywords"])
+            captured["reddit_keywords"] = list(self.config["discovery"]["reddit"]["problem_keywords"])
+            captured["bypass_cache"] = self.discovery_bypass_cache
+
+    monkeypatch.setattr(cli, "AutoResearcher", DummyRunApp)
+    monkeypatch.setattr(sys, "argv", ["cli.py", "run", "--pattern", "bank_reconciliation", "--fresh"])
+
+    asyncio.run(cli.main())
+
+    assert captured["bypass_cache"] is True
+    assert captured["web_keywords"][0] == "bank reconciliation manual process"
+    assert captured["reddit_keywords"][0] == "bank reconciliation manual process"
+
+
+def test_cli_run_once_restores_pattern_overrides_after_dispatch(monkeypatch):
+    captured = {}
+
+    class DummyRunOnceApp:
+        last_instance = None
+
+        def __init__(self, config_path=None):
+            self.config = {
+                "discovery": {
+                    "web": {"keywords": ["original web"]},
+                    "reddit": {"problem_keywords": ["original reddit"], "theme_keywords": {}},
+                }
+            }
+            self.discovery_bypass_cache = False
+            DummyRunOnceApp.last_instance = self
+
+        async def run_once(self):
+            captured["web_keywords_during_run"] = list(self.config["discovery"]["web"]["keywords"])
+            captured["reddit_keywords_during_run"] = list(self.config["discovery"]["reddit"]["problem_keywords"])
+            captured["bypass_cache_during_run"] = self.discovery_bypass_cache
+            return {"ok": True}
+
+    monkeypatch.setattr(cli, "AutoResearcher", DummyRunOnceApp)
+    monkeypatch.setattr(sys, "argv", ["cli.py", "run-once", "--pattern", "bank_reconciliation", "--fresh"])
+
+    asyncio.run(cli.main())
+
+    app = DummyRunOnceApp.last_instance
+    assert captured["bypass_cache_during_run"] is True
+    assert captured["web_keywords_during_run"][0] == "bank reconciliation manual process"
+    assert captured["reddit_keywords_during_run"][0] == "bank reconciliation manual process"
+    assert app.config["discovery"]["web"]["keywords"] == ["original web"]
+    assert app.config["discovery"]["reddit"]["problem_keywords"] == ["original reddit"]
+
+
 def test_render_watch_snapshot_shows_runtime_and_live_counts():
     rendered = render_watch_snapshot(
         {
