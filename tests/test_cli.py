@@ -19,6 +19,7 @@ from cli import (
     build_discovery_sort_diagnostics,
     build_operator_report,
     build_verbose_report,
+    resolve_database_path_from_config,
     render_watch_snapshot,
 )
 
@@ -358,6 +359,19 @@ def test_cli_eval_runs_from_another_cwd_via_absolute_path():
         os.rmdir(temp_dir)
 
     assert '"passed_cases": 15' in result.stdout
+
+
+def test_resolve_database_path_from_config_uses_configured_database_location(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "database:\n"
+        "  path: data/custom.db\n",
+        encoding="utf-8",
+    )
+
+    db_path = resolve_database_path_from_config(config_path)
+
+    assert db_path == Path(__file__).resolve().parents[1] / "data" / "custom.db"
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,216 @@
+output_dir: output
+
+database:
+  path: data/autoresearch.db
+
+discovery:
+  # Self-expanding discovery: automatically add new keywords/subreddits based on what works
+  auto_expand: true
+  exploration_slots_per_cycle: 1
+  max_queries_per_concept: 1
+  query_family_decay_hours: 18
+  query_family_decay_min_queries: 2
+  source_selection:
+    always_run: ["reddit", "web"]
+    exploratory_low_yield_sources_per_cycle: 1
+    low_yield_min_runs: 50
+  expansion:
+    max_keywords_per_wave: 5
+    max_subreddits_per_wave: 5
+    min_validation_score: 0.4
+    cooldown_hours: 12
+
+  # Web discovery options
+  web:
+    # Use Jina Reader for content extraction (free, no API key)
+    # Falls back to MCP fetcher or requests+BeautifulSoup if disabled
+    use_jina_reader: true
+    # Hard caps per web lane so run-once stays responsive even when web search is slow.
+    success_timeout_seconds: 10
+    market_timeout_seconds: 8
+    problem_timeout_seconds: 15
+
+  # `web` = broad web search + marketplace pain threads (see DiscoveryAgent._check_source).
+  sources:
+    - reddit
+    - web
+    - github
+    - youtube
+    - youtube-comments
+    - wordpress_reviews
+    - shopify_reviews
+  candidate_filter:
+    min_score: 1
+    behavioral_min_signals: 1
+    behavioral_penalty: 1
+  # App/plugin review lanes (1–2 star pain). Tune slugs/handles to niches you care about.
+  shopify_reviews:
+    # Public storefront HTML scrape (no Shopify Partner/Admin API). Slugs: https://apps.shopify.com/<handle>
+    # Leave empty to auto-discover from sitemap
+    app_handles: []
+    max_apps: 3
+    reviews_per_app: 3
+    rating_filters: [1, 2]
+    sort_by: newest
+    rate_limit_cooldown_seconds: 900
+  github:
+    timeout_seconds: 8
+    hard_skip_after_zero_yield: false
+  wordpress_reviews:
+    plugin_slugs:
+      - woocommerce
+      - fluent-crm
+      - wordfence
+      - updraftplus
+    reviews_per_plugin: 5
+    star_filters: [1, 2]
+  # YouTube comments for problem discovery
+  youtube_comments:
+    keywords:
+      - "shopify app review 2024"
+      - "best shopify apps"
+      - "shopify app recommendations"
+      - "shopify app vs"
+      - "ecommerce tools review"
+
+  # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
+  reddit:
+    # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
+    search_time_filter: year
+    # false = search curated operator/problem subreddits instead of noisy r/all.
+    use_r_all: false
+    # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
+    max_subreddits_per_wave: 4
+    max_keywords_per_wave: 4
+    pair_concurrency: 3
+    # Prime only a small, diversified relay seed set per run.
+    reddit_seed_query_limit: 8
+    # For each sub×keyword pair, run these Reddit sort modes (all/recent/top/comments).
+    search_sorts: ["relevance", "new", "top", "comments"]
+    # Per sort mode result limit and hard cap per sub×keyword pair after URL dedupe.
+    per_sort_limit: 2
+    max_docs_per_pair: 6
+    problem_subreddits:
+      - accounting
+      - smallbusiness
+      - EtsySellers
+      - ecommerce
+      - shopify
+      - projectmanagement
+      - automation
+      - sysadmin
+      - msp
+      - devops
+      - excel
+      - notion
+      - airtable
+      - webdev
+      - selfhosted
+      - sales
+      - productivity
+      - Entrepreneur
+      - indiehackers
+      - SaaS
+      - startups
+      - freelance
+    problem_keywords:
+      - "manual reconciliation"
+      - "spreadsheet reconciliation process"
+      - "manual handoff workflow"
+      - "month end close spreadsheet"
+      - "sales channel reconciliation spreadsheet"
+      - "bank deposit reconciliation spreadsheet"
+      - "returns workflow spreadsheet"
+      - "supplier data spreadsheet workflow"
+      - '"order received" "label printed" whatsapp spreadsheet'
+      - "which spreadsheet is latest"
+      - "held together by spreadsheets"
+      - "copy paste workflow"
+    # Optional buckets for suggest-discovery to return per-theme keyword hints.
+    theme_keywords:
+      saas:
+        - "subscription billing"
+        - "customer onboarding"
+        - "support queue"
+      money:
+        - "cash flow"
+        - "manual reconciliation"
+        - "invoice mismatch"
+      build:
+        - "deployment pain"
+        - "release checklist"
+        - "integration breakage"
+
+orchestration:
+  evidence_concurrency: 3
+  run_once_max_wait_seconds: 180
+  evidence_timeout_seconds: 120
+  # After validation: generate SaaS/product ideas when decision is promote OR selection_status is prototype_candidate.
+  auto_ideate_after_validation: true
+  # `python cli.py run`: repeat discovery waves after each drain (sleep retry_interval_seconds).
+  # Use this for long-running sessions without tying loops to stop_on_hit.
+  continuous_waves: true
+  # When enabled, `python cli.py run` can stop after a validation "hit"
+  # (default: prototype_candidate OR promote). See orchestrator.stop_on_hit_matches.
+  # Set exit_on_hit: false to keep running after a hit while continuous_waves is on.
+  stop_on_hit:
+    enabled: false
+    exit_on_hit: true
+    selection_status_any:
+      - prototype_candidate
+    decision_any:
+      - promote
+    # Pause between discovery waves when looping. Use 0 for back-to-back waves (only the
+    # pipeline drain wait applies). Increase if you need to ease API rate limits.
+    retry_interval_seconds: 0
+
+builder:
+  auto_build: true
+
+# LLM config for builder_v2 code generation
+llm:
+  provider: ollama
+  model: llama3.1:8b
+  base_url: http://localhost:11434
+  max_tokens: 12000
+
+validation:
+  promotion_threshold: 0.18  # v4: Calibrated to P90 of decision_score distribution
+  park_threshold: 0.15       # v4: Keep current
+  # Evidence/gathering search settings
+  search:
+    query_terms: 14
+    recurrence_results: 6
+    competitor_results: 8
+    evidence_sample: 5
+    recurrence_budget_seconds: 45.0
+    competitor_budget_seconds: 20.0
+    max_results_per_domain: 2
+    # DuckDuckGo provider backend: "duckduckgo" (HTML) or "brave" or "google" etc
+    ddgs_backend: duckduckgo
+    # Extra results to fetch beyond max_results to allow deduplication headroom
+    ddgs_extra_results: 4
+    # Result truncation lengths
+    result_title_length: 180
+    result_snippet_length: 320
+    # HTTP user-agent sent with search requests
+    search_user_agent: "Mozilla/5.0 (compatible; AutoResearcher/1.0)"
+    # Provider (ddgs/duckduckgo_search) timeouts per intent (seconds)
+    provider_timeout_recurrence: 8
+    provider_timeout_competitor: 10
+    provider_timeout_general: 12
+    # HTTP request timeouts per intent (seconds)
+    request_timeout_recurrence: 10
+    request_timeout_competitor: 12
+    request_timeout_general: 20
+
+reddit_bridge:
+  enabled: true
+  mode: bridge_with_fallback
+  seed_on_miss: true
+  base_url: ${REDDIT_BRIDGE_BASE_URL}
+  auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}
+
+reddit_relay:
+  auth_token: ${REDDIT_RELAY_AUTH_TOKEN}
+  allow_no_auth: false

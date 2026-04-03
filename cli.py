@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from src.runtime.paths import DEFAULT_CONFIG_PATH, resolve_project_path  # noqa: E402
+from src.runtime.paths import DEFAULT_CONFIG_PATH, DEFAULT_EVAL_PATH, resolve_project_path  # noqa: E402
 from src.validation_thresholds import resolve_promotion_park_thresholds  # noqa: E402
 from run import AutoResearcher  # noqa: E402
 from src.behavior_eval import run_behavior_eval  # noqa: E402
@@ -18,11 +18,7 @@ from src.reddit_relay import run_relay_server  # noqa: E402
 from src.reddit_seed import RedditSeeder  # noqa: E402
 
 
-def run_backup_db(config_path: str | Path) -> dict:
-    """Copy SQLite DB to data/backups/ (see docs/RECOVERY.md)."""
-    import shutil
-    from datetime import datetime
-
+def load_runtime_config(config_path: str | Path) -> tuple[dict, Path]:
     import yaml
 
     from src.runtime.env import load_local_env
@@ -30,9 +26,20 @@ def run_backup_db(config_path: str | Path) -> dict:
     load_local_env()
     cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
     with cfg_file.open(encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle) or {}
+        return yaml.safe_load(handle) or {}, cfg_file
+
+
+def resolve_database_path_from_config(config_path: str | Path) -> Path:
+    cfg, _ = load_runtime_config(config_path)
     rel = (cfg.get("database") or {}).get("path", "data/autoresearch.db")
-    db_path = resolve_project_path(rel, default=Path(rel))
+    return resolve_project_path(rel, default=Path(rel))
+
+
+def run_backup_db(config_path: str | Path) -> dict:
+    """Copy SQLite DB to data/backups/ (see docs/RECOVERY.md)."""
+    import shutil
+    from datetime import datetime
+    db_path = resolve_database_path_from_config(config_path)
     if not db_path.exists():
         return {"ok": False, "error": f"database not found: {db_path}"}
     backup_dir = db_path.parent / "backups"
@@ -45,14 +52,7 @@ def run_backup_db(config_path: str | Path) -> dict:
 
 async def run_check_bridge(config_path: str | Path) -> dict:
     """Call the hosted relay `/api/health` using `reddit_bridge` config (validates URL + token)."""
-    import yaml
-
-    from src.runtime.env import load_local_env
-
-    load_local_env()
-    cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
-    with cfg_file.open(encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle) or {}
+    cfg, _ = load_runtime_config(config_path)
     bridge_cfg = dict(cfg.get("reddit_bridge") or {})
     from src.reddit_bridge import BridgeError, RedditBridgeClient
 
@@ -448,7 +448,7 @@ async def main() -> None:
     parser.add_argument("--interval", type=float, default=1.0, help="Refresh interval for watch mode")
     parser.add_argument("--host", help="Host override for reddit-relay")
     parser.add_argument("--port", type=int, help="Port override for reddit-relay")
-    parser.add_argument("--eval-path", default="evals/behavior_gold.json", help="Path to behavior eval fixture set")
+    parser.add_argument("--eval-path", default=str(DEFAULT_EVAL_PATH), help="Path to behavior eval fixture set")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to runtime config")
     parser.add_argument("--finding-id", type=int, help="Finding id for review-mark")
     parser.add_argument("--cluster-id", type=int, help="Cluster id for review-mark")
@@ -557,7 +557,7 @@ async def main() -> None:
         # Show emerging specific patterns from signals
         from src.opportunity_engine import get_patterns_for_discovery
 
-        db_path = "data/autoresearch.db"
+        db_path = str(resolve_database_path_from_config(args.config))
         patterns = get_patterns_for_discovery(db_path, min_atoms=1)
 
         print("=== EMERGING PATTERNS ===")
@@ -577,18 +577,14 @@ async def main() -> None:
     if args.command == "scoring-report":
         # Show scoring percentile monitor
         import sqlite3
-        import yaml
 
-        db_path = Path("data/autoresearch.db")
+        db_path = resolve_database_path_from_config(args.config)
         if not db_path.exists():
-            print("No database found at data/autoresearch.db")
+            print(f"No database found at {db_path}")
             return
 
         # Load config for thresholds
-        config_path = Path(args.config) if hasattr(args, 'config') else DEFAULT_CONFIG_PATH
-        cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
-        with open(cfg_file) as f:
-            config = yaml.safe_load(f) or {}
+        config, _ = load_runtime_config(args.config)
         promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
 
         conn = sqlite3.connect(str(db_path))
@@ -669,9 +665,9 @@ async def main() -> None:
         # Re-run validation for all opportunities with new formula (v2)
         import sqlite3
 
-        db_path = Path("data/autoresearch.db")
+        db_path = resolve_database_path_from_config(args.config)
         if not db_path.exists():
-            print("No database found")
+            print(f"No database found at {db_path}")
             return
 
         conn = sqlite3.connect(str(db_path))
@@ -718,7 +714,6 @@ async def main() -> None:
     if args.command == "rescore-v4":
         # Re-score all opportunities with v4 formula (PTS/RRS split)
         import sqlite3
-        import yaml
         from datetime import datetime
         from src.opportunity_engine import (
             score_opportunity,
@@ -731,13 +726,10 @@ async def main() -> None:
         )
 
         # Load config for thresholds
-        config_path = Path(args.config) if hasattr(args, 'config') else DEFAULT_CONFIG_PATH
-        cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
-        with open(cfg_file) as f:
-            config = yaml.safe_load(f) or {}
-        db_path = Path("data/autoresearch.db")
+        config, _ = load_runtime_config(args.config)
+        db_path = resolve_database_path_from_config(args.config)
         if not db_path.exists():
-            print("No database found")
+            print(f"No database found at {db_path}")
             return
 
         print("=== V4 RESCORING ===")
@@ -1114,5 +1106,9 @@ async def main() -> None:
         await app.shutdown()
 
 
-if __name__ == "__main__":
+def main_sync() -> None:
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    main_sync()

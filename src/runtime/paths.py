@@ -3,15 +3,46 @@
 from __future__ import annotations
 
 import sys
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = PROJECT_ROOT / "src"
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
-DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
-DEFAULT_SOURCES_DB_PATH = PROJECT_ROOT / "data" / "sources_db.json"
+_RESOURCE_PACKAGE = "src.resources"
+_RESOURCE_CACHE_ROOT = Path.home() / ".cache" / "autoresearch-mlx" / "resources"
+
+
+def _materialize_packaged_resource(*resource_parts: str) -> Path:
+    resource = resources.files(_RESOURCE_PACKAGE)
+    for part in resource_parts:
+        resource = resource.joinpath(part)
+    target = _RESOURCE_CACHE_ROOT.joinpath(*resource_parts)
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(resource.read_bytes())
+    return target
+
+
+def _resolve_default_resource_path(dev_path: Path, *resource_parts: str) -> Path:
+    if dev_path.exists():
+        return dev_path
+    try:
+        return _materialize_packaged_resource(*resource_parts)
+    except Exception:
+        return dev_path
+
+
+DEFAULT_CONFIG_PATH = _resolve_default_resource_path(PROJECT_ROOT / "config.yaml", "config.default.yaml")
+DEFAULT_EVAL_PATH = _resolve_default_resource_path(
+    PROJECT_ROOT / "evals" / "behavior_gold.json",
+    "evals",
+    "behavior_gold.json",
+)
+RUNTIME_ROOT = PROJECT_ROOT if (PROJECT_ROOT / "config.yaml").exists() else Path.cwd()
+DEFAULT_ENV_PATH = RUNTIME_ROOT / ".env"
+DEFAULT_SOURCES_DB_PATH = RUNTIME_ROOT / "data" / "sources_db.json"
 
 
 def ensure_src_root_on_path() -> None:
@@ -26,7 +57,7 @@ def resolve_project_path(path: str | Path | None, *, default: str | Path | None 
         raise ValueError("A path or default must be provided")
     resolved = Path(target)
     if not resolved.is_absolute():
-        resolved = PROJECT_ROOT / resolved
+        resolved = RUNTIME_ROOT / resolved
     return resolved
 
 

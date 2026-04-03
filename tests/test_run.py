@@ -28,7 +28,7 @@ from src.database import (
     ValidationExperiment,
 )
 from run import AutoResearcher
-from src.runtime.paths import DEFAULT_CONFIG_PATH
+from src.runtime.paths import DEFAULT_CONFIG_PATH, DEFAULT_EVAL_PATH
 
 
 def test_autoresearcher_resolves_runtime_paths_from_project_root_outside_cwd():
@@ -45,6 +45,11 @@ def test_autoresearcher_resolves_runtime_paths_from_project_root_outside_cwd():
     finally:
         os.chdir(original_cwd)
         shutil.rmtree(temp_dir)
+
+
+def test_packaged_default_runtime_resources_exist():
+    assert DEFAULT_CONFIG_PATH.exists()
+    assert DEFAULT_EVAL_PATH.exists()
 
 
 def test_snapshot_includes_evidence_layers_and_ledger():
