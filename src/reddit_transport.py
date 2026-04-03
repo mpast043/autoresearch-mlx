@@ -47,8 +47,11 @@ class RedditTransport:
         self._normalize_query = normalize_query
         self._request_get = request_get
         self._logger = logger
+        bridge_config = config.get("reddit_bridge", {}) if isinstance(config.get("reddit_bridge", {}), dict) else {}
+        self.bridge_seed_on_miss = bool(bridge_config.get("seed_on_miss", True))
         self.search_cache: dict[tuple[str, str, int, str, str], list[SearchDocument]] = {}
         self.thread_cache: dict[str, dict[str, Any]] = {}
+        self.bridge_seed_attempted_pairs: set[tuple[str, str]] = set()
         self.metrics = {
             "reddit_mode": self.reddit_mode,
             "reddit_bridge_hits": 0,
@@ -77,13 +80,41 @@ class RedditTransport:
     def get_runtime_metrics(self) -> dict[str, Any]:
         return dict(self.metrics)
 
+    async def _maybe_seed_bridge_pair(self, *, subreddit: str, query: str) -> bool:
+        if not self.bridge_seed_on_miss or not self.reddit_bridge.enabled:
+            return False
+        normalized_subreddit = str(subreddit).strip()
+        normalized_query = self._normalize_query(query)
+        if not normalized_subreddit or not normalized_query:
+            return False
+        cache_key = (normalized_subreddit, normalized_query)
+        if cache_key in self.bridge_seed_attempted_pairs:
+            return False
+        self.bridge_seed_attempted_pairs.add(cache_key)
+        summary = await self.warm_validation_queries(
+            subreddits=[normalized_subreddit],
+            queries=[normalized_query],
+        )
+        seeded = int(summary.get("seeded_searches", 0) or 0)
+        uncovered_after = int(summary.get("uncovered_after", 0) or 0)
+        if seeded > 0 or uncovered_after == 0:
+            self._logger.info(
+                "reddit_search warmed relay cache subreddit=%s query=%r seeded_searches=%s uncovered_after=%s",
+                normalized_subreddit,
+                normalized_query,
+                seeded,
+                uncovered_after,
+            )
+            return True
+        return False
+
     async def warm_validation_queries(
         self,
         *,
         subreddits: list[str],
         queries: list[str],
     ) -> dict[str, int]:
-        if self.reddit_mode != "bridge_only" or not self.reddit_bridge.enabled:
+        if not self.reddit_bridge.enabled:
             return {
                 "seed_runs": 0,
                 "seeded_pairs": 0,
@@ -229,6 +260,39 @@ class RedditTransport:
                     )
                     self.search_cache[cache_key] = []
                     return []
+                seeded = False
+                if exc.code == "no_cached_result":
+                    seeded = await self._maybe_seed_bridge_pair(subreddit=subreddit, query=query)
+                    if seeded:
+                        try:
+                            bridge_posts, _next_cursor = await self.reddit_bridge.search_posts(
+                                subreddit=subreddit,
+                                query=query,
+                                limit=limit,
+                                sort=sort,
+                            )
+                            docs = [
+                                SearchDocument(
+                                    title=post.get("title", ""),
+                                    url=post.get("permalink", ""),
+                                    snippet=self._compact_text(post.get("body", ""), 500),
+                                    source=f"reddit/{post.get('subreddit', subreddit)}",
+                                )
+                                for post in bridge_posts
+                                if post.get("permalink")
+                            ]
+                            self.metrics["reddit_bridge_hits"] += 1
+                            self._logger.info(
+                                "reddit_search recovered via bridge seed subreddit=%s query=%r limit=%s results=%s",
+                                subreddit,
+                                query,
+                                limit,
+                                len(docs),
+                            )
+                            self.search_cache[cache_key] = list(docs)
+                            return docs
+                        except BridgeError as retry_exc:
+                            exc = retry_exc
                 log_fn = self._logger.info if exc.code == "no_cached_result" else self._logger.warning
                 log_fn(
                     "reddit_search bridge failure code=%s subreddit=%s query=%r; falling back to legacy/public path (%s)",
