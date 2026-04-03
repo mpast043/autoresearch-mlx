@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from src.runtime.paths import DEFAULT_CONFIG_PATH, resolve_project_path  # noqa: E402
+from src.validation_thresholds import resolve_promotion_park_thresholds  # noqa: E402
 from run import AutoResearcher  # noqa: E402
 from src.behavior_eval import run_behavior_eval  # noqa: E402
 from src.database import ReviewFeedback  # noqa: E402
@@ -432,6 +433,7 @@ async def main() -> None:
             "patterns",
             "scoring-report",
             "revalidate",
+            "rescore-v4",
         ],
         help="Command to execute",
     )
@@ -564,14 +566,39 @@ async def main() -> None:
     if args.command == "scoring-report":
         # Show scoring percentile monitor
         import sqlite3
+        import yaml
 
         db_path = Path("data/autoresearch.db")
         if not db_path.exists():
             print("No database found at data/autoresearch.db")
             return
 
+        # Load config for thresholds
+        config_path = Path(args.config) if hasattr(args, 'config') else DEFAULT_CONFIG_PATH
+        cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
+        with open(cfg_file) as f:
+            config = yaml.safe_load(f) or {}
+        promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
+
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
+
+        # Show version distribution
+        cursor.execute("SELECT scoring_version, COUNT(*) FROM opportunities GROUP BY scoring_version")
+        version_dist = cursor.fetchall()
+        print("=== SCORING VERSION DISTRIBUTION ===")
+        has_legacy = False
+        for ver, count in version_dist:
+            marker = ""
+            if ver in ('0', 'v1', 'v2', 'v3'):
+                marker = " (LEGACY - needs rescore)"
+                has_legacy = True
+            elif ver == 'v4':
+                marker = " <-- CURRENT"
+            print(f"  {ver}: {count}{marker}")
+        if has_legacy:
+            print("\n⚠️  WARNING: Legacy-scored rows detected. Run revalidation for accurate analysis.")
+        print()
 
         # Get scores
         cursor.execute("SELECT composite_score, frequency_score, evidence_quality, education_burden, adoption_friction FROM opportunities ORDER BY composite_score DESC")
@@ -589,10 +616,8 @@ async def main() -> None:
         p90 = sorted_scores[int(total * 0.90)] if total > 0 else 0
         median = sorted_scores[int(total * 0.50)] if total > 0 else 0
 
-        above_50 = sum(1 for s in scores if s >= 0.50)
-        above_45 = sum(1 for s in scores if s >= 0.45)
-        above_40 = sum(1 for s in scores if s >= 0.40)
-        above_35 = sum(1 for s in scores if s >= 0.35)
+        above_promote = sum(1 for s in scores if s >= promote_thresh)
+        above_park = sum(1 for s in scores if s >= park_thresh)
 
         print("=== SCORING PERCENTILE MONITOR ===\n")
         print(f"Total opportunities: {total}\n")
@@ -602,10 +627,10 @@ async def main() -> None:
         print(f"  P95:   {p95:.4f}")
         print(f"  P90:   {p90:.4f}")
         print(f"  Median:{median:.4f}")
-        print(f"\nDECISION BUCKETS (thresholds: promote=0.50, park=0.35):")
-        print(f"  Promote (≥0.50): {above_50} ({above_50/total*100:.1f}%)")
-        print(f"  Park (0.35-0.50): {above_35-above_50} ({(above_35-above_50)/total*100:.1f}%)")
-        print(f"  Kill (<0.35): {total-above_35} ({(total-above_35)/total*100:.1f}%)")
+        print(f"\nDECISION BUCKETS (thresholds: promote={promote_thresh}, park={park_thresh}):")
+        print(f"  Promote (≥{promote_thresh}): {above_promote} ({above_promote/total*100:.1f}%)")
+        print(f"  Park ({park_thresh}-{promote_thresh}): {above_park-above_promote} ({(above_park-above_promote)/total*100:.1f}%)")
+        print(f"  Kill (<{park_thresh}): {total-above_park} ({(total-above_park)/total*100:.1f}%)")
 
         # Get parked analysis
         cursor.execute("""
@@ -615,11 +640,12 @@ async def main() -> None:
                 AVG(education_burden) as avg_edu,
                 AVG(adoption_friction) as avg_fric
             FROM opportunities
-            WHERE composite_score >= 0.35 AND composite_score < 0.50
-        """)
+            WHERE composite_score >= ? AND composite_score < ?
+        """, (park_thresh, promote_thresh))
         parked = cursor.fetchone()
+        park_count = above_park - above_promote
         if parked and parked[0]:
-            print(f"\nPARKED OPPORTUNITY ANALYSIS (n={above_35-above_50}):")
+            print(f"\nPARKED OPPORTUNITY ANALYSIS (n={park_count}):")
             print(f"  Avg frequency:        {parked[0]:.3f}")
             print(f"  Avg evidence_quality: {parked[1]:.3f}")
             print(f"  Avg education_burden: {parked[2]:.3f} ⚠️")
@@ -674,6 +700,234 @@ async def main() -> None:
         print(f"  Total opportunities: {total}")
         print(f"  Not validated (needs revalidate): {legacy}")
         print(f"  v2 (current formula): {current}")
+
+        conn.close()
+        return
+
+    if args.command == "rescore-v4":
+        # Re-score all opportunities with v4 formula (PTS/RRS split)
+        import sqlite3
+        import yaml
+        from datetime import datetime
+        from src.opportunity_engine import (
+            score_opportunity,
+            stage_decision,
+            build_counterevidence,
+            assess_market_gap,
+            CURRENT_SCORING_VERSION,
+            CURRENT_FORMULA_VERSION,
+            CURRENT_THRESHOLD_VERSION,
+        )
+
+        # Load config for thresholds
+        config_path = Path(args.config) if hasattr(args, 'config') else DEFAULT_CONFIG_PATH
+        cfg_file = resolve_project_path(config_path, default=DEFAULT_CONFIG_PATH)
+        with open(cfg_file) as f:
+            config = yaml.safe_load(f) or {}
+        from src.database import Database, Opportunity
+
+        db_path = Path("data/autoresearch.db")
+        if not db_path.exists():
+            print("No database found")
+            return
+
+        print("=== V4 RESCORING ===")
+        print(f"Formula: {CURRENT_FORMULA_VERSION}")
+        print(f"Scoring: {CURRENT_SCORING_VERSION}")
+        print(f"Thresholds: {CURRENT_THRESHOLD_VERSION}")
+        print()
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Get all clusters with their atoms for scoring
+        cursor.execute("""
+            SELECT c.id as cluster_id, c.label, c.summary_json,
+                   GROUP_CONCAT(a.id) as atom_ids
+            FROM opportunity_clusters c
+            LEFT JOIN problem_atoms a ON a.cluster_key = c.cluster_key
+            GROUP BY c.id
+            ORDER BY c.id
+        """)
+        clusters = cursor.fetchall()
+
+        if not clusters:
+            print("No clusters found")
+            conn.close()
+            return
+
+        print(f"Found {len(clusters)} clusters to rescore")
+        print()
+
+        promote_count = 0
+        park_count = 0
+        kill_count = 0
+
+        for i, cluster in enumerate(clusters):
+            cluster_id = cluster["cluster_id"]
+
+            # Get atoms for this cluster
+            atom_ids = cluster["atom_ids"]
+            if not atom_ids:
+                print(f"  Skipping cluster {cluster_id}: no atoms")
+                continue
+
+            # Get first atom as representative
+            cursor.execute("SELECT * FROM problem_atoms WHERE id = ?", (int(atom_ids.split(",")[0]),))
+            atom_row = cursor.fetchone()
+            if not atom_row:
+                continue
+
+            atom = dict(atom_row)
+
+            # Get signal from atom's signal_id
+            signal_id = atom.get("signal_id")
+            signal = {}
+            if signal_id:
+                cursor.execute("SELECT * FROM raw_signals WHERE id = ?", (signal_id,))
+                signal_row = cursor.fetchone()
+                if signal_row:
+                    signal = dict(signal_row)
+                    # Get finding for source info
+                    finding_id = signal.get("finding_id")
+                    if finding_id:
+                        cursor.execute("SELECT * FROM findings WHERE id = ?", (finding_id,))
+                        finding_row = cursor.fetchone()
+                        if finding_row:
+                            finding = dict(finding_row)
+                            signal["source_type"] = finding.get("source", "web")
+                            signal["url"] = finding.get("source_url", "")
+                            signal["title"] = finding.get("outcome_summary", "")
+
+            # Get cluster summary
+            import json
+            summary = json.loads(cluster["summary_json"]) if cluster["summary_json"] else {}
+
+            # Build minimal validation evidence
+            validation_evidence = {
+                "scores": {},
+                "evidence": {},
+                "corroboration": {},
+                "market_enrichment": {},
+            }
+
+            # Score the opportunity (v4)
+            try:
+                scorecard = score_opportunity(
+                    atom=atom,
+                    signal=signal,
+                    cluster_summary=summary,
+                    validation_evidence=validation_evidence,
+                    market_gap=assess_market_gap(summary, {}),
+                )
+            except Exception as e:
+                print(f"  Error scoring cluster {cluster_id}: {e}")
+                continue
+
+            # Get market gap
+            market_gap = assess_market_gap(summary, {})
+
+            # Build counterevidence
+            counterevidence = build_counterevidence(scorecard, market_gap)
+
+            # Get thresholds
+            promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
+
+            # Stage decision with v4 logic
+            decision = stage_decision(
+                scorecard,
+                market_gap,
+                counterevidence,
+                promotion_threshold=promote_thresh,
+                park_threshold=park_thresh,
+            )
+
+            # Update opportunity in DB
+            now = datetime.now().isoformat()
+
+            cursor.execute("""
+                UPDATE opportunities
+                SET recommendation = ?, status = ?,
+                    scoring_version = ?,
+                    problem_truth_score = ?,
+                    revenue_readiness_score = ?,
+                    decision_score = ?,
+                    problem_plausibility = ?,
+                    value_support = ?,
+                    corroboration_strength = ?,
+                    evidence_sufficiency = ?,
+                    willingness_to_pay_proxy = ?,
+                    formula_version = ?,
+                    threshold_version = ?,
+                    evaluated_at = ?,
+                    last_rescored_at = ?,
+                    composite_score = ?,
+                    pain_severity = ?,
+                    frequency_score = ?,
+                    evidence_quality = ?
+                WHERE cluster_id = ?
+            """, (
+                decision["recommendation"],
+                decision["status"],
+                CURRENT_SCORING_VERSION,
+                scorecard.get("problem_truth_score", 0.0),
+                scorecard.get("revenue_readiness_score", 0.0),
+                scorecard.get("decision_score", 0.0),
+                scorecard.get("problem_plausibility", 0.0),
+                scorecard.get("value_support", 0.0),
+                scorecard.get("corroboration_strength", 0.0),
+                scorecard.get("evidence_sufficiency", 0.0),
+                scorecard.get("willingness_to_pay_proxy", 0.0),
+                CURRENT_FORMULA_VERSION,
+                CURRENT_THRESHOLD_VERSION,
+                now,
+                now,
+                scorecard.get("composite_score", 0.0),
+                scorecard.get("pain_severity", 0.0),
+                scorecard.get("frequency_score", 0.0),
+                scorecard.get("evidence_quality", 0.0),
+                cluster_id,
+            ))
+
+            if decision["recommendation"] == "promote":
+                promote_count += 1
+            elif decision["recommendation"] == "park":
+                park_count += 1
+            else:
+                kill_count += 1
+
+            if (i + 1) % 10 == 0:
+                print(f"  Progress: {i+1}/{len(clusters)} processed...")
+
+        conn.commit()
+
+        # Record scoring run
+        cursor.execute("""
+            INSERT INTO scoring_runs (run_id, formula_version, threshold_version, scoring_version,
+                opportunity_count, promote_count, park_count, kill_count, computed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            f"rescore-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            CURRENT_FORMULA_VERSION,
+            CURRENT_THRESHOLD_VERSION,
+            CURRENT_SCORING_VERSION,
+            len(clusters),
+            promote_count,
+            park_count,
+            kill_count,
+            datetime.now().isoformat(),
+        ))
+        conn.commit()
+
+        print()
+        print("=== RESCORING COMPLETE ===")
+        print(f"  Total: {len(clusters)}")
+        print(f"  Promote: {promote_count}")
+        print(f"  Park: {park_count}")
+        print(f"  Kill: {kill_count}")
+        print(f"  Version: {CURRENT_SCORING_VERSION}")
+        print(f"  Formula: {CURRENT_FORMULA_VERSION}")
 
         conn.close()
         return

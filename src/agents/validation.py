@@ -30,6 +30,8 @@ from src.opportunity_engine import (
     score_opportunity,
     stage_decision,
     CURRENT_SCORING_VERSION,
+    CURRENT_FORMULA_VERSION,
+    CURRENT_THRESHOLD_VERSION,
 )
 from src.research_tools import ResearchToolkit
 from src.source_policy import atom_generation_allowed
@@ -176,6 +178,17 @@ class ValidationAgent(BaseAgent):
             composite_score=scorecard["composite_score"],
             confidence=scorecard["confidence"],
             scoring_version=scorecard.get("scoring_version", CURRENT_SCORING_VERSION),
+            # v4: PTS/RRS split scoring fields
+            problem_truth_score=scorecard.get("problem_truth_score", 0.0),
+            revenue_readiness_score=scorecard.get("revenue_readiness_score", 0.0),
+            decision_score=scorecard.get("decision_score", 0.0),
+            problem_plausibility=scorecard.get("problem_plausibility", 0.0),
+            value_support=scorecard.get("value_support", 0.0),
+            corroboration_strength=scorecard.get("corroboration_strength", 0.0),
+            evidence_sufficiency=scorecard.get("evidence_sufficiency", 0.0),
+            willingness_to_pay_proxy=scorecard.get("willingness_to_pay_proxy", 0.0),
+            formula_version=scorecard.get("formula_version", CURRENT_FORMULA_VERSION),
+            threshold_version=scorecard.get("threshold_version", CURRENT_THRESHOLD_VERSION),
             selection_status="research_more",
             selection_reason="pending_selection",
             notes={

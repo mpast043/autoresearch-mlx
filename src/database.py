@@ -230,6 +230,21 @@ class Opportunity:
     composite_score: float = 0.0
     confidence: float = 0.0
     scoring_version: str = "0"  # "0" = not yet validated, set by validation agent
+    # v4: PTS/RRS split scoring
+    problem_truth_score: float = 0.0
+    revenue_readiness_score: float = 0.0
+    decision_score: float = 0.0
+    problem_plausibility: float = 0.0
+    value_support: float = 0.0
+    corroboration_strength: float = 0.0
+    evidence_sufficiency: float = 0.0
+    willingness_to_pay_proxy: float = 0.0
+    # Version tracking
+    formula_version: str = "original"
+    threshold_version: str = "2025_q1"
+    evaluated_at: Optional[str] = None
+    last_rescored_at: Optional[str] = None
+    # Legacy fields
     selection_status: str = "research_more"
     selection_reason: str = ""
     notes: dict[str, Any] | None = None
@@ -633,6 +648,21 @@ class Database:
                 composite_score REAL DEFAULT 0,
                 confidence REAL DEFAULT 0,
                 scoring_version TEXT DEFAULT 'v1',
+                -- v4 additions: PTS/RRS split scoring
+                problem_truth_score REAL DEFAULT 0,
+                revenue_readiness_score REAL DEFAULT 0,
+                decision_score REAL DEFAULT 0,
+                problem_plausibility REAL DEFAULT 0,
+                value_support REAL DEFAULT 0,
+                corroboration_strength REAL DEFAULT 0,
+                evidence_sufficiency REAL DEFAULT 0,
+                willingness_to_pay_proxy REAL DEFAULT 0,
+                -- Version tracking
+                formula_version TEXT DEFAULT 'original',
+                threshold_version TEXT DEFAULT '2025_q1',
+                evaluated_at TIMESTAMP,
+                last_rescored_at TIMESTAMP,
+                -- Legacy fields
                 selection_status TEXT DEFAULT 'research_more',
                 selection_reason TEXT DEFAULT '',
                 notes_json TEXT DEFAULT '{}',
@@ -640,6 +670,23 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_opportunities_selection_status ON opportunities(selection_status);
             CREATE INDEX IF NOT EXISTS idx_opportunities_composite_score ON opportunities(composite_score);
+            CREATE INDEX IF NOT EXISTS idx_opportunities_decision_score ON opportunities(decision_score);
+            CREATE INDEX IF NOT EXISTS idx_opportunities_scoring_version ON opportunities(scoring_version);
+            CREATE INDEX IF NOT EXISTS idx_opportunities_formula_version ON opportunities(formula_version);
+            -- Scoring run audit table
+            CREATE TABLE IF NOT EXISTS scoring_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT,
+                formula_version TEXT DEFAULT 'pts_rrs_v1',
+                threshold_version TEXT DEFAULT '2025_q2',
+                scoring_version TEXT DEFAULT 'v4',
+                opportunity_count INTEGER DEFAULT 0,
+                promote_count INTEGER DEFAULT 0,
+                park_count INTEGER DEFAULT 0,
+                kill_count INTEGER DEFAULT 0,
+                computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_scoring_runs_computed_at ON scoring_runs(computed_at);
             CREATE TABLE IF NOT EXISTS validations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT DEFAULT '',
@@ -1447,6 +1494,9 @@ class Database:
                     cost_of_inaction = ?, workaround_density = ?, urgency_score = ?, segment_concentration = ?,
                     reachability = ?, timing_shift = ?, buildability = ?, expansion_potential = ?, education_burden = ?,
                     dependency_risk = ?, adoption_friction = ?, evidence_quality = ?, composite_score = ?, confidence = ?,
+                    scoring_version = ?, problem_truth_score = ?, revenue_readiness_score = ?, decision_score = ?,
+                    problem_plausibility = ?, value_support = ?, corroboration_strength = ?, evidence_sufficiency = ?,
+                    willingness_to_pay_proxy = ?, formula_version = ?, threshold_version = ?,
                     selection_status = ?, selection_reason = ?, notes_json = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -1471,6 +1521,17 @@ class Database:
                     opportunity.evidence_quality,
                     opportunity.composite_score,
                     opportunity.confidence,
+                    opportunity.scoring_version,
+                    opportunity.problem_truth_score,
+                    opportunity.revenue_readiness_score,
+                    opportunity.decision_score,
+                    opportunity.problem_plausibility,
+                    opportunity.value_support,
+                    opportunity.corroboration_strength,
+                    opportunity.evidence_sufficiency,
+                    opportunity.willingness_to_pay_proxy,
+                    opportunity.formula_version,
+                    opportunity.threshold_version,
                     opportunity.selection_status,
                     opportunity.selection_reason,
                     opportunity.notes_json,
@@ -1485,9 +1546,12 @@ class Database:
                     cluster_id, title, market_gap, recommendation, status, pain_severity, frequency_score,
                     cost_of_inaction, workaround_density, urgency_score, segment_concentration, reachability,
                     timing_shift, buildability, expansion_potential, education_burden, dependency_risk,
-                    adoption_friction, evidence_quality, composite_score, confidence, selection_status,
-                    selection_reason, notes_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    adoption_friction, evidence_quality, composite_score, confidence, scoring_version,
+                    problem_truth_score, revenue_readiness_score, decision_score,
+                    problem_plausibility, value_support, corroboration_strength, evidence_sufficiency,
+                    willingness_to_pay_proxy, formula_version, threshold_version,
+                    selection_status, selection_reason, notes_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 (
                     opportunity.cluster_id,
@@ -1511,6 +1575,17 @@ class Database:
                     opportunity.evidence_quality,
                     opportunity.composite_score,
                     opportunity.confidence,
+                    opportunity.scoring_version,
+                    opportunity.problem_truth_score,
+                    opportunity.revenue_readiness_score,
+                    opportunity.decision_score,
+                    opportunity.problem_plausibility,
+                    opportunity.value_support,
+                    opportunity.corroboration_strength,
+                    opportunity.evidence_sufficiency,
+                    opportunity.willingness_to_pay_proxy,
+                    opportunity.formula_version,
+                    opportunity.threshold_version,
                     opportunity.selection_status,
                     opportunity.selection_reason,
                     opportunity.notes_json,

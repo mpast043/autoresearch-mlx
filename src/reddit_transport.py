@@ -401,8 +401,16 @@ class RedditTransport:
                     "comments": comments,
                 }
                 self.thread_cache[url] = result
+                self._logger.info(
+                    "reddit_thread_context using fallback path=readonly_script url=%s comments=%s",
+                    url,
+                    len(comments),
+                )
                 return result
 
+        # Fallback to public JSON API
+        self._logger.info("reddit_thread_context falling back to public_json url=%s node_bin=%s script_exists=%s",
+            url, bool(self.node_bin), self.readonly_script.exists() if hasattr(self.readonly_script, 'exists') else 'N/A')
         json_url = url.rstrip("/") + "/.json"
 
         def _request() -> dict[str, Any]:
@@ -435,6 +443,11 @@ class RedditTransport:
         try:
             payload = await asyncio.to_thread(_request)
             self.thread_cache[url] = payload
+            self._logger.info(
+                "reddit_thread_context using fallback path=public_json url=%s comments=%s",
+                url,
+                len(payload.get("comments", [])),
+            )
             return payload
         except Exception:
             return {"title": "", "text": "", "description": "", "comments": []}

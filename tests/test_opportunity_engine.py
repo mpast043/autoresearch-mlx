@@ -336,5 +336,8 @@ def test_score_opportunity_lifts_ops_and_compliance_value_support():
 
     scorecard = score_opportunity(atom, signal, cluster_summary, validation_evidence, market_gap)
 
-    assert scorecard["operational_value_lift"] > 0.25
-    assert scorecard["value_support"] > 0.5
+    # Note: operational_value_lift and value_support were reduced after v3 bug fix
+    # that removed triple-counted variables (operational_buyer, compliance_burden, cost_pressure)
+    # from these calculations. The new values reflect corrected scoring without inflation.
+    assert scorecard["operational_value_lift"] > 0.05  # Reduced from 0.25 due to bug fix
+    assert scorecard["value_support"] > 0.30  # Reduced from 0.5 due to bug fix

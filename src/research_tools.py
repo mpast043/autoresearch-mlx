@@ -990,10 +990,11 @@ class ResearchToolkit:
         behavioral_penalty = int(discovery_cfg.get("behavioral_penalty", 1))
 
         score = 0
-        score += sum(1 for term in PAIN_KEYWORDS if contains_keyword(haystack, term))
-        score += sum(1 for term in WORKAROUND_SIGNAL_TERMS if contains_keyword(haystack, term))
-        score += sum(1 for term in FREQUENCY_SIGNAL_TERMS if contains_keyword(haystack, term))
-        score += sum(1 for term in COST_SIGNAL_TERMS if contains_keyword(haystack, term))
+        pain_hits = sum(1 for term in PAIN_KEYWORDS if contains_keyword(haystack, term))
+        workaround_hits = sum(1 for term in WORKAROUND_SIGNAL_TERMS if contains_keyword(haystack, term))
+        frequency_hits = sum(1 for term in FREQUENCY_SIGNAL_TERMS if contains_keyword(haystack, term))
+        cost_hits = sum(1 for term in COST_SIGNAL_TERMS if contains_keyword(haystack, term))
+        score = pain_hits + workaround_hits + frequency_hits + cost_hits
 
         behavioral = sum(
             1
@@ -1004,6 +1005,14 @@ class ResearchToolkit:
             score -= behavioral_penalty
         if "?" in title and not self._has_any_term(haystack, WORKAROUND_SIGNAL_TERMS):
             score -= 1
+
+        # Debug logging for candidate filtering
+        if score < min_score:
+            logger = logging.getLogger("research_tools")
+            logger.debug(
+                f"candidate_filtered title={title[:50]!r} score={score} min={min_score} "
+                f"pain={pain_hits} workaround={workaround_hits} freq={frequency_hits} cost={cost_hits} behavioral={behavioral}"
+            )
         return score >= min_score
 
     def _extract_validation_phrases(self, text: str) -> list[str]:
