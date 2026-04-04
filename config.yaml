@@ -17,7 +17,7 @@ discovery:
   expansion:
     max_keywords_per_wave: 5
     max_subreddits_per_wave: 5
-    min_validation_score: 0.4
+    min_validation_score: 0.25  # Lowered to enable auto-expansion
     cooldown_hours: 12
 
   # Web discovery options
