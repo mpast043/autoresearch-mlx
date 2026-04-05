@@ -1144,6 +1144,232 @@ def build_raw_signal_payload(finding_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# =============================================================================
+# FAILURE EVENT EXTRACTION - Extract specific events, not generic summaries
+# =============================================================================
+
+def _extract_failure_event(text: str) -> str:
+    """
+    Extract specific failure event from text.
+    Returns a description like:
+    - "QuickBooks invoices do not match Stripe payouts during weekly reconciliation"
+    - "Excel formulas break when copying between sheets"
+    NOT generic like "data sync issue"
+    """
+    lowered = _normalized(text)
+
+    # Pattern: "X does not match Y" / "X doesn't match Y" / "X not matching Y"
+    match = re.search(r'(\w+(?:\s+\w+){0,5})\s+(?:does not|doesn\'t|don\'t|not)\s+match(?:es)?\s+(\w+(?:\s+\w+){0,5})', lowered)
+    if match:
+        return f"{match.group(1)} does not match {match.group(2)}"
+
+    # Pattern: "X and Y don't reconcile"
+    match = re.search(r'(\w+)\s+and\s+(\w+)\s+(?:don\'t|don\'t|doesn\'t)\s+reconcile', lowered)
+    if match:
+        return f"{match.group(1)} and {match.group(2)} don't reconcile"
+
+    # Pattern: "X is out of sync with Y"
+    match = re.search(r'(\w+)\s+(?:is|are)\s+out of sync (?:with|and)\s+(\w+)', lowered)
+    if match:
+        return f"{match.group(1)} is out of sync with {match.group(2)}"
+
+    # Pattern: "X breaks when Y"
+    match = re.search(r'(\w+(?:\s+\w+){0,3})\s+break(?:s|ing)?\s+(?:when|after|during)\s+([^\.]{5,40})', lowered)
+    if match:
+        return f"{match.group(1)} breaks when {match.group(2)}"
+
+    # Pattern: "error when X" / "errors in X"
+    match = re.search(r'(?:error|errors|erroring)\s+(?:in|when|while)\s+([^\.]{5,50})', lowered)
+    if match:
+        return f"Error when {match.group(1)}"
+
+    # Pattern: "duplicate X" / "duplicates in X"
+    match = re.search(r'(?:duplicate|duplicates)\s+(?:in|on|for)\s+([^\.]{5,40})', lowered)
+    if match:
+        return f"Duplicates in {match.group(1)}"
+
+    # Pattern: "manually X" - extract specific task
+    match = re.search(r'manually\s+([a-z\s]{5,40})', lowered)
+    if match:
+        task = match.group(1).strip()
+        if len(task) > 5:
+            return f"Manually {task}"
+
+    # Pattern: "have to manually X"
+    match = re.search(r'have to\s+manually\s+([a-z]{4,30})', lowered)
+    if match:
+        return f"Have to manually {match.group(1)}"
+
+    # Pattern: "spending X hours Y" - specific time waste
+    match = re.search(r'spend(?:ing|s)?\s+(\d+)\s+hours?\s+(?:on|doing|for)\s+([^\.]{5,40})', lowered)
+    if match:
+        return f"Spending {match.group(1)} hours {match.group(2)}"
+
+    # Pattern: "X takes too long" / "X takes hours"
+    match = re.search(r'([a-z\s]{5,30})\s+takes?\s+(?:too\s+)?long', lowered)
+    if match:
+        return f"{match.group(1)} takes too long"
+
+    # Pattern: "missed X" / "missing X"
+    match = re.search(r'(?:missed|missing)\s+([a-z\s]{5,30})', lowered)
+    if match:
+        return f"Missed {match.group(1)}"
+
+    return ""
+
+
+def _extract_trigger_moment(text: str) -> str:
+    """
+    Extract when the problem occurs.
+    Returns like:
+    - "at month-end reconciliation"
+    - "when importing CSV"
+    - "during weekly sync"
+    """
+    lowered = _normalized(text)
+
+    # Pattern: "when X" / "when I'm X" / "when we X"
+    match = re.search(r'when\s+([^\.]{5,40})', lowered)
+    if match:
+        trigger = match.group(1).strip()
+        # Clean up trigger
+        if trigger.startswith('i ') or trigger.startswith('i\'m '):
+            trigger = trigger[2:] if trigger.startswith('i ') else trigger[4:]
+        if len(trigger) > 3:
+            return f"when {trigger}"
+
+    # Pattern: "at X" (specific times)
+    match = re.search(r'at\s+(month[\s-]?end|week[\s-]?end|quarter[\s-]?end|daily|weekly|monthly|year[\s-]?end)', lowered)
+    if match:
+        return f"at {match.group(1)}"
+
+    # Pattern: "during X"
+    match = re.search(r'during\s+([a-z\s]{5,30})', lowered)
+    if match:
+        return f"during {match.group(1)}"
+
+    # Pattern: "after X"
+    match = re.search(r'after\s+([a-z\s]{5,30})', lowered)
+    if match:
+        return f"after {match.group(1)}"
+
+    # Pattern: "every time X"
+    match = re.search(r'every\s+time\s+([^\.]{5,30})', lowered)
+    if match:
+        return f"every time {match.group(1)}"
+
+    return ""
+
+
+def _extract_consequence(text: str) -> str:
+    """
+    Extract specific consequence - time, money, risk.
+    """
+    lowered = _normalized(text)
+
+    # Time cost patterns
+    time_match = re.search(r'(\d+)\s+hours?\s+(?:per|a|each|every)\s+(day|week|month)', lowered)
+    if time_match:
+        return f"{time_match.group(1)} hours lost per {time_match.group(2)}"
+
+    time_match2 = re.search(r'spend(?:ing|s)?\s+(\d+)\s+hours?', lowered)
+    if time_match2:
+        return f"{time_match2.group(1)} hours wasted"
+
+    # Money cost patterns
+    money_match = re.search(r'\$[\d,]+(?:\.\d{2})?\s+(?:lost|waste|cost|missed)', lowered)
+    if money_match:
+        return "money lost"
+
+    money_match2 = re.search(r'(?:lost|missed|waste|due)\s+\$[\d,]+', lowered)
+    if money_match2:
+        return "money lost"
+
+    # Error/risk patterns
+    if 'error' in lowered and ('data' in lowered or 'record' in lowered or 'entry' in lowered):
+        return "data errors"
+
+    if 'late' in lowered and ('payment' in lowered or 'invoice' in lowered):
+        return "late payments"
+
+    if 'missed' in lowered and ('payment' in lowered or 'deadline' in lowered):
+        return "missed payments"
+
+    return ""
+
+
+def _extract_specific_workflow(text: str, platform: str = "") -> str:
+    """
+    Extract specific workflow being performed.
+    """
+    lowered = _normalized(text)
+
+    # If platform detected, look for platform-specific workflows
+    if platform == 'quickbooks':
+        if 'invoice' in lowered:
+            return "processing invoices in QuickBooks"
+        if 'reconcile' in lowered:
+            return "reconciling transactions in QuickBooks"
+
+    if platform == 'shopify':
+        if 'order' in lowered:
+            return "processing Shopify orders"
+        if 'inventory' in lowered:
+            return "managing Shopify inventory"
+
+    if platform == 'excel' or platform == 'google_sheets':
+        if 'formula' in lowered:
+            return "working with spreadsheet formulas"
+        if 'vlookup' in lowered or 'xlookup' in lowered:
+            return "using spreadsheet lookups"
+        if 'copy' in lowered:
+            return "copying spreadsheet data"
+
+    if platform == 'notion':
+        if 'database' in lowered:
+            return "managing Notion databases"
+        if 'sync' in lowered:
+            return "syncing Notion data"
+
+    # Generic workflow extraction - look for specific task mentions
+    workflows = [
+        'reconcil', 'import', 'export', 'sync', 'update', 'copy', 'paste',
+        'match', 'merge', 'dedupe', 'clean', 'format', 'validate',
+    ]
+
+    for wf in workflows:
+        if wf in lowered:
+            # Find context around the workflow
+            match = re.search(r'([a-z\s]{0,20})' + wf + r'([a-z\s]{0,20})', lowered)
+            if match:
+                prefix = match.group(1).strip()
+                suffix = match.group(2).strip()
+                if prefix or suffix:
+                    return f"{prefix} {wf} {suffix}".strip()
+
+    return ""
+
+
+def _is_failure_event_atom(text: str) -> bool:
+    """
+    Check if text contains a specific failure event, not generic summary.
+    """
+    lowered = _normalized(text)
+
+    # Must have specific failure indicators
+    failure_indicators = [
+        'does not match', 'don\'t match', 'doesn\'t match',
+        'out of sync', 'out of date',
+        'break', 'broken', 'error', 'mistake',
+        'duplicate', 'mismatch', 'inconsistent',
+        'manually', 'have to manually',
+        'spend hours', 'takes too long',
+        'missed', 'missing',
+    ]
+
+    return any(ind in lowered for ind in failure_indicators)
+
+
 def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, Any]) -> dict[str, Any]:
     title_text = compact_text(signal_payload.get("title", ""), 400)
     body_text = compact_text(signal_payload.get("body_excerpt", ""), 1600)
@@ -1155,32 +1381,58 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
         "operators with recurring workflow pain",
     )
     user_role = signal_payload.get("role_hint") or _match_rule(text, ROLE_RULES, "operator")
-    job_to_be_done = _match_rule(text, JTBD_RULES, "keep a recurring workflow reliable without manual cleanup")
+
+    # Extract platform first (needed for context)
+    platform = _extract_platform_from_text(text)
+
+    # NEW: Extract specific failure event instead of generic summary
+    # This is the key change - extract real events, not cluster labels
+    failure_event = _extract_failure_event(text)
+    trigger_moment = _extract_trigger_moment(text)
+    specific_consequence = _extract_consequence(text)
+    specific_workflow = _extract_specific_workflow(text, platform)
+
+    # Use extracted failure event as job_to_be_done if available
+    if failure_event:
+        job_to_be_done = failure_event
+    elif specific_workflow:
+        job_to_be_done = specific_workflow
+    else:
+        # Fallback to generic only if no specific extraction
+        job_to_be_done = _match_rule(text, JTBD_RULES, "keep a recurring workflow reliable without manual cleanup")
+
     descriptive_text = cleaned_body_text or body_text or text
-    pain_statement = _normalize_problem_fragment(
-        _pick_first_sentence(descriptive_text, PAIN_KEYWORDS + EMOTION_TERMS + PAIN_SIGNAL_HINTS),
-        fallback=_normalize_problem_fragment(title_text, limit=120),
-        limit=140,
-    )
-    failure_mode = _normalize_problem_fragment(
-        _pick_first_sentence(
-            descriptive_text,
-            [
-                "manual",
-                "break",
-                "broken",
-                "fails",
-                "failed",
-                "error",
-                "can't",
-                "cant",
-                "unreachable",
-                "stuck",
-                "reset",
-                "deleted",
-                "fallback",
-            ],
-        ),
+
+    # Use extracted failure event for failure_mode
+    if failure_event:
+        failure_mode = failure_event
+    else:
+        failure_mode = _normalize_problem_fragment(
+            _pick_first_sentence(
+                descriptive_text,
+                [
+                    "manual",
+                    "break",
+                    "broken",
+                    "fails",
+                    "failed",
+                    "error",
+                    "can't",
+                    "cant",
+                    "unreachable",
+                    "stuck",
+                    "reset",
+                    "deleted",
+                    "fallback",
+                ],
+            ),
+            fallback="",
+            limit=120,
+        )
+
+    # Use extracted trigger moment
+    trigger_event = trigger_moment if trigger_moment else _normalize_problem_fragment(
+        _pick_first_sentence(descriptive_text, WHY_NOW_TERMS + ["when", "after", "during", "because"]),
         fallback="",
         limit=120,
     )
@@ -1191,9 +1443,17 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
     frequency_clues = _extract_clues(text, FREQUENCY_TERMS)
     why_now_clues = _extract_clues(text, WHY_NOW_TERMS)
     cost_clues = _extract_cost_clues(text)
+
+    # Add specific consequence if extracted
+    if specific_consequence and specific_consequence not in cost_clues:
+        cost_clues.append(specific_consequence)
+
     emotional_hits = _extract_clues(text, EMOTION_TERMS)
-    trigger_event = _normalize_problem_fragment(
-        _pick_first_sentence(descriptive_text, WHY_NOW_TERMS + ["when", "after", "during", "because"]),
+
+    # Use extracted trigger if available, otherwise use old logic
+    if not trigger_event:
+        trigger_event = _normalize_problem_fragment(
+            _pick_first_sentence(descriptive_text, WHY_NOW_TERMS + ["when", "after", "during", "because"]),
         fallback="",
         limit=120,
     )
