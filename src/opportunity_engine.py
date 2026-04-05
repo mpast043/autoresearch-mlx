@@ -334,6 +334,50 @@ JTBD_RULES = [
     ("template", "keep template application and onboarding reliable"),
     ("review", "respond to reviews and reputation issues consistently"),
 ]
+
+# Platform extraction patterns for atom enhancement
+PLATFORM_PATTERNS = [
+    # Explicit platform names
+    (r"\bquickbooks\b", "quickbooks"),
+    (r"\bqbo\b", "quickbooks"),
+    (r"\bxero\b", "xero"),
+    (r"\bshopify\b", "shopify"),
+    (r"\betsy\b", "etsy"),
+    (r"\bnotion\b", "notion"),
+    (r"\bairtable\b", "airtable"),
+    (r"\bgoogle sheets?\b", "google_sheets"),
+    (r"\bgoogle docs?\b", "google_sheets"),
+    (r"\bmicrosoft excel\b", "excel"),
+    (r"\bmsexcel\b", "excel"),
+    (r"\bexcel\b(?!\s+add)", "excel"),
+    (r"\bwordpress\b", "wordpress"),
+    (r"\bwp\b(?=\s+(plugin|theme|admin))", "wordpress"),
+    (r"\bwooCommerce\b", "woocommerce"),
+    (r"\bslack\b", "slack"),
+    (r"\bgmail\b", "gmail"),
+    (r"\bsalesforce\b", "salesforce"),
+    (r"\bhubspot\b", "hubspot"),
+    (r"\bstripe\b", "stripe"),
+    (r"\bpaypal\b", "paypal"),
+    (r"\bzapier\b", "zapier"),
+    (r"\bmake\.com\b", "make"),
+    (r"\bnocode\b", "nocode"),
+]
+
+# Expanded generic phrase detection for atom validation
+GENERIC_PHRASES = {
+    "",
+    "keep a recurring workflow reliable without manual cleanup",
+    "keep a recurring workflow on track",
+    "operators with recurring workflow pain",
+    "remove repeated operational bottlenecks",
+    "keep operations data in sync without manual cleanup",
+    "keep sync and data handoff workflows reliable",
+    "keep template application and onboarding reliable",
+    "keep backup restore and recovery reliable",
+    "keep multi-framework compliance evidence and monitoring reliable",
+    "respond to reviews and reputation issues consistently",
+}
 SOURCE_TYPE_HINTS = [
     ("reddit", "forum"),
     ("github", "github_issue"),
@@ -409,14 +453,117 @@ def _clean_fragment(text: str) -> str:
 
 
 def _is_generic_phrase(text: str) -> bool:
+    """Check if text is a generic cluster label rather than specific extraction."""
     lowered = _normalized(text)
-    return lowered in {
-        "",
-        "keep a recurring workflow reliable without manual cleanup",
-        "keep a recurring workflow on track",
-        "operators with recurring workflow pain",
-        "remove repeated operational bottlenecks",
+    return lowered in GENERIC_PHRASES
+
+
+def _extract_platform_from_text(text: str) -> str:
+    """Extract platform from signal text for atom enrichment."""
+    lowered = _normalized(text)
+    for pattern, platform in PLATFORM_PATTERNS:
+        if re.search(pattern, lowered):
+            return platform
+    return ""
+
+
+def _extract_specific_workflow(text: str) -> str:
+    """Try to extract specific workflow description from text.
+
+    Looks for specific task descriptions rather than generic phrases.
+    """
+    lowered = _normalized(text)
+
+    # Pattern: "manually X" - extract the specific task
+    match = re.search(r'manually\s+([a-z\s]{5,40})', lowered)
+    if match:
+        task = match.group(1).strip()
+        if len(task) > 5:
+            return task
+
+    # Pattern: "spending X hours Y" - extract the time-consuming task
+    match = re.search(r'spend(?:ing|s)?\s+\d+\s+hours?\s+(?:on|doing|for)\s+([a-z\s]{5,40})', lowered)
+    if match:
+        task = match.group(1).strip()
+        if len(task) > 5:
+            return task
+
+    # Pattern: "have to X" - extract obligation
+    match = re.search(r'have to\s+([a-z]{4,30})', lowered)
+    if match:
+        task = match.group(1).strip()
+        if len(task) > 4:
+            return task
+
+    return ""
+
+
+def _has_meaningful_consequence(text: str) -> bool:
+    """Check if text contains meaningful consequence (not just 'consequence' placeholder)."""
+    lowered = _normalized(text)
+
+    # Must have actual consequence keywords
+    consequence_terms = [
+        "time", "hours", "days", "week",
+        "money", "dollar", "cost", "expensive", "waste",
+        "lost", "missed", "late", "risk", "error", "mistake",
+        "revenue", "profit", "penalty", "fine",
+    ]
+
+    return any(term in lowered for term in consequence_terms)
+
+
+def _validate_atom_quality(atom: dict[str, Any], source_text: str) -> dict[str, Any]:
+    """Validate and enhance atom quality, returning quality signals."""
+    quality = {
+        "is_valid": True,
+        "quality_issues": [],
+        "specificity_score": 0.0,
+        "consequence_score": 0.0,
+        "platform_score": 0.0,
+        "should_reject": False,
     }
+
+    # Check 1: Generic workflow
+    if _is_generic_phrase(atom.get("job_to_be_done", "")):
+        quality["quality_issues"].append("generic_workflow")
+        quality["is_valid"] = False
+
+    # Check 2: Empty or placeholder consequence
+    consequence = atom.get("cost_consequence_clues", "")
+    if not consequence or consequence == "consequence":
+        quality["quality_issues"].append("missing_consequence")
+    elif _has_meaningful_consequence(consequence):
+        quality["consequence_score"] = 0.8
+
+    # Check 3: Failure mode quality
+    failure = atom.get("failure_mode", "")
+    if not failure or len(failure) < 15:
+        quality["quality_issues"].append("weak_failure_mode")
+    else:
+        quality["specificity_score"] += 0.3
+
+    # Check 4: Platform detection
+    platform = _extract_platform_from_text(source_text)
+    if platform:
+        quality["platform_score"] = 1.0
+    else:
+        quality["quality_issues"].append("no_platform")
+
+    # Check 5: Specific workflow extraction
+    specific_workflow = _extract_specific_workflow(source_text)
+    if specific_workflow:
+        quality["specificity_score"] += 0.4
+
+    # Calculate overall specificity
+    if quality["specificity_score"] > 0:
+        quality["specificity_score"] = min(1.0, quality["specificity_score"])
+
+    # Reject only if too many issues
+    if len(quality["quality_issues"]) >= 3:
+        quality["should_reject"] = True
+
+    return quality
 
 
 # Patterns that indicate low-quality signals (meta-posts, generic questions)
@@ -1094,6 +1241,16 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
     confidence = clamp(0.35 + filled_fields * 0.045 + specific_boost)
     emotional_intensity = clamp(0.2 + len(emotional_hits) * 0.16 + min(text.count("!"), 3) * 0.04)
     cluster_key = infer_recurrence_key(f"{segment} {user_role} {job_to_be_done} {failure_mode} {' '.join(workarounds)}")
+
+    # Extract platform for atom enrichment
+    platform = _extract_platform_from_text(text)
+
+    # Validate atom quality
+    quality_signals = _validate_atom_quality(
+        {"job_to_be_done": job_to_be_done, "failure_mode": failure_mode, "cost_consequence_clues": ", ".join(cost_clues)},
+        text
+    )
+
     return {
         "cluster_key": cluster_key,
         "segment": segment,
@@ -1113,6 +1270,11 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
         "assumptions": assumptions,
         "specific_patterns": specific_patterns,
         "is_specific_problem": is_specific,
+        # New quality signals for wedge pipeline
+        "platform": platform,
+        "specificity_score": quality_signals.get("specificity_score", 0.0),
+        "consequence_score": quality_signals.get("consequence_score", 0.0),
+        "quality_issues": quality_signals.get("quality_issues", []),
         "atom_json": {
             "source_type": signal_payload.get("source_type", "web"),
             "workaround_terms": workarounds,
@@ -1124,6 +1286,9 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
             "why_now_terms": why_now_clues,
             "emotional_terms": emotional_hits,
             "assumptions": assumptions,
+            # Include quality signals
+            "platform": platform,
+            "quality_issues": quality_signals.get("quality_issues", []),
         },
     }
 

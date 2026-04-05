@@ -450,17 +450,24 @@ def extract_candidate_from_opportunity(row: sqlite3.Row) -> WedgeCandidate:
     candidate.trigger_moment = _get_row_value(row, 'trigger_event', '')
     candidate.consequence = _get_row_value(row, 'cost_consequence_clues', '')
 
-    # Platform detection
+    # Platform detection - prefer atom's extracted platform
+    atom_platform = _get_row_value(row, 'atom_platform', '') or ''
+
     source = _get_row_value(row, 'source_name', '') or ''
     url = _get_row_value(row, 'source_url', '') or ''
     full_text = f"{_get_row_value(row, 'title', '')} {_get_row_value(row, 'body_excerpt', '')}"
 
-    platform, conf = extract_platform_explicit(source, url, full_text)
-    if conf == 'unknown':
-        platform, conf = extract_platform_inferred(full_text)
-
-    candidate.platform = platform
-    candidate.platform_confidence = conf
+    # If atom has platform, use it with explicit confidence
+    if atom_platform:
+        candidate.platform = atom_platform
+        candidate.platform_confidence = 'explicit'
+    else:
+        # Fall back to text-based detection
+        platform, conf = extract_platform_explicit(source, url, full_text)
+        if conf == 'unknown':
+            platform, conf = extract_platform_inferred(full_text)
+        candidate.platform = platform
+        candidate.platform_confidence = conf
 
     # Source info
     candidate.source = source
@@ -941,6 +948,7 @@ def generate_wedges(db: Database, limit: int = 10) -> list[ProductIdea]:
             pa.cost_consequence_clues,
             pa.segment,
             pa.user_role,
+            pa.platform as atom_platform,
             rs.source_name,
             rs.source_url,
             rs.title as signal_title,
@@ -1155,6 +1163,7 @@ def generate_wedges_with_metrics(db: Database, limit: int = 10) -> tuple[list[Pr
             pa.cost_consequence_clues,
             pa.segment,
             pa.user_role,
+            pa.platform as atom_platform,
             rs.source_name,
             rs.source_url,
             rs.title as signal_title,

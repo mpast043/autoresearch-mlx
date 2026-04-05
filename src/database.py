@@ -157,6 +157,10 @@ class ProblemAtom:
     score_json: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
     metadata_json: str = "{}"
+    # New quality fields for wedge pipeline
+    platform: str = ""
+    specificity_score: float = 0.0
+    consequence_score: float = 0.0
     id: Optional[int] = None
     created_at: Optional[str] = None
 
@@ -869,6 +873,40 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(source_name, query_text)
             );
+            CREATE TABLE IF NOT EXISTS discovery_search_terms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                term_type TEXT NOT NULL,
+                term_value TEXT NOT NULL,
+                state TEXT DEFAULT 'new',
+                times_searched INTEGER DEFAULT 0,
+                last_used_ts REAL DEFAULT 0,
+                findings_emitted INTEGER DEFAULT 0,
+                validations INTEGER DEFAULT 0,
+                passes INTEGER DEFAULT 0,
+                prototype_candidates INTEGER DEFAULT 0,
+                build_briefs INTEGER DEFAULT 0,
+                screened_out INTEGER DEFAULT 0,
+                low_yield_count INTEGER DEFAULT 0,
+                noisy_count INTEGER DEFAULT 0,
+                thin_validation_count INTEGER DEFAULT 0,
+                avg_validation_score REAL DEFAULT 0,
+                avg_screening_score REAL DEFAULT 0,
+                quality_score REAL DEFAULT 0,
+                -- Niche quality metrics for plugin/add-on/microSaaS optimization
+                specificity_score REAL DEFAULT 0,
+                consequence_score REAL DEFAULT 0,
+                platform_native_score REAL DEFAULT 0,
+                plugin_fit_score REAL DEFAULT 0,
+                wedge_quality_score REAL DEFAULT 0,
+                vague_bucket_count INTEGER DEFAULT 0,
+                abstraction_collapse_count INTEGER DEFAULT 0,
+                buildable_opportunity_count INTEGER DEFAULT 0,
+                platform_native_count INTEGER DEFAULT 0,
+                added_ts REAL DEFAULT 0,
+                updated_ts REAL DEFAULT 0,
+                notes TEXT DEFAULT '',
+                UNIQUE(term_type, term_value)
+            );
             CREATE TABLE IF NOT EXISTS discovery_themes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 theme_key TEXT UNIQUE NOT NULL,
@@ -1372,6 +1410,10 @@ class Database:
                     "confidence": atom.confidence or atom.confidence_score,
                 }
             ),
+            # New quality fields
+            "platform": getattr(atom, 'platform', ''),
+            "specificity_score": getattr(atom, 'specificity_score', 0.0),
+            "consequence_score": getattr(atom, 'consequence_score', 0.0),
             "metadata_json": _json_dumps(metadata),
         }
         insert_columns = [column for column in atom_payload if column in table_columns]
@@ -2171,6 +2213,346 @@ class Database:
             params.append(source_name)
         sql += " ORDER BY updated_at DESC, source_name ASC, query_text ASC"
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    # === discovery_search_terms (term lifecycle) ===
+
+    def insert_search_term(
+        self,
+        term_type: str,
+        term_value: str,
+        state: str = "new",
+    ) -> int:
+        """Insert a new search term (keyword or subreddit)."""
+        import time as time_module
+
+        conn = self._get_connection()
+        now = time_module.time()
+        conn.execute(
+            """
+            INSERT INTO discovery_search_terms (term_type, term_value, state, added_ts, updated_ts)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(term_type, term_value) DO UPDATE SET
+                updated_ts = excluded.updated_ts
+            """,
+            (term_type, term_value, state, now, now),
+        )
+        conn.commit()
+        return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    def get_search_term(self, term_type: str, term_value: str) -> Optional[dict[str, Any]]:
+        """Get a specific search term."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM discovery_search_terms WHERE term_type = ? AND term_value = ?",
+            (term_type, term_value),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_search_term_state(
+        self,
+        term_type: str,
+        term_value: str,
+        new_state: str,
+        notes: Optional[str] = None,
+    ) -> None:
+        """Update the state of a search term."""
+        import time as time_module
+
+        conn = self._get_connection()
+        now = time_module.time()
+        sql = """
+            UPDATE discovery_search_terms
+            SET state = ?, updated_ts = ?
+        """
+        params: list[Any] = [new_state, now]
+        if notes:
+            sql += ", notes = ?"
+            params.append(notes)
+        sql += " WHERE term_type = ? AND term_value = ?"
+        params.extend([term_type, term_value])
+        conn.execute(sql, params)
+        conn.commit()
+
+    def update_search_term_metrics(
+        self,
+        term_type: str,
+        term_value: str,
+        *,
+        times_searched: Optional[int] = None,
+        findings_emitted: Optional[int] = None,
+        validations: Optional[int] = None,
+        passes: Optional[int] = None,
+        prototype_candidates: Optional[int] = None,
+        build_briefs: Optional[int] = None,
+        screened_out: Optional[int] = None,
+        low_yield_count: Optional[int] = None,
+        noisy_count: Optional[int] = None,
+        thin_validation_count: Optional[int] = None,
+        avg_validation_score: Optional[float] = None,
+        avg_screening_score: Optional[float] = None,
+        quality_score: Optional[float] = None,
+        # Niche quality metrics
+        specificity_score: Optional[float] = None,
+        consequence_score: Optional[float] = None,
+        platform_native_score: Optional[float] = None,
+        plugin_fit_score: Optional[float] = None,
+        wedge_quality_score: Optional[float] = None,
+        vague_bucket_count: Optional[int] = None,
+        abstraction_collapse_count: Optional[int] = None,
+        buildable_opportunity_count: Optional[int] = None,
+        platform_native_count: Optional[int] = None,
+    ) -> None:
+        """Update metrics for a search term."""
+        import time as time_module
+
+        conn = self._get_connection()
+        now = time_module.time()
+
+        # Build dynamic update
+        updates = ["updated_ts = ?"]
+        params: list[Any] = [now]
+
+        for field, value in [
+            ("times_searched", times_searched),
+            ("findings_emitted", findings_emitted),
+            ("validations", validations),
+            ("passes", passes),
+            ("prototype_candidates", prototype_candidates),
+            ("build_briefs", build_briefs),
+            ("screened_out", screened_out),
+            ("low_yield_count", low_yield_count),
+            ("noisy_count", noisy_count),
+            ("thin_validation_count", thin_validation_count),
+            ("avg_validation_score", avg_validation_score),
+            ("avg_screening_score", avg_screening_score),
+            ("quality_score", quality_score),
+            # Niche quality metrics
+            ("specificity_score", specificity_score),
+            ("consequence_score", consequence_score),
+            ("platform_native_score", platform_native_score),
+            ("plugin_fit_score", plugin_fit_score),
+            ("wedge_quality_score", wedge_quality_score),
+            ("vague_bucket_count", vague_bucket_count),
+            ("abstraction_collapse_count", abstraction_collapse_count),
+            ("buildable_opportunity_count", buildable_opportunity_count),
+            ("platform_native_count", platform_native_count),
+        ]:
+            if value is not None:
+                updates.append(f"{field} = ?")
+                params.append(value)
+
+        params.extend([term_type, term_value])
+        conn.execute(
+            f"UPDATE discovery_search_terms SET {', '.join(updates)} WHERE term_type = ? AND term_value = ?",
+            params,
+        )
+        conn.commit()
+
+    def list_search_terms(
+        self,
+        term_type: Optional[str] = None,
+        state: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List search terms with optional filtering."""
+        conn = self._get_connection()
+        sql = "SELECT * FROM discovery_search_terms"
+        conditions = []
+        params: list[Any] = []
+
+        if term_type:
+            conditions.append("term_type = ?")
+            params.append(term_type)
+        if state:
+            conditions.append("state = ?")
+            params.append(state)
+
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY updated_ts DESC LIMIT ?"
+        params.append(limit)
+
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def get_high_performing_terms(self, term_type: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Get terms with high performance (state='high_performing' or high quality_score)."""
+        conn = self._get_connection()
+        return [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM discovery_search_terms
+                WHERE term_type = ? AND (state = 'high_performing' OR quality_score >= 0.6)
+                ORDER BY quality_score DESC, prototype_candidates DESC
+                LIMIT ?""",
+                (term_type, limit),
+            ).fetchall()
+        ]
+
+    def get_exhausted_terms(self, term_type: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Get terms that are exhausted, paused, or banned."""
+        conn = self._get_connection()
+        return [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM discovery_search_terms
+                WHERE term_type = ? AND state IN ('exhausted', 'paused', 'banned')
+                ORDER BY updated_ts DESC
+                LIMIT ?""",
+                (term_type, limit),
+            ).fetchall()
+        ]
+
+    def get_active_terms(self, term_type: str, limit: int = 100) -> list[dict[str, Any]]:
+        """Get terms that are in active or used state (available for discovery)."""
+        conn = self._get_connection()
+        return [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM discovery_search_terms
+                WHERE term_type = ? AND state IN ('new', 'active', 'used', 'high_performing')
+                ORDER BY quality_score DESC, times_searched ASC
+                LIMIT ?""",
+                (term_type, limit),
+            ).fetchall()
+        ]
+
+    def get_terms_by_wedge_quality(self, term_type: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Get terms sorted by wedge quality (plugin/add-on/microSaaS fit)."""
+        conn = self._get_connection()
+        return [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM discovery_search_terms
+                WHERE term_type = ? AND state IN ('new', 'active', 'used', 'high_performing')
+                ORDER BY wedge_quality_score DESC, plugin_fit_score DESC, buildable_opportunity_count DESC
+                LIMIT ?""",
+                (term_type, limit),
+            ).fetchall()
+        ]
+
+    def get_terms_by_specificity(self, term_type: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Get terms sorted by specificity (sharp, niche-specific vs vague)."""
+        conn = self._get_connection()
+        return [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM discovery_search_terms
+                WHERE term_type = ? AND state IN ('new', 'active', 'used', 'high_performing')
+                ORDER BY specificity_score DESC, (1.0 * vague_bucket_count / NULLIF(times_searched, 0)) ASC
+                LIMIT ?""",
+                (term_type, limit),
+            ).fetchall()
+        ]
+
+    def get_terms_by_platform_native(self, term_type: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Get terms sorted by platform-native yield (Google Docs, Shopify, etc.)."""
+        conn = self._get_connection()
+        return [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM discovery_search_terms
+                WHERE term_type = ? AND state IN ('new', 'active', 'used', 'high_performing')
+                ORDER BY platform_native_score DESC, platform_native_count DESC
+                LIMIT ?""",
+                (term_type, limit),
+            ).fetchall()
+        ]
+
+    def get_abstraction_collapse_terms(self, term_type: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Get terms most responsible for abstraction collapse (vague buckets)."""
+        conn = self._get_connection()
+        return [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM discovery_search_terms
+                WHERE term_type = ? AND abstraction_collapse_count > 0
+                ORDER BY abstraction_collapse_count DESC, vague_bucket_count DESC
+                LIMIT ?""",
+                (term_type, limit),
+            ).fetchall()
+        ]
+
+    def get_buildable_terms(self, term_type: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Get terms most responsible for buildable plugin/add-on wedges."""
+        conn = self._get_connection()
+        return [
+            dict(row)
+            for row in conn.execute(
+                """SELECT * FROM discovery_search_terms
+                WHERE term_type = ? AND buildable_opportunity_count > 0
+                ORDER BY buildable_opportunity_count DESC, wedge_quality_score DESC
+                LIMIT ?""",
+                (term_type, limit),
+            ).fetchall()
+        ]
+
+    def upsert_search_term(
+        self,
+        term_type: str,
+        term_value: str,
+        state: str = "new",
+    ) -> int:
+        """Insert or update a search term (get or create)."""
+        import time as time_module
+
+        conn = self._get_connection()
+        now = time_module.time()
+
+        # Try to get existing
+        existing = conn.execute(
+            "SELECT id FROM discovery_search_terms WHERE term_type = ? AND term_value = ?",
+            (term_type, term_value),
+        ).fetchone()
+
+        if existing:
+            conn.execute(
+                """UPDATE discovery_search_terms SET updated_ts = ? WHERE term_type = ? AND term_value = ?""",
+                (now, term_type, term_value),
+            )
+            conn.commit()
+            return existing[0]
+
+        conn.execute(
+            """INSERT INTO discovery_search_terms (term_type, term_value, state, added_ts, updated_ts)
+            VALUES (?, ?, ?, ?, ?)""",
+            (term_type, term_value, state, now, now),
+        )
+        conn.commit()
+        return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    def search_term_exists(self, term_type: str, term_value: str) -> bool:
+        """Check if a term exists."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT 1 FROM discovery_search_terms WHERE term_type = ? AND term_value = ?",
+            (term_type, term_value),
+        ).fetchone()
+        return row is not None
+
+    def bulk_upsert_search_terms(self, term_type: str, term_values: list[str]) -> int:
+        """Insert multiple terms at once. Returns count of inserted."""
+        import time as time_module
+
+        conn = self._get_connection()
+        now = time_module.time()
+        count = 0
+
+        for term_value in term_values:
+            term_value = term_value.strip()
+            if not term_value:
+                continue
+            conn.execute(
+                """INSERT OR IGNORE INTO discovery_search_terms
+                (term_type, term_value, state, added_ts, updated_ts)
+                VALUES (?, ?, 'new', ?, ?)""",
+                (term_type, term_value, now, now),
+            )
+            count += 1
+
+        conn.commit()
+        return count
+
+    # === end discovery_search_terms ===
 
     def upsert_discovery_theme(
         self,
