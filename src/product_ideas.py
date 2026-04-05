@@ -760,38 +760,172 @@ def sharpen_candidate(candidate: WedgeCandidate) -> tuple[bool, str]:
 # STAGE 4: WEDGE GATE - Final pass/fail decision
 # =============================================================================
 
+# Category-level terms that indicate a wedge is too generic
+CATEGORY_TERMS = [
+    'sync', 'automation', 'integration', 'reminder', 'tool', 'system', 'manager',
+    'workflow', 'platform', 'solution', 'app', 'software', 'service', 'processor',
+    'connector', 'bridge', 'importer', 'exporter', 'helper', 'assistant',
+]
+
+# Generic workflow phrases that indicate low specificity
+GENERIC_WORKFLOW_PHRASES = [
+    'keep in sync',
+    'manual cleanup',
+    'data cleanup',
+    'keep operations data',
+    'keep sync',
+    'data handoff',
+    'manual work',
+    'automate manual',
+]
+
+# Failure-mode keywords that indicate specific breaks
+FAILURE_KEYWORDS = [
+    'duplicate', 'mismatch', 'error', 'mistake', 'break', 'broken',
+    'missed', 'lost', 'late', 'failed', 'conflict', 'wrong',
+    'incorrect', 'inconsistent', 'corrupt', 'overdue', 'forgot',
+]
+
+
+def _is_category_wedge(wedge_name: str, failure_mode: str) -> bool:
+    """Check if wedge is category-level rather than failure-specific."""
+    name_lower = wedge_name.lower()
+    failure_lower = failure_mode.lower()
+
+    # If name contains category term without failure qualifier
+    for term in CATEGORY_TERMS:
+        if term in name_lower:
+            # Check if failure mode provides specificity
+            has_failure_qualifier = any(kw in failure_lower for kw in FAILURE_KEYWORDS)
+            if not has_failure_qualifier:
+                return True
+
+    # If wedge name is just "Platform + Category"
+    if len(wedge_name.split()) <= 2:
+        return True
+
+    return False
+
+
+def _is_generic_workflow(workflow: str) -> bool:
+    """Check if workflow is too generic to be a wedge."""
+    workflow_lower = workflow.lower()
+    for phrase in GENERIC_WORKFLOW_PHRASES:
+        if phrase in workflow_lower:
+            return True
+    return False
+
+
+def _has_specific_failure(failure_mode: str) -> bool:
+    """Check if failure mode describes a specific break."""
+    if not failure_mode or len(failure_mode) < 15:
+        return False
+
+    failure_lower = failure_mode.lower()
+
+    # Must contain at least one failure keyword
+    has_failure_keyword = any(kw in failure_lower for kw in FAILURE_KEYWORDS)
+
+    # Must describe a concrete problem (not just "issues with X")
+    is_specific = (
+        has_failure_keyword and
+        not failure_lower.startswith('keep') and
+        not failure_lower.startswith('need') and
+        not failure_lower.startswith('want')
+    )
+
+    return is_specific
+
+
 def gate_wedge(candidate: WedgeCandidate) -> tuple[bool, str]:
-    """Gate wedge based on platform explicitness and validation scores.
+    """Gate wedge based on specificity and failure-mode requirements.
 
     Rules:
-    - explicit platform → eligible for accepted
-    - inferred platform → accepted only with strong evidence
-    - unknown platform → goes to research-needed unless exceptional
+    - Must have specific failure mode (not category-level)
+    - Must not have generic workflow
+    - Must have trigger moment or meaningful consequence
+    - Explicit platform → eligible for accepted
+    - Inferred platform → research-needed
+    - Unknown platform → rejected
     """
     candidate.current_stage = "wedge_gate"
 
     platform_conf = candidate.platform_confidence
     decision_score = candidate.decision_score
     problem_truth = candidate.problem_truth_score
+    workflow = candidate.workflow or ''
+    failure_mode = candidate.failure_mode or ''
+    wedge_name = candidate.wedge_name or ''
+    consequence = candidate.consequence or ''
+    trigger = candidate.trigger_moment or ''
 
-    # Explicit platform: strong gate
+    # SPECIFICITY CHECKS - route to appropriate bucket based on severity
+
+    # Check 1: Category-level wedge
+    is_category = _is_category_wedge(wedge_name, failure_mode)
+    is_generic = _is_generic_workflow(workflow)
+    weak_failure = not _has_specific_failure(failure_mode)
+    missing_tc = not trigger and not consequence
+
+    # Check 2: Generic workflow rejection
+    is_generic_workflow = _is_generic_workflow(workflow)
+
+    # Check 3: Weak failure mode rejection
+    weak_failure_mode = not _has_specific_failure(failure_mode)
+
+    # STRICT MODE: For explicit platform, enforce specificity
+    if platform_conf == 'explicit':
+        if is_category:
+            candidate.output_bucket = "rejected"
+            candidate.rejection_reasons.append("category_label")
+            return False, "category_label"
+
+        if is_generic_workflow:
+            candidate.output_bucket = "rejected"
+            candidate.rejection_reasons.append("generic_workflow")
+            return False, "generic_workflow"
+
+        if weak_failure_mode:
+            candidate.output_bucket = "rejected"
+            candidate.rejection_reasons.append("weak_failure_mode")
+            return False, "weak_failure_mode"
+
+    # For inferred/unknown, route to research-needed instead of rejection
+    else:
+        if is_category:
+            candidate.rejection_reasons.append("category_label")
+            # Will route to research_needed below based on platform
+
+        if is_generic_workflow:
+            candidate.rejection_reasons.append("generic_workflow")
+
+        if weak_failure_mode:
+            candidate.rejection_reasons.append("weak_failure_mode")
+
+    # Check 4: Missing trigger AND consequence
+    if not trigger and not consequence:
+        if platform_conf == 'explicit':
+            candidate.output_bucket = "rejected"
+            candidate.rejection_reasons.append("missing_trigger")
+            return False, "missing_trigger"
+        # For inferred/unknown, we'll allow through to research-needed
+
+    # PLATFORM CHECKS (existing logic)
+
+    # Explicit platform: strong gate with specific wedge
     if platform_conf == 'explicit':
         if decision_score >= 0.5 or problem_truth >= 0.5:
             candidate.output_bucket = "accepted"
-            candidate.why_passed = "explicit_platform_strong_validation"
+            candidate.why_passed = "explicit_platform_strong_validation_specific"
             return True, "accepted"
         elif decision_score >= 0.3 or problem_truth >= 0.4:
             candidate.output_bucket = "accepted"
-            candidate.why_passed = "explicit_platform_adequate_validation"
+            candidate.why_passed = "explicit_platform_adequate_validation_specific"
             return True, "accepted"
 
-    # Inferred platform: needs stronger validation
+    # Inferred platform: needs stronger validation, goes to research-needed
     elif platform_conf == 'inferred':
-        if decision_score >= 0.5 and problem_truth >= 0.5:
-            candidate.output_bucket = "accepted"
-            candidate.why_passed = "inferred_platform_strong_validation"
-            return True, "accepted"
-        elif decision_score >= 0.35 or problem_truth >= 0.45:
+        if decision_score >= 0.3 or problem_truth >= 0.4:
             candidate.output_bucket = "research_needed"
             candidate.why_passed = "inferred_platform_research_needed"
             return True, "research_needed"
