@@ -397,8 +397,19 @@ class RedditTransport:
                 # bridge_with_fallback should continue to legacy/public paths when the bridge
                 # is not configured in the current environment (e.g. Codespaces).
             try:
-                payload = await self.reddit_bridge.get_post_thread(url=url, comment_limit=8, depth=4)
+                # Fetch 50 comments sorted by rising to get corroboration
+                payload = await self.reddit_bridge.get_post_thread(url=url, comment_limit=50, depth=4)
                 comments = [item.get("body", "") for item in payload.get("comments", []) if item.get("body")]
+                # Get comment metadata for corroboration scoring
+                comment_metadata = [
+                    {
+                        "body": item.get("body", "")[:200],
+                        "author": item.get("author", ""),
+                        "score": item.get("score", 0),
+                    }
+                    for item in payload.get("comments", [])[:50]
+                    if item.get("body")
+                ]
                 result = {
                     "title": payload.get("post", {}).get("title", ""),
                     "text": self._compact_text(
@@ -412,7 +423,8 @@ class RedditTransport:
                         2500,
                     ),
                     "description": self._compact_text(payload.get("post", {}).get("body", ""), 900),
-                    "comments": comments[:6],
+                    "comments": comments[:50],
+                    "comment_metadata": comment_metadata,
                 }
                 self.metrics["reddit_bridge_hits"] += 1
                 self.thread_cache[url] = result
@@ -441,7 +453,7 @@ class RedditTransport:
                     "thread",
                     url,
                     "--commentLimit",
-                    "8",
+                    "50",
                     "--depth",
                     "4",
                 ],
@@ -450,9 +462,20 @@ class RedditTransport:
             if payload and payload.get("ok"):
                 data = payload.get("data", {})
                 post = data.get("post", {})
+                raw_comments = data.get("comments", [])
                 comments = [
                     comment.get("body_snippet", "")
-                    for comment in data.get("comments", [])
+                    for comment in raw_comments
+                    if comment.get("body_snippet")
+                ]
+                # Build comment metadata for corroboration scoring
+                comment_metadata = [
+                    {
+                        "body": comment.get("body_snippet", "")[:200],
+                        "author": comment.get("author", ""),
+                        "score": comment.get("score", 0),
+                    }
+                    for comment in raw_comments[:50]
                     if comment.get("body_snippet")
                 ]
                 result = {
@@ -463,6 +486,7 @@ class RedditTransport:
                     ),
                     "description": self._compact_text(post.get("selftext_snippet", ""), 900),
                     "comments": comments,
+                    "comment_metadata": comment_metadata,
                 }
                 self.thread_cache[url] = result
                 self._logger.info(
@@ -480,28 +504,36 @@ class RedditTransport:
         def _request() -> dict[str, Any]:
             response = self._request_get(
                 json_url,
-                params={"limit": 8},
+                params={"limit": 50},
                 timeout=15,
                 headers={"User-Agent": self.user_agent},
             )
             response.raise_for_status()
             payload = response.json()
             post = payload[0]["data"]["children"][0]["data"]
-            comments = []
+            raw_comments = []
+            comment_metadata = []
             for child in payload[1]["data"].get("children", []):
                 if child.get("kind") != "t1":
                     continue
-                body = child.get("data", {}).get("body", "")
-                if body:
-                    comments.append(body)
-                if len(comments) >= 6:
+                data = child.get("data", {})
+                body = data.get("body", "")
+                if body and len(raw_comments) < 50:
+                    raw_comments.append(body)
+                    comment_metadata.append({
+                        "body": body[:200],
+                        "author": data.get("author", ""),
+                        "score": data.get("score", 0),
+                    })
+                if len(raw_comments) >= 50:
                     break
-            text = self._compact_text(" ".join([post.get("title", ""), post.get("selftext", ""), *comments]), 2500)
+            text = self._compact_text(" ".join([post.get("title", ""), post.get("selftext", ""), *raw_comments]), 2500)
             return {
                 "title": post.get("title", ""),
                 "text": text,
                 "description": self._compact_text(post.get("selftext", ""), 900),
-                "comments": comments,
+                "comments": raw_comments,
+                "comment_metadata": comment_metadata,
             }
 
         try:

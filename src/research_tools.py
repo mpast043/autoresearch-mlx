@@ -2231,6 +2231,8 @@ class ResearchToolkit:
                         "discovery_query": keyword,
                         "snippet": doc.snippet,
                         "page_excerpt": content.get("description", ""),
+                        "comments": content.get("comments", []),
+                        "comment_metadata": content.get("comment_metadata", []),
                     },
                 }
             )
@@ -2417,6 +2419,8 @@ class ResearchToolkit:
                     "pain_score": self._pain_score(full_text),
                     "snippet": doc.snippet,
                     "page_excerpt": content.get("description", ""),
+                    "comments": content.get("comments", []),
+                    "comment_metadata": content.get("comment_metadata", []),
                 },
             }
 
@@ -6117,6 +6121,64 @@ class ResearchToolkit:
     def _pain_score(self, text: str) -> int:
         normalized = (text or "").lower()
         return sum(1 for keyword in PAIN_KEYWORDS if keyword in normalized)
+
+    def _comment_corroboration_score(self, comment_metadata: list[dict[str, Any]]) -> dict[str, Any]:
+        """Score comment corroboration for a Reddit finding.
+
+        Returns:
+            - comment_count: total comments fetched
+            - agreement_count: comments expressing agreement ("me too", "same", etc.)
+            - total_upvotes: sum of all comment scores
+            - workaround_count: comments suggesting workarounds
+            - corroboration_score: 0-1 normalized score
+        """
+        if not comment_metadata:
+            return {
+                "comment_count": 0,
+                "agreement_count": 0,
+                "total_upvotes": 0,
+                "workaround_count": 0,
+                "corroboration_score": 0.0,
+            }
+
+        agreement_patterns = ["me too", "same here", "i have this", "same problem", "experiencing this", "happening to me"]
+        workaround_patterns = ["what i do is", "workaround", "i use", "i've been using", "solution", "fix", "resolved by"]
+
+        agreement_count = 0
+        total_upvotes = 0
+        workaround_count = 0
+
+        for comment in comment_metadata:
+            body = (comment.get("body", "") or "").lower()
+            score = comment.get("score", 0) or 0
+
+            total_upvotes += score
+
+            # Check for agreement
+            if any(pattern in body for pattern in agreement_patterns):
+                agreement_count += 1
+
+            # Check for workarounds
+            if any(pattern in body for pattern in workaround_patterns):
+                workaround_count += 1
+
+        comment_count = len(comment_metadata)
+
+        # Calculate corroboration score (0-1)
+        # Weight: agreement (0.4) + upvotes normalized (0.3) + workarounds (0.3)
+        upvote_score = min(total_upvotes / 100, 1.0) * 0.3  # Cap at 100 upvotes
+        agreement_score = min(agreement_count / 5, 1.0) * 0.4  # Cap at 5 agreements
+        workaround_score = min(workaround_count / 3, 1.0) * 0.3  # Cap at 3 workarounds
+
+        corroboration_score = agreement_score + upvote_score + workaround_score
+
+        return {
+            "comment_count": comment_count,
+            "agreement_count": agreement_count,
+            "total_upvotes": total_upvotes,
+            "workaround_count": workaround_count,
+            "corroboration_score": round(corroboration_score, 2),
+        }
 
     def skill_and_tooling_manifest(self, title: str, audience: str, problem_statement: str) -> dict[str, Any]:
         return {

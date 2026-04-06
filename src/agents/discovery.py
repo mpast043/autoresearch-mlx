@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from collections import defaultdict
 from typing import Any, Dict, Optional
@@ -26,6 +27,91 @@ from src.opportunity_engine import (
 from src.reddit_seed import RedditSeeder
 from src.research_tools import DiscoveryQueryPlan, ResearchToolkit
 from src.discovery_expander import run_expansion, get_expanded_config
+from src.discovery_term_lifecycle import TermLifecycleManager
+
+
+# =============================================================================
+# PRE-ATOM SIGNAL FILTER - Reject weak signals before atom creation
+# =============================================================================
+
+CONCRETE_OBJECTS = {
+    'invoice', 'invoices', 'payment', 'payments', 'order', 'orders',
+    'row', 'rows', 'record', 'records', 'entry', 'entries',
+    'file', 'files', 'transaction', 'transactions',
+    'sheet', 'sheets', 'cell', 'cells', 'formula', 'formulas',
+    'item', 'items', 'product', 'products', 'customer', 'customers',
+    'email', 'emails', 'data', 'import', 'export',
+    'spreadsheet', 'csv', 'report', 'reports',
+}
+
+FAILURE_VERBS = {
+    'missing', 'missed', 'mismatch', 'mismatched',
+    'duplicate', 'duplicated', 'duplicates',
+    'not matching', 'does not match', 'dont match', "don't match",
+    'incorrect', 'wrong', 'error', 'errors', 'failed', 'fail',
+    'break', 'broken', 'out of sync', 'not updating',
+    'lost', 'late', 'inconsistent', 'corrupt',
+}
+
+META_PATTERNS = [
+    r'^what (is|are) ', r'^how do i ', r'^how to ',
+    r'looking to build', r'want to build', r'building a',
+    r'best tool', r'recommend', r'any suggestions',
+    r'i need a tool', r'looking for software',
+    r'automation idea', r'automate this',
+    r'productivity hack', r'workflow tip',
+]
+
+
+def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
+    """Check if a finding contains a wedge-ready signal.
+
+    Returns (is_ready, rejection_reason).
+    A signal is wedge-ready if it contains:
+    - At least one concrete object
+    - A failure/mismatch pattern
+    - A workflow context (import, export, copy, sync, reconcile)
+
+    Rejects:
+    - Meta discussion posts
+    - Generic productivity talk
+    - Too short (< 20 words)
+    - No concrete objects
+    - No failure patterns
+    """
+    # Support multiple field names - product_built/title for title, outcome_summary/body_excerpt for body
+    title = (finding_data.get('product_built') or finding_data.get('title') or '').lower()
+    body = (finding_data.get('outcome_summary') or finding_data.get('body_excerpt') or '').lower()
+    text = f'{title} {body}'
+
+    # Check 1: Too short
+    if len(text.strip()) < 30:
+        return False, "too_short"
+
+    # Check 2: Meta discussion pattern
+    for pattern in META_PATTERNS:
+        if re.search(pattern, text):
+            return False, "meta_post"
+
+    # Check 3: Contains concrete object
+    has_object = any(obj in text for obj in CONCRETE_OBJECTS)
+    if not has_object:
+        return False, "no_concrete_object"
+
+    # Check 4: Contains failure verb/pattern
+    has_failure = any(verb in text for verb in FAILURE_VERBS)
+    if not has_failure:
+        return False, "no_failure_pattern"
+
+    # Check 5: Generic productivity talk (without specific failure)
+    generic_productivity = ['productivity', 'efficiency', 'workflow', 'automation']
+    if all(word in text for word in generic_productivity) and not has_failure:
+        return False, "generic_productivity"
+
+    return True, "passed"
+
+
+# Continue with original imports and rest of file...
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +244,8 @@ class DiscoveryAgent(BaseAgent):
         self._cycle_counts: dict[str, int] = defaultdict(int)
         self._last_reddit_seed_summary: dict[str, Any] = {}
         self.bypass_cache = bypass_cache
+        # Term lifecycle manager for forward+reverse search space control
+        self.term_lifecycle = TermLifecycleManager(db)
 
     async def _run_loop(self) -> None:
         while self.status in (AgentStatus.RUNNING, AgentStatus.PAUSED):
@@ -225,6 +313,8 @@ class DiscoveryAgent(BaseAgent):
             logger.warning("reddit relay priming task failed: %s", exc)
         self._persist_cycle_health()
         self._publish_cycle_health()
+        # Update term lifecycle states based on this wave's results
+        self._update_term_lifecycle()
         return finding_ids
 
     def _feedback_source_names(self, normalized_source: str) -> list[str]:
@@ -590,6 +680,13 @@ class DiscoveryAgent(BaseAgent):
 
         existing = self.db.get_finding_by_hash(content_hash)
         if existing:
+            self._seen_hashes.add(content_hash)
+            return None
+
+        # PART 5: PRE-ATOM FILTER - Reject weak signals before atom creation
+        is_ready, reject_reason = is_wedge_ready_signal(finding_data)
+        if not is_ready:
+            logger.debug(f"filtering weak signal: {reject_reason}")
             self._seen_hashes.add(content_hash)
             return None
 
@@ -1250,6 +1347,105 @@ class DiscoveryAgent(BaseAgent):
             discoveryStrategy=strategy_entries,
             learningInsights=insights,
         )
+
+    def _update_term_lifecycle(self) -> dict[str, Any]:
+        """Update term lifecycle states based on cycle results.
+
+        Aggregates query-level feedback into term-level state transitions.
+        """
+        # Get feedback aggregated by keyword/subreddit
+        feedback_rows = self.db.get_discovery_feedback()
+
+        # Track which terms we've seen to update
+        keyword_metrics: dict[str, dict[str, int]] = defaultdict(lambda: {
+            "findings_emitted": 0, "validations": 0, "passes": 0,
+            "prototype_candidates": 0, "build_briefs": 0, "screened_out": 0,
+            "low_yield": 0, "noisy": 0, "thin_validation": 0,
+        })
+        subreddit_metrics: dict[str, dict[str, int]] = defaultdict(lambda: {
+            "findings_emitted": 0, "validations": 0, "passes": 0,
+            "prototype_candidates": 0, "build_briefs": 0, "screened_out": 0,
+            "low_yield": 0, "noisy": 0, "thin_validation": 0,
+        })
+
+        for row in feedback_rows:
+            source_name = row.get("source_name", "")
+            query_text = row.get("query_text", "")
+
+            # Determine source type
+            if source_name.startswith("reddit"):
+                # Try to extract subreddit from query or source
+                # For now, track keywords
+                keyword_metrics[query_text] = {
+                    "findings_emitted": keyword_metrics[query_text]["findings_emitted"] + int(row.get("findings_emitted", 0)),
+                    "validations": keyword_metrics[query_text]["validations"] + int(row.get("validations", 0)),
+                    "passes": keyword_metrics[query_text]["passes"] + int(row.get("passes", 0)),
+                    "prototype_candidates": keyword_metrics[query_text]["prototype_candidates"] + int(row.get("prototype_candidates", 0)),
+                    "build_briefs": keyword_metrics[query_text]["build_briefs"] + int(row.get("build_briefs", 0)),
+                    "screened_out": keyword_metrics[query_text]["screened_out"] + int(row.get("screened_out", 0)),
+                    "low_yield": keyword_metrics[query_text]["low_yield"],
+                    "noisy": keyword_metrics[query_text]["noisy"],
+                    "thin_validation": keyword_metrics[query_text]["thin_validation"],
+                }
+            elif source_name.startswith("web"):
+                keyword_metrics[query_text] = {
+                    "findings_emitted": keyword_metrics[query_text]["findings_emitted"] + int(row.get("findings_emitted", 0)),
+                    "validations": keyword_metrics[query_text]["validations"] + int(row.get("validations", 0)),
+                    "passes": keyword_metrics[query_text]["passes"] + int(row.get("passes", 0)),
+                    "prototype_candidates": keyword_metrics[query_text]["prototype_candidates"] + int(row.get("prototype_candidates", 0)),
+                    "build_briefs": keyword_metrics[query_text]["build_briefs"] + int(row.get("build_briefs", 0)),
+                    "screened_out": keyword_metrics[query_text]["screened_out"] + int(row.get("screened_out", 0)),
+                    "low_yield": keyword_metrics[query_text]["low_yield"],
+                    "noisy": keyword_metrics[query_text]["noisy"],
+                    "thin_validation": keyword_metrics[query_text]["thin_validation"],
+                }
+            elif source_name.startswith("github"):
+                keyword_metrics[query_text] = {
+                    "findings_emitted": keyword_metrics[query_text]["findings_emitted"] + int(row.get("findings_emitted", 0)),
+                    "validations": keyword_metrics[query_text]["validations"] + int(row.get("validations", 0)),
+                    "passes": keyword_metrics[query_text]["passes"] + int(row.get("passes", 0)),
+                    "prototype_candidates": keyword_metrics[query_text]["prototype_candidates"] + int(row.get("prototype_candidates", 0)),
+                    "build_briefs": keyword_metrics[query_text]["build_briefs"] + int(row.get("build_briefs", 0)),
+                    "screened_out": keyword_metrics[query_text]["screened_out"] + int(row.get("screened_out", 0)),
+                    "low_yield": keyword_metrics[query_text]["low_yield"],
+                    "noisy": keyword_metrics[query_text]["noisy"],
+                    "thin_validation": keyword_metrics[query_text]["thin_validation"],
+                }
+
+        # Also look at discovery_search_terms to get low_yield, noisy, thin_validation counts
+        existing_terms = self.db.list_search_terms(limit=500)
+        term_state_map = {(t["term_type"], t["term_value"]): t for t in existing_terms}
+
+        # Update keywords
+        transitions = {"keywords": [], "subreddits": []}
+        for keyword, metrics in keyword_metrics.items():
+            if not keyword or keyword == "[source-skipped]":
+                continue
+
+            # Get existing state for quality flags
+            existing = term_state_map.get(("keyword", keyword), {})
+            low_yield = existing.get("low_yield_count", 0)
+            noisy = existing.get("noisy_count", 0)
+            thin_val = existing.get("thin_validation_count", 0)
+
+            result = self.term_lifecycle.record_search_run(
+                "keyword",
+                keyword,
+                findings_emitted=metrics["findings_emitted"],
+                validations=metrics["validations"],
+                passes=metrics["passes"],
+                prototype_candidates=metrics["prototype_candidates"],
+                build_briefs=metrics["build_briefs"],
+                screened_out=metrics["screened_out"],
+                low_yield=low_yield > 0,
+                noisy=noisy > 0,
+                thin_validation=thin_val > 0,
+            )
+            if result["old_state"] != result["new_state"]:
+                transitions["keywords"].append(result)
+
+        logger.info(f"Term lifecycle: {len(transitions['keywords'])} keyword state changes")
+        return transitions
 
     def _generate_content_hash(self, finding_data: Dict[str, Any]) -> str:
         normalized = json.dumps(
