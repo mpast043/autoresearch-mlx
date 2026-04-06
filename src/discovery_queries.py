@@ -2,27 +2,31 @@
 
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_REDDIT_PROBLEM_SUBREDDITS = ["accounting", "smallbusiness", "ecommerce", "shopify", "EtsySellers", "sysadmin"]
 DEFAULT_REDDIT_PROBLEM_KEYWORDS = [
-    "manual reconciliation",
-    "spreadsheet reconciliation process",
-    "bank reconciliation spreadsheet workflow",
-    "month end close spreadsheet",
-    "invoice reminder spreadsheet workflow",
-    "manual handoff workflow",
-    "sales channel reconciliation spreadsheet",
-    "channel profitability reporting spreadsheet",
-    "order level reconciliation spreadsheet",
-    "bank deposit reconciliation spreadsheet",
-    "returns workflow spreadsheet",
-    "supplier data spreadsheet workflow",
-    "pdf collaboration version control",
-    '"order received" "label printed" whatsapp spreadsheet',
-    "which spreadsheet is latest",
-    "held together by spreadsheets",
-    "copy paste workflow",
+    # Mismatch-based keywords - platform specific failures
+    "QuickBooks invoice does not match payment",
+    "Shopify orders duplicated after import",
+    "Excel formulas break when copying sheet",
+    "CSV import creates duplicate entries",
+    "Spreadsheet version conflict team",
+    "Transaction mismatch reconciliation",
+    "Bank statement doesn't match invoices",
+    "Invoice payment mismatch error",
+    "Data duplicated after CSV import",
+    "Entries not matching after import",
+    "Wrong totals after spreadsheet import",
+    "Spreadsheet copy paste error",
+    "Manual matching error problem",
+    "Reconciliation fails after import",
+    "Payment not matching invoice",
 ]
 DEFAULT_REDDIT_SUCCESS_KEYWORDS: list[str] = []
 CURATED_OPERATOR_SUBREDDITS = [
@@ -33,21 +37,19 @@ CURATED_OPERATOR_SUBREDDITS = [
     "EtsySellers",
 ]
 CURATED_OPERATOR_KEYWORDS = [
-    "manual reconciliation",
-    "spreadsheet reconciliation process",
-    "month end close spreadsheet",
-    "bank reconciliation spreadsheet workflow",
-    "sales channel reconciliation spreadsheet",
-    "channel profitability reporting spreadsheet",
-    "invoice reminder spreadsheet workflow",
-    "order level reconciliation spreadsheet",
-    "pdf collaboration version control",
-    "manual handoff workflow",
-    "bank deposit reconciliation spreadsheet",
-    "returns workflow spreadsheet",
-    "supplier data spreadsheet workflow",
-    '"order received" "label printed" whatsapp spreadsheet',
-    "which spreadsheet is latest",
+    # Mismatch-based keywords
+    "Invoice does not match payment",
+    "Orders duplicated after import",
+    "Formulas break when copying",
+    "CSV import creates duplicates",
+    "Version conflict spreadsheet",
+    "Transaction mismatch",
+    "Bank statement doesn't match",
+    "Data duplicated after import",
+    "Wrong totals after import",
+    "Copy paste error spreadsheet",
+    "Reconciliation fails after import",
+    "Payment not matching invoice",
 ]
 META_REDDIT_SUBREDDITS = [
     "projectmanagement",
@@ -84,6 +86,20 @@ def _prioritize_subreddits(subreddits: list[str]) -> list[str]:
 
 def reddit_problem_subreddits(config: dict[str, Any] | None = None) -> list[str]:
     config = config or {}
+
+    # Try to read from governed config first
+    governed_path = Path("data/next_wave_governed_final.json")
+    if governed_path.exists():
+        try:
+            governed = json.loads(governed_path.read_text())
+            subs = governed.get("subreddits", [])
+            if subs:
+                logger.info(f"Using governed subreddits: {subs}")
+                return subs
+        except Exception:
+            pass
+
+    # Fall back to config.yaml
     reddit_config = config.get("discovery", {}).get("reddit", {})
     subreddits = _string_list(reddit_config.get("problem_subreddits")) or _string_list(
         reddit_config.get("subreddits")
@@ -103,6 +119,20 @@ def reddit_discovery_subreddits(config: dict[str, Any] | None = None) -> list[st
 
 def reddit_problem_keywords(config: dict[str, Any] | None = None) -> list[str]:
     config = config or {}
+
+    # Try to read from governed config first
+    governed_path = Path("data/next_wave_governed_final.json")
+    if governed_path.exists():
+        try:
+            governed = json.loads(governed_path.read_text())
+            kw = governed.get("keywords", [])
+            if kw:
+                logger.info(f"Using governed keywords: {kw}")
+                return kw
+        except Exception:
+            pass
+
+    # Fall back to config.yaml
     reddit_config = config.get("discovery", {}).get("reddit", {})
     keywords = _string_list(reddit_config.get("problem_keywords")) or _string_list(
         reddit_config.get("keywords")

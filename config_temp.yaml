@@ -1,0 +1,268 @@
+builder:
+  auto_build: true
+database:
+  path: data/autoresearch.db
+discovery:
+  auto_expand: true
+  candidate_filter:
+    behavioral_min_signals: 1
+    behavioral_penalty: 1
+    min_score: 1
+  expansion:
+    cooldown_hours: 1
+    max_keywords_per_wave: 5
+    max_subreddits_per_wave: 5
+    min_validation_score: 0.25
+  exploration_slots_per_cycle: 1
+  github:
+    hard_skip_after_zero_yield: false
+    timeout_seconds: 8
+  keywords:
+  - notion invoice does not match payment
+  - notion spreadsheet version conflict
+  - etsy orders duplicated after import
+  - notion missing data after sync
+  - wordpress rows duplicated
+  - excel orders duplicated after import
+  - airtable import creates duplicate rows
+  - wordpress missing data after sync
+  - google sheets reconciliation problem
+  - notion formulas break when copying
+  - xero data not updating
+  - google sheets transaction mismatch
+  - shopify database duplicate entries
+  - xero database duplicate entries
+  - quickbooks invoice does not match payment
+  - airtable wrong totals after import
+  - shopify spreadsheet version conflict
+  - quickbooks copy paste error
+  - stripe spreadsheet version conflict
+  - google sheets formulas break when copying
+  - wordpress spreadsheet version conflict
+  - stripe orders duplicated after import
+  - xero rows duplicated
+  - quickbooks rows duplicated
+  - airtable formulas break when copying
+  - etsy copy paste error
+  - quickbooks database duplicate entries
+  - stripe formulas break when copying
+  - wordpress formulas break when copying
+  - google sheets missing data after sync
+  - airtable spreadsheet version conflict
+  - wordpress invoice does not match payment
+  - wordpress copy paste error
+  - wordpress wrong totals after import
+  - stripe invoice does not match payment
+  - quickbooks transaction mismatch
+  - quickbooks data not updating
+  - xero CSV import error
+  - notion CSV import error
+  - notion entries not matching
+  - shopify import creates duplicate rows
+  - etsy spreadsheet version conflict
+  - xero wrong totals after import
+  - xero formulas break when copying
+  - google sheets data not updating
+  - notion transaction mismatch
+  - xero reconciliation problem
+  - airtable missing data after sync
+  - airtable CSV import error
+  - google sheets rows duplicated
+  - quickbooks spreadsheet version conflict
+  - shopify wrong totals after import
+  - etsy missing data after sync
+  - shopify invoice does not match payment
+  - notion reconciliation problem
+  - shopify reconciliation problem
+  - xero import creates duplicate rows
+  - etsy invoice does not match payment
+  - excel reconciliation problem
+  - quickbooks wrong totals after import
+  - stripe entries not matching
+  - stripe import creates duplicate rows
+  - quickbooks CSV import error
+  - quickbooks import creates duplicate rows
+  - excel invoice does not match payment
+  - wordpress data not updating
+  - stripe data not updating
+  - wordpress reconciliation problem
+  - airtable invoice does not match payment
+  - google sheets orders duplicated after import
+  - quickbooks missing data after sync
+  - wordpress import creates duplicate rows
+  - quickbooks entries not matching
+  - airtable entries not matching
+  - shopify transaction mismatch
+  - etsy wrong totals after import
+  - airtable transaction mismatch
+  - etsy transaction mismatch
+  - airtable data not updating
+  - etsy entries not matching
+  max_queries_per_concept: 1
+  query_family_decay_hours: 18
+  query_family_decay_min_queries: 2
+  reddit:
+    max_docs_per_pair: 6
+    max_keywords_per_wave: 4
+    max_subreddits_per_wave: 4
+    pair_concurrency: 3
+    per_sort_limit: 2
+    problem_keywords:
+    - manual reconciliation
+    - spreadsheet reconciliation process
+    - manual handoff workflow
+    - month end close spreadsheet
+    - sales channel reconciliation spreadsheet
+    - bank deposit reconciliation spreadsheet
+    - returns workflow spreadsheet
+    - supplier data spreadsheet workflow
+    - '"order received" "label printed" whatsapp spreadsheet'
+    - which spreadsheet is latest
+    - held together by spreadsheets
+    - copy paste workflow
+    problem_subreddits:
+    - accounting
+    - smallbusiness
+    - EtsySellers
+    - ecommerce
+    - shopify
+    - projectmanagement
+    - automation
+    - sysadmin
+    - msp
+    - devops
+    - excel
+    - notion
+    - airtable
+    - webdev
+    - selfhosted
+    - sales
+    - productivity
+    - Entrepreneur
+    - indiehackers
+    - SaaS
+    - startups
+    - freelance
+    reddit_seed_query_limit: 8
+    search_sorts:
+    - relevance
+    - new
+    - top
+    - comments
+    search_time_filter: year
+    theme_keywords:
+      build:
+      - deployment pain
+      - release checklist
+      - integration breakage
+      money:
+      - cash flow
+      - manual reconciliation
+      - invoice mismatch
+      saas:
+      - subscription billing
+      - customer onboarding
+      - support queue
+    use_r_all: false
+  shopify_reviews:
+    app_handles: []
+    max_apps: 3
+    rate_limit_cooldown_seconds: 900
+    rating_filters:
+    - 1
+    - 2
+    reviews_per_app: 3
+    sort_by: newest
+  source_selection:
+    always_run:
+    - reddit
+    - web
+    exploratory_low_yield_sources_per_cycle: 1
+    low_yield_min_runs: 50
+  sources:
+  - reddit
+  - web
+  - github
+  - youtube
+  - youtube-comments
+  - wordpress_reviews
+  - shopify_reviews
+  subreddits:
+  - smallbusiness
+  - accounting
+  - ecommerce
+  - productivity
+  - bookkeeping
+  web:
+    market_timeout_seconds: 8
+    problem_timeout_seconds: 15
+    success_timeout_seconds: 10
+    use_jina_reader: true
+  wordpress_reviews:
+    plugin_slugs:
+    - woocommerce
+    - fluent-crm
+    - wordfence
+    - updraftplus
+    reviews_per_plugin: 5
+    star_filters:
+    - 1
+    - 2
+  youtube_comments:
+    keywords:
+    - shopify app review 2024
+    - best shopify apps
+    - shopify app recommendations
+    - shopify app vs
+    - ecommerce tools review
+llm:
+  base_url: http://localhost:11434
+  max_tokens: 12000
+  model: llama3.1:8b
+  provider: ollama
+orchestration:
+  auto_ideate_after_validation: true
+  continuous_waves: true
+  evidence_concurrency: 3
+  evidence_timeout_seconds: 120
+  run_once_max_wait_seconds: 180
+  stop_on_hit:
+    decision_any:
+    - promote
+    enabled: false
+    exit_on_hit: true
+    retry_interval_seconds: 0
+    selection_status_any:
+    - prototype_candidate
+output_dir: output
+reddit_bridge:
+  auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}
+  base_url: ${REDDIT_BRIDGE_BASE_URL}
+  enabled: true
+  mode: bridge_with_fallback
+  seed_on_miss: true
+reddit_relay:
+  allow_no_auth: false
+  auth_token: ${REDDIT_RELAY_AUTH_TOKEN}
+validation:
+  park_threshold: 0.15
+  promotion_threshold: 0.18
+  search:
+    competitor_budget_seconds: 20.0
+    competitor_results: 8
+    ddgs_backend: duckduckgo
+    ddgs_extra_results: 4
+    evidence_sample: 5
+    max_results_per_domain: 2
+    provider_timeout_competitor: 10
+    provider_timeout_general: 12
+    provider_timeout_recurrence: 8
+    query_terms: 14
+    recurrence_budget_seconds: 45.0
+    recurrence_results: 6
+    request_timeout_competitor: 12
+    request_timeout_general: 20
+    request_timeout_recurrence: 10
+    result_snippet_length: 320
+    result_title_length: 180
+    search_user_agent: Mozilla/5.0 (compatible; AutoResearcher/1.0)

@@ -9,7 +9,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from build_prep import (
     build_brief_payload,
     determine_selection_state,
+    determine_narrow_output_type,
     is_allowed_selection_transition,
+    PlatformFit,
+    VAGUE_PATTERNS,
+    get_platform_classification_config,
+    _parse_platform_fit_response,
+    _classify_via_ollama,
+    _classify_via_anthropic,
 )
 
 
@@ -341,7 +348,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "blocked_by": [],
             },
         )
-        self.assertEqual(payload["recommended_narrow_output_type"], "workflow_reliability_assistant")
+        self.assertEqual(payload["recommended_narrow_output_type"], "sync_handoff_assistant")
         self.assertEqual(payload["prototype_gate"]["prototype_gate_mode"], "prototype_candidate_exception")
         self.assertEqual(payload["prototype_gate"]["prototype_gate_basis"], "supported_single_family_workflow_pain")
         self.assertEqual(payload["prototype_gate"]["prototype_gate_family_count"], 1)
@@ -489,3 +496,235 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertFalse(checkpoint_posture["allow_market_confirmed_language"])
         self.assertIn("narrow and diagnostic", checkpoint_posture["scope_rule"])
         self.assertIn("do not claim full market validation", checkpoint_posture["messaging_rule"])
+
+
+class TestPlatformFit(unittest.TestCase):
+    def test_platform_fit_returns_structured_object(self):
+        """Test that determine_narrow_output_type returns PlatformFit."""
+        result = determine_narrow_output_type(
+            wedge_name="test",
+            job_to_be_done="contract errors",
+            failure_mode="wrong company name",
+            user_role="freelancer",
+            trigger_event="sending contract",  # Required for LLM trigger
+            pain_statement="almost lost 50k client",  # Required for LLM trigger
+            cluster_summary="template error",  # Required for LLM trigger
+        )
+        self.assertIsInstance(result, PlatformFit)
+        self.assertIsNotNone(result.product_name)
+        self.assertIsNotNone(result.host_platform)
+        self.assertIsNotNone(result.product_format)
+
+    def test_platform_fit_includes_fallback_metadata(self):
+        """Test that fallback includes proper metadata."""
+        result = determine_narrow_output_type(
+            wedge_name="test",
+            job_to_be_done="keep operations data sync",  # Triggers sync keyword
+            failure_mode="handoff data gets lost",
+            user_role="operator",
+            trigger_event="status updates arrive out of order",  # Required
+            pain_statement="copy paste between spreadsheets",  # Required
+            cluster_summary="spreadsheet breakage",  # Required
+        )
+        self.assertIsInstance(result, PlatformFit)
+        self.assertFalse(result.llm_used)
+        self.assertTrue(result.fallback_used)
+
+    def test_platform_fit_detects_vague_output(self):
+        """Test that vague outputs are flagged."""
+        vague = PlatformFit(
+            product_name="workflow_reliability_assistant",
+            host_platform="Unknown",
+            product_format="lightweight microSaaS",
+        )
+        self.assertTrue(vague.is_vague)
+
+        specific = PlatformFit(
+            product_name="Contract Guard",
+            host_platform="Google Docs",
+            product_format="Google Docs add-on",
+        )
+        self.assertFalse(specific.is_vague)
+
+    def test_platform_fit_detects_platform_native(self):
+        """Test that platform-native formats are detected."""
+        add_on = PlatformFit(
+            product_name="Test",
+            host_platform="Google Docs",
+            product_format="Google Docs add-on",
+        )
+        self.assertTrue(add_on.is_platform_native)
+
+        extension = PlatformFit(
+            product_name="Test",
+            host_platform="Browser",
+            product_format="Chrome extension",
+        )
+        self.assertTrue(extension.is_platform_native)
+
+        vague = PlatformFit(
+            product_name="Test",
+            host_platform="Unknown",
+            product_format="lightweight microSaaS",
+        )
+        self.assertFalse(vague.is_platform_native)
+
+    def test_build_brief_payload_includes_platform_fit(self):
+        """Test that build_brief_payload includes platform_fit."""
+        payload = build_brief_payload(
+            run_id="test-run",
+            opportunity_id=1,
+            validation_id=1,
+            cluster_id=1,
+            linked_finding_ids=[1],
+            finding=DummyFinding(),
+            cluster={
+                "job_to_be_done": "contract errors",
+                "user_role": "freelancer",
+                "summary": {"human_summary": "contract template mistake"},
+            },
+            anchor_atom=type(
+                "TestAtom",
+                (),
+                {
+                    "pain_statement": "wrong company name in contract",
+                    "failure_mode": "template reuse error",
+                    "current_workaround": "manual check",
+                    "trigger_event": "sending contract",
+                },
+            )(),
+            corroboration={
+                "source_families": ["reddit"],
+                "source_family_match_counts": {"reddit": 3},
+                "core_source_families": ["reddit"],
+                "core_source_family_diversity": 1,
+                "cross_source_match_score": 0.35,
+                "corroboration_score": 0.42,
+                "recurrence_state": "supported",
+            },
+            market_enrichment={
+                "wedge_name": "contract_template_error",
+                "wedge_active": True,
+                "wedge_fit_score": 0.65,
+            },
+            evidence_payload={
+                "recurrence_gap_reason": "",
+                "evidence_assessment": {
+                    "problem_plausibility": 0.6,
+                    "value_support": 0.5,
+                    "composite_score": 0.35,
+                },
+            },
+            experiment_hypothesis="test hypothesis",
+            selection_status="prototype_candidate",
+            selection_reason="validated_selection_gate",
+            selection_gate={"eligible": True, "reasons": [], "blocked_by": []},
+        )
+
+        self.assertIn("platform_fit", payload)
+        self.assertIsInstance(payload["platform_fit"], dict)
+        self.assertIn("host_platform", payload["platform_fit"])
+        self.assertIn("product_format", payload["platform_fit"])
+        self.assertIn("product_name", payload["platform_fit"])
+        self.assertIn("llm_used", payload["platform_fit"])
+        self.assertIn("fallback_used", payload["platform_fit"])
+
+
+class TestProviderClassification(unittest.TestCase):
+    def test_get_platform_classification_config_defaults(self):
+        """Test default config values."""
+        # Clear any existing env vars
+        original_env = os.environ.copy()
+        try:
+            # Remove test env vars
+            for key in ["PLATFORM_FIT_LLM_PROVIDER", "OLLAMA_BASE_URL", "OLLAMA_MODEL"]:
+                os.environ.pop(key, None)
+
+            config = get_platform_classification_config()
+            self.assertEqual(config["provider"], "auto")
+            self.assertEqual(config["ollama_base_url"], "http://127.0.0.1:11434")
+            self.assertEqual(config["ollama_model"], "qwen2.5:3b")
+        finally:
+            os.environ.clear()
+            os.environ.update(original_env)
+
+    def test_get_platform_classification_config_env_override(self):
+        """Test env vars override defaults."""
+        original_env = os.environ.copy()
+        try:
+            os.environ["PLATFORM_FIT_LLM_PROVIDER"] = "ollama"
+            os.environ["OLLAMA_BASE_URL"] = "http://localhost:11434"
+            os.environ["OLLAMA_MODEL"] = "llama3:8b"
+
+            config = get_platform_classification_config()
+            self.assertEqual(config["provider"], "ollama")
+            self.assertEqual(config["ollama_base_url"], "http://localhost:11434")
+            self.assertEqual(config["ollama_model"], "llama3:8b")
+        finally:
+            os.environ.clear()
+            os.environ.update(original_env)
+
+    def test_parse_platform_fit_response_valid_json(self):
+        """Test parsing valid JSON response."""
+        raw = '{"host_platform": "Google Docs", "product_format": "Google Docs add-on", "product_name": "Contract Guard", "one_sentence_product": "Prevents wrong company names in contracts", "why_this_format": "Attaches to Google Docs"}'
+        result = _parse_platform_fit_response(raw, "test")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.product_name, "Contract Guard")
+        self.assertEqual(result.host_platform, "Google Docs")
+        self.assertEqual(result.product_format, "Google Docs add-on")
+        self.assertTrue(result.llm_used)
+        self.assertFalse(result.fallback_used)
+
+    def test_parse_platform_fit_response_with_markdown(self):
+        """Test parsing JSON with markdown fences."""
+        raw = '```json\n{"host_platform": "Gmail", "product_format": "Gmail add-on", "product_name": "Attachment Guard", "one_sentence_product": "Checks attachments before send", "why_this_format": "Integrated in Gmail"}\n```'
+        result = _parse_platform_fit_response(raw, "test")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.product_name, "Attachment Guard")
+
+    def test_parse_platform_fit_response_empty(self):
+        """Test parsing empty response returns None."""
+        result = _parse_platform_fit_response("", "test")
+        self.assertIsNone(result)
+
+    def test_parse_platform_fit_response_no_product_name(self):
+        """Test parsing response without product_name returns None."""
+        raw = '{"host_platform": "Google Docs", "product_format": "Google Docs add-on"}'
+        result = _parse_platform_fit_response(raw, "test")
+        self.assertIsNone(result)
+
+    def test_ollama_unavailable_returns_none(self):
+        """Test Ollama returns None when unavailable."""
+        result = _classify_via_ollama(
+            job_to_be_done="contract errors",
+            failure_mode="wrong company name",
+            trigger_event="sending contract",
+            current_workaround="manual check",
+            pain_statement="lost client",
+            user_role="freelancer",
+            cluster_summary="template error",
+        )
+        # Should return None when Ollama is not running
+        self.assertIsNone(result)
+
+    def test_anthropic_no_key_returns_none(self):
+        """Test Anthropic returns None when no API key."""
+        # Temporarily clear API key
+        original_env = os.environ.copy()
+        try:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            os.environ.pop("CLAUDE_API_KEY", None)
+
+            result = _classify_via_anthropic(
+                job_to_be_done="contract errors",
+                failure_mode="wrong company name",
+                trigger_event="sending contract",
+                current_workaround="manual check",
+                pain_statement="lost client",
+                user_role="freelancer",
+                cluster_summary="template error",
+            )
+            self.assertIsNone(result)
+        finally:
+            os.environ.clear()
+            os.environ.update(original_env)

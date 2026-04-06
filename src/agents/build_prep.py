@@ -36,16 +36,29 @@ class SolutionFramingAgent(_BuildPrepAgent):
             return {"ignored": True}
 
         brief, brief_payload, build_brief_id = self._load_context(message.payload)
+
+        # Get platform_fit for structured output
+        platform_fit = brief_payload.get("platform_fit", {})
+        host_platform = platform_fit.get("host_platform", "Unknown")
+        product_format = platform_fit.get("product_format", "lightweight microSaaS")
+        product_name = platform_fit.get("product_name", brief_payload.get("recommended_narrow_output_type", ""))
+        one_sentence_product = platform_fit.get("one_sentence_product", "")
+        why_this_format = platform_fit.get("why_this_format", "")
+
         framing = {
             "problem_frame": brief_payload.get("problem_summary", ""),
-            "target_user": brief_payload.get("job_to_be_done", ""),
-            "narrow_solution_bet": brief_payload.get("recommended_narrow_output_type", ""),
+            "target_user": brief_payload.get("user_role", brief_payload.get("job_to_be_done", "")),
+            "narrow_solution_bet": product_name,
+            "host_platform": host_platform,
+            "product_format": product_format,
+            "one_sentence_product": one_sentence_product,
+            "why_this_format": why_this_format,
             "excluded_scope": [
                 "full product build",
                 "broad multi-segment workflow suite",
                 "unverified expansion workflows",
             ],
-            "value_claim": "Reduce the recurring workflow failure before replacing the entire system.",
+            "value_claim": one_sentence_product or "Reduce the recurring workflow failure before replacing the entire system.",
             "open_questions": brief_payload.get("open_questions_risks", [])[:5],
             "readiness_score": 0.82,
             "traceability": {
@@ -174,9 +187,18 @@ class SpecGenerationAgent(_BuildPrepAgent):
         brief, brief_payload, build_brief_id = self._load_context(message.payload)
         prior_outputs = self.db.list_build_prep_outputs(build_brief_id=build_brief_id, run_id=brief.run_id)
         output_map = {item.agent_name: item.output for item in prior_outputs}
+
+        # Get platform_fit for structured output
+        platform_fit = brief_payload.get("platform_fit", {})
+        product_name = platform_fit.get("product_name", brief_payload.get("recommended_narrow_output_type", ""))
+        host_platform = platform_fit.get("host_platform", "Unknown")
+        product_format = platform_fit.get("product_format", "lightweight microSaaS")
+
         spec = {
             "scope": {
-                "narrow_output_type": brief_payload.get("recommended_narrow_output_type", ""),
+                "narrow_output_type": product_name,
+                "host_platform": host_platform,
+                "product_format": product_format,
                 "must_solve": brief_payload.get("pain_workaround", {}).get("failure_mode", ""),
                 "non_goals": output_map.get("solution_framing", {}).get("excluded_scope", []),
             },

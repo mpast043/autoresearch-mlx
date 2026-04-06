@@ -2,11 +2,285 @@
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass, field, asdict
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 BUILD_BRIEF_SCHEMA_VERSION = "build_brief_v1"
 BUILD_PREP_RULE_VERSION = "build_prep_v1"
 PROTOTYPE_CANDIDATE_RULE_VERSION = "prototype_candidate_v1"
+
+
+# Vague placeholder patterns to down-rank or reject
+VAGUE_PATTERNS = {
+    "workflow_reliability",
+    "workflow_diagnostic",
+    "operator_workflow_patch",
+    "workflow",
+    "manual workflow",
+    "keep operations in sync",
+    "keep sync",
+    "keep data in sync",
+    "spreadsheet hell",
+    "copy-pasting",
+    "repetitive tasks",
+    "manual cleanup",
+    "productivity",
+    "operations automation",
+    "data sync",
+    "collaboration",
+}
+
+
+@dataclass
+class PlatformFit:
+    """Structured result from platform/format classification."""
+    host_platform: str | None = None
+    product_format: str | None = None
+    product_name: str | None = None
+    one_sentence_product: str | None = None
+    why_this_format: str | None = None
+    llm_used: bool = False
+    fallback_used: bool = False
+    classification_confidence: float | None = None
+    raw_classification: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @property
+    def is_vague(self) -> bool:
+        """Check if this classification is too vague to be useful."""
+        if not self.product_name:
+            return True
+        name_lower = self.product_name.lower()
+        return any(pattern.lower() in name_lower for pattern in VAGUE_PATTERNS)
+
+    @property
+    def is_platform_native(self) -> bool:
+        """Check if this is a plugin/add-on/extension format."""
+        if not self.product_format:
+            return False
+        formats = self.product_format.lower()
+        return any(fmt in formats for fmt in [
+            "add-on", "add-in", "extension", "app", "plugin", "micro-saas"
+        ])
+
+
+# =============================================================================
+# Provider Configuration for Platform Classification
+# =============================================================================
+
+def get_platform_classification_config() -> dict[str, str]:
+    """Get configuration for platform classification LLM provider."""
+    import os
+    return {
+        "provider": os.environ.get("PLATFORM_FIT_LLM_PROVIDER", "auto"),
+        "ollama_base_url": os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        "ollama_model": os.environ.get("OLLAMA_MODEL", "qwen2.5:3b"),
+        "anthropic_api_key": os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"),
+    }
+
+
+# Optimized prompt for local/small models
+PLATFORM_CLASSIFICATION_PROMPT = """Given this opportunity, output ONLY valid JSON with these exact fields:
+
+{{"host_platform": "Google Docs|Gmail|Amazon Seller Central|Shopify Admin|Etsy Dashboard|Slack|Microsoft Word|Browser|Chrome extension|WordPress|internal dashboard", "product_format": "Google Docs add-on|Gmail add-on|Chrome extension|Shopify app|Slack app|Word add-in|Excel add-in|WordPress plugin|internal workflow tool|lightweight microSaaS", "product_name": "specific narrow name like Contract Guard", "one_sentence_product": "what it does", "why_this_format": "why better than standalone SaaS"}}
+
+User role: {user_role}
+Job: {job_to_be_done}
+Failure: {failure_mode}
+Trigger: {trigger_event}
+Workaround: {current_workaround}
+Pain: {pain_statement}
+
+Output JSON only. No markdown. No prose."""
+
+
+def _parse_platform_fit_response(raw: str, provider: str) -> PlatformFit | None:
+    """Parse LLM response into PlatformFit. Handles markdown, partial JSON, etc."""
+    import json
+
+    if not raw:
+        return None
+
+    # Clean up response
+    cleaned = raw.strip()
+
+    # Remove markdown code blocks
+    if "```json" in cleaned:
+        cleaned = cleaned.split("```json")[1].split("```")[0]
+    elif "```" in cleaned:
+        cleaned = cleaned.split("```")[1].split("```")[0]
+
+    # Try to extract JSON from potentially malformed response
+    try:
+        result = json.loads(cleaned.strip())
+
+        # Validate we have at least a product_name
+        if not result.get("product_name"):
+            logger.warning(f"{provider}: No product_name in response")
+            return None
+
+        return PlatformFit(
+            host_platform=result.get("host_platform"),
+            product_format=result.get("product_format"),
+            product_name=result.get("product_name"),
+            one_sentence_product=result.get("one_sentence_product"),
+            why_this_format=result.get("why_this_format"),
+            llm_used=True,
+            fallback_used=False,
+            classification_confidence=0.7,
+            raw_classification=result,
+        )
+
+    except json.JSONDecodeError as e:
+        # Try to extract JSON object from response even if partial
+        import re
+        json_match = re.search(r'\{[^{}]*\}', cleaned)
+        if json_match:
+            try:
+                result = json.loads(json_match.group())
+                if result.get("product_name"):
+                    return PlatformFit(
+                        host_platform=result.get("host_platform"),
+                        product_format=result.get("product_format"),
+                        product_name=result.get("product_name"),
+                        one_sentence_product=result.get("one_sentence_product"),
+                        why_this_format=result.get("why_this_format"),
+                        llm_used=True,
+                        fallback_used=False,
+                        classification_confidence=0.5,  # Lower confidence for partial parse
+                        raw_classification=result,
+                    )
+            except json.JSONDecodeError:
+                pass
+
+        logger.warning(f"{provider}: Failed to parse JSON response: {e}")
+        return None
+
+
+def _classify_via_ollama(
+    *,
+    job_to_be_done: str,
+    failure_mode: str,
+    trigger_event: str,
+    current_workaround: str,
+    pain_statement: str,
+    user_role: str,
+    cluster_summary: str,
+) -> PlatformFit | None:
+    """Classify platform fit using Ollama (local-first)."""
+    import os
+    import json
+    import aiohttp
+
+    config = get_platform_classification_config()
+    base_url = config["ollama_base_url"]
+    model = config["ollama_model"]
+
+    # Format the prompt
+    prompt = PLATFORM_CLASSIFICATION_PROMPT.format(
+        user_role=user_role or "unknown",
+        job_to_be_done=job_to_be_done or "unknown",
+        failure_mode=failure_mode or "unknown",
+        trigger_event=trigger_event or "none",
+        current_workaround=current_workaround or "none",
+        pain_statement=pain_statement or "none",
+    )
+
+    try:
+        # Use synchronous request for simplicity
+        import urllib.request
+        import urllib.error
+
+        request_data = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,  # Low temperature for more consistent output
+                "num_predict": 300,   # Limit output length
+            }
+        }
+
+        req = urllib.request.Request(
+            f"{base_url}/api/generate",
+            data=json.dumps(request_data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            raw = result.get("response", "").strip()
+
+            if not raw:
+                logger.warning("Ollama: Empty response")
+                return None
+
+            logger.info(f"Ollama classification succeeded with model {model}")
+            return _parse_platform_fit_response(raw, "Ollama")
+
+    except urllib.error.URLError as e:
+        logger.debug(f"Ollama unavailable: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Ollama classification failed: {e}")
+        return None
+
+
+def _classify_via_anthropic(
+    *,
+    job_to_be_done: str,
+    failure_mode: str,
+    trigger_event: str,
+    current_workaround: str,
+    pain_statement: str,
+    user_role: str,
+    cluster_summary: str,
+) -> PlatformFit | None:
+    """Classify platform fit using Anthropic (cloud fallback)."""
+    import os
+    import json
+
+    config = get_platform_classification_config()
+    api_key = config["anthropic_api_key"]
+
+    if not api_key:
+        logger.debug("Anthropic: No API key available")
+        return None
+
+    try:
+        from anthropic import Anthropic
+        client = Anthropic(api_key=api_key)
+
+        # Use the same optimized prompt
+        prompt = PLATFORM_CLASSIFICATION_PROMPT.format(
+            user_role=user_role or "unknown",
+            job_to_be_done=job_to_be_done or "unknown",
+            failure_mode=failure_mode or "unknown",
+            trigger_event=trigger_event or "none",
+            current_workaround=current_workaround or "none",
+            pain_statement=pain_statement or "none",
+        )
+
+        response = client.messages.create(
+            model="claude-haiku-4-20250514",
+            max_tokens=400,
+            system="Output ONLY valid JSON. No markdown. No prose.",
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw = response.content[0].text.strip()
+        logger.info("Anthropic classification succeeded")
+        return _parse_platform_fit_response(raw, "Anthropic")
+
+    except Exception as e:
+        logger.warning(f"Anthropic classification failed: {e}")
+        return None
+
 
 SELECTION_STATES = {
     "research_more",
@@ -352,17 +626,197 @@ def determine_narrow_output_type(
     job_to_be_done: str,
     failure_mode: str,
     user_role: str,
-) -> str:
+    trigger_event: str = "",
+    current_workaround: str = "",
+    pain_statement: str = "",
+    cluster_summary: str = "",
+) -> PlatformFit:
+    """
+    Determines a specific product concept using LLM classification.
+    Returns a structured PlatformFit object with host_platform, product_format, and product_name.
+    Falls back to keyword matching if LLM is unavailable.
+    """
+    # Check trigger conditions - require more context for LLM
+    has_trigger = any([trigger_event, pain_statement, current_workaround, cluster_summary])
+    has_primary = job_to_be_done or failure_mode
+
+    if has_primary and has_trigger:
+        result = _determine_product_via_llm(
+            job_to_be_done=job_to_be_done,
+            failure_mode=failure_mode,
+            trigger_event=trigger_event,
+            current_workaround=current_workaround,
+            pain_statement=pain_statement,
+            user_role=user_role,
+            cluster_summary=cluster_summary,
+        )
+        if result and result.product_name:
+            logger.info(
+                f"LLM classification succeeded: platform={result.host_platform}, "
+                f"format={result.product_format}, name={result.product_name}"
+            )
+            return result
+
+    # Fallback to keyword matching (legacy)
+    fallback = _determine_product_via_keyword(
+        wedge_name=wedge_name,
+        job_to_be_done=job_to_be_done,
+        failure_mode=failure_mode,
+        user_role=user_role,
+    )
+    logger.info(
+        f"Fallback classification: platform={fallback.host_platform}, "
+        f"format={fallback.product_format}, name={fallback.product_name}"
+    )
+    return fallback
+
+
+def _determine_product_via_keyword(
+    *,
+    wedge_name: str,
+    job_to_be_done: str,
+    failure_mode: str,
+    user_role: str,
+) -> PlatformFit:
+    """Fallback keyword-based classification."""
     text = " ".join([wedge_name, job_to_be_done, failure_mode, user_role]).lower()
+
     if "backup" in text or "restore" in text or "recovery" in text:
-        return "workflow_reliability_console"
+        return PlatformFit(
+            host_platform="Internal workflow",
+            product_format="internal workflow tool",
+            product_name="backup_reliability_console",
+            one_sentence_product="Recover lost data from failed backups",
+            why_this_format="Direct access to backup infrastructure",
+            llm_used=False,
+            fallback_used=True,
+        )
     if "sync" in text or "handoff" in text or "import" in text:
-        return "workflow_reliability_assistant"
+        return PlatformFit(
+            host_platform="Internal workflow",
+            product_format="internal workflow tool",
+            product_name="sync_handoff_assistant",
+            one_sentence_product="Keep operations data in sync without manual cleanup",
+            why_this_format="Direct integration with internal systems",
+            llm_used=False,
+            fallback_used=True,
+        )
     if "compliance" in text or "evidence" in text or "monitoring" in text:
-        return "operator_evidence_workspace"
+        return PlatformFit(
+            host_platform="Internal workflow",
+            product_format="internal workflow tool",
+            product_name="compliance_evidence_workspace",
+            one_sentence_product="Keep multi-framework compliance evidence and monitoring reliable",
+            why_this_format="Direct access to compliance systems",
+            llm_used=False,
+            fallback_used=True,
+        )
     if "shipping" in text or "postage" in text or "listing" in text:
-        return "operator_workflow_patch"
-    return "workflow_diagnostic_prototype"
+        return PlatformFit(
+            host_platform="E-commerce platforms",
+            product_format="platform app",
+            product_name="listing_workflow_patch",
+            one_sentence_product="Streamline shipping and listing workflows",
+            why_this_format="Built into seller workflow",
+            llm_used=False,
+            fallback_used=True,
+        )
+
+    # Default fallback
+    return PlatformFit(
+        host_platform="Unknown",
+        product_format="lightweight microSaaS",
+        product_name="workflow_diagnostic_prototype",
+        one_sentence_product="Diagnostic tool for workflow reliability",
+        why_this_format="Requires further validation for platform fit",
+        llm_used=False,
+        fallback_used=True,
+    )
+
+
+def _determine_product_via_llm(
+    *,
+    job_to_be_done: str,
+    failure_mode: str,
+    trigger_event: str,
+    current_workaround: str,
+    pain_statement: str,
+    user_role: str,
+    cluster_summary: str = "",
+) -> PlatformFit | None:
+    """
+    Uses LLM to determine the best product concept for this opportunity.
+    Tries providers in order: configured provider -> fallback -> keyword fallback.
+    Returns a structured PlatformFit object.
+    """
+    config = get_platform_classification_config()
+    provider = config["provider"].lower()
+
+    logger.info(f"Platform classification: provider={provider}")
+
+    # Try configured provider or auto-detect
+    if provider == "ollama":
+        result = _classify_via_ollama(
+            job_to_be_done=job_to_be_done,
+            failure_mode=failure_mode,
+            trigger_event=trigger_event,
+            current_workaround=current_workaround,
+            pain_statement=pain_statement,
+            user_role=user_role,
+            cluster_summary=cluster_summary,
+        )
+        if result:
+            logger.info("Ollama classification succeeded")
+            return result
+        logger.info("Ollama failed, falling back")
+
+    elif provider == "anthropic":
+        result = _classify_via_anthropic(
+            job_to_be_done=job_to_be_done,
+            failure_mode=failure_mode,
+            trigger_event=trigger_event,
+            current_workaround=current_workaround,
+            pain_statement=pain_statement,
+            user_role=user_role,
+            cluster_summary=cluster_summary,
+        )
+        if result:
+            logger.info("Anthropic classification succeeded")
+            return result
+        logger.info("Anthropic failed, falling back")
+
+    else:  # "auto" mode
+        # Try Ollama first (local-first)
+        result = _classify_via_ollama(
+            job_to_be_done=job_to_be_done,
+            failure_mode=failure_mode,
+            trigger_event=trigger_event,
+            current_workaround=current_workaround,
+            pain_statement=pain_statement,
+            user_role=user_role,
+            cluster_summary=cluster_summary,
+        )
+        if result:
+            logger.info("Auto mode: Ollama succeeded")
+            return result
+
+        # Try Anthropic as fallback
+        result = _classify_via_anthropic(
+            job_to_be_done=job_to_be_done,
+            failure_mode=failure_mode,
+            trigger_event=trigger_event,
+            current_workaround=current_workaround,
+            pain_statement=pain_statement,
+            user_role=user_role,
+            cluster_summary=cluster_summary,
+        )
+        if result:
+            logger.info("Auto mode: Anthropic fallback succeeded")
+            return result
+
+        logger.info("Auto mode: All LLM providers failed, will use keyword fallback")
+
+    return None
 
 
 def build_launch_artifact_plan(output_type: str) -> list[dict[str, str]]:
@@ -450,12 +904,18 @@ def build_brief_payload(
     open_questions.extend(market_enrichment.get("wedge_block_reasons", []) or [])
 
     wedge_name = str(market_enrichment.get("wedge_name", "") or "")
-    recommended_output_type = determine_narrow_output_type(
+    platform_fit = determine_narrow_output_type(
         wedge_name=wedge_name,
         job_to_be_done=cluster.get("job_to_be_done", ""),
         failure_mode=getattr(anchor_atom, "failure_mode", ""),
         user_role=cluster.get("user_role", ""),
+        trigger_event=getattr(anchor_atom, "trigger_event", ""),
+        current_workaround=getattr(anchor_atom, "current_workaround", ""),
+        pain_statement=getattr(anchor_atom, "pain_statement", ""),
+        cluster_summary=cluster.get("summary", ""),
     )
+    # For backward compatibility, use product_name as the narrow output type
+    recommended_output_type = platform_fit.product_name
     prototype_gate = _prototype_gate_metadata(
         selection_reason=selection_reason,
         selection_gate=selection_gate,
@@ -557,6 +1017,7 @@ def build_brief_payload(
             "relevance_score": evidence_payload.get("evidence_assessment", {}).get("problem_plausibility", 0.0),
         },
         "recommended_narrow_output_type": recommended_output_type,
+        "platform_fit": platform_fit.to_dict(),
         "first_experiment_hypothesis": experiment_hypothesis,
         "launch_artifact_plan": build_launch_artifact_plan(recommended_output_type),
         "prototype_spec_posture": {

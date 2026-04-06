@@ -536,24 +536,43 @@ def _validate_atom_quality(atom: dict[str, Any], source_text: str) -> dict[str, 
     elif _has_meaningful_consequence(consequence):
         quality["consequence_score"] = 0.8
 
-    # Check 3: Failure mode quality
+    # Check 3: MISMATCH-BASED FAILURE REQUIREMENT
+    # Reject atoms that don't describe specific mismatches
     failure = atom.get("failure_mode", "")
+    job_to_be_done = atom.get("job_to_be_done", "")
+    combined = f"{job_to_be_done} {failure}".lower()
+
+    if not _is_failure_event_atom(source_text):
+        # Only reject if it's clearly vague, not if just hard to detect
+        if _is_generic_phrase(job_to_be_done) or _is_generic_phrase(failure):
+            quality["quality_issues"].append("not_mismatch_based")
+            # Don't make this a hard fail yet - let it through for now
+
+    # Check 4: Failure mode quality (stricter)
     if not failure or len(failure) < 15:
         quality["quality_issues"].append("weak_failure_mode")
     else:
-        quality["specificity_score"] += 0.3
+        # Only add specificity if it's mismatch-based
+        if _is_failure_event_atom(source_text):
+            quality["specificity_score"] += 0.4
 
-    # Check 4: Platform detection
+    # Check 5: Platform detection
     platform = _extract_platform_from_text(source_text)
     if platform:
         quality["platform_score"] = 1.0
     else:
         quality["quality_issues"].append("no_platform")
 
-    # Check 5: Specific workflow extraction
+    # Check 6: Specific workflow extraction (prefer mismatch patterns)
     specific_workflow = _extract_specific_workflow(source_text)
     if specific_workflow:
-        quality["specificity_score"] += 0.4
+        quality["specificity_score"] += 0.3
+
+    # Check 7: Consequence binding - require concrete numbers
+    if consequence:
+        # Look for specific time/money quantities
+        if re.search(r'\d+\s+(hour|day|week|month|\$)', consequence):
+            quality["consequence_score"] += 0.3
 
     # Calculate overall specificity
     if quality["specificity_score"] > 0:
@@ -1150,72 +1169,182 @@ def build_raw_signal_payload(finding_data: dict[str, Any]) -> dict[str, Any]:
 
 def _extract_failure_event(text: str) -> str:
     """
-    Extract specific failure event from text.
+    Extract specific MISMATCH-BASED failure event from text.
+    Requires TWO concrete objects with a relationship between them.
     Returns a description like:
     - "QuickBooks invoices do not match Stripe payouts during weekly reconciliation"
     - "Excel formulas break when copying between sheets"
-    NOT generic like "data sync issue"
+    - "entries duplicated after CSV import"
+    NOT generic like "data sync issue" or "manual work"
     """
     lowered = _normalized(text)
 
-    # Pattern: "X does not match Y" / "X doesn't match Y" / "X not matching Y"
-    match = re.search(r'(\w+(?:\s+\w+){0,5})\s+(?:does not|doesn\'t|don\'t|not)\s+match(?:es)?\s+(\w+(?:\s+\w+){0,5})', lowered)
-    if match:
-        return f"{match.group(1)} does not match {match.group(2)}"
+    # Quick rejection for very short inputs
+    if len(text.strip()) < 15:
+        return ""
 
-    # Pattern: "X and Y don't reconcile"
-    match = re.search(r'(\w+)\s+and\s+(\w+)\s+(?:don\'t|don\'t|doesn\'t)\s+reconcile', lowered)
-    if match:
-        return f"{match.group(1)} and {match.group(2)} don't reconcile"
+    result = ""
 
-    # Pattern: "X is out of sync with Y"
-    match = re.search(r'(\w+)\s+(?:is|are)\s+out of sync (?:with|and)\s+(\w+)', lowered)
+    # =================================================================
+    # MISMATCH PATTERNS (require two concrete objects)
+    # =================================================================
+
+    # Pattern: "X does/do not match Y" / "X doesn't match Y"
+    match = re.search(r'(\w+(?:\s+\w+){0,3})\s+(?:does|do)\s+not\s+match(?:es)?\s+(\w+(?:\s+\w+){0,3})', lowered)
     if match:
-        return f"{match.group(1)} is out of sync with {match.group(2)}"
+        obj1 = match.group(1)
+        # Reject if object is generic
+        if obj1 not in ('now', 'then', 'here', 'there', 'it', 'this', 'that'):
+            result = f"{obj1} does not match {match.group(2)}"
+    if not result:
+        match = re.search(r'(\w+(?:\s+\w+){0,3})\s+(?:doesn\'t|don\'t)\s+match(?:es)?\s+(\w+(?:\s+\w+){0,3})', lowered)
+        if match:
+            obj1 = match.group(1)
+            if obj1 not in ('now', 'then', 'here', 'there', 'it', 'this', 'that'):
+                result = f"{obj1} does not match {match.group(2)}"
+
+    if result:
+        # Validate result is not too short or generic
+        if len(result) >= 12:
+            generic_results = ('now mismatch', 'paste hell', 'missed something', 'missed delivery')
+            if result.lower() not in generic_results:
+                return result
+        return ""
+
+    # Pattern: "X is missing from Y" / "X missing in Y"
+    match = re.search(r'(\w+(?:\s+\w+){0,2})\s+(?:is\s+)?missing\s+(?:from|in|within)\s+(\w+(?:\s+\w+){0,2})', lowered)
+    if match:
+        return f"{match.group(1)} missing from {match.group(2)}"
+
+    # Pattern: "entries/data/rows duplicated in X after Y" / "X got/are/gets duplicated"
+    match = re.search(r'(?:entries|data|rows|records)\s+duplicate[ds]?\s+(?:in|after|when)\s+([^\.]{5,40})', lowered)
+    if match:
+        return f"Duplicates appear {match.group(1)}"
+    match = re.search(r'(data|entries|rows|records)\s+(?:got|are|get|gets)\s+duplicate[ds]?(?:\s+when|\s+on|\s+after)?', lowered)
+    if match:
+        return f"{match.group(1)} gets duplicated"
+    match = re.search(r'duplicate[ds]?\s+(?:in|after|when)\s+([a-z\s]{5,30})\s+import', lowered)
+    if match:
+        return f"Duplicates after {match.group(1)} import"
+
+    # Pattern: "X is incorrect after Y" / "X wrong after Y"
+    match = re.search(r'(\w+(?:\s+\w+){0,2})\s+(?:is\s+)?(?:incorrect|wrong|inaccurate)\s+(?:after|when|upon)\s+([^\.]{5,30})', lowered)
+    if match:
+        return f"{match.group(1)} incorrect after {match.group(2)}"
+
+    # Pattern: "X fails when Y"
+    match = re.search(r'(\w+(?:\s+\w+){0,2})\s+fail[sd]?\s+(?:when|after|during)\s+([^\.]{5,40})', lowered)
+    if match:
+        return f"{match.group(1)} fails when {match.group(2)}"
 
     # Pattern: "X breaks when Y"
-    match = re.search(r'(\w+(?:\s+\w+){0,3})\s+break(?:s|ing)?\s+(?:when|after|during)\s+([^\.]{5,40})', lowered)
+    match = re.search(r'(\w+(?:\s+\w+){0,2})\s+break[sd]?(?:ing)?\s+(?:when|after|during)\s+([^\.]{5,40})', lowered)
     if match:
         return f"{match.group(1)} breaks when {match.group(2)}"
 
-    # Pattern: "error when X" / "errors in X"
-    match = re.search(r'(?:error|errors|erroring)\s+(?:in|when|while)\s+([^\.]{5,50})', lowered)
+    # Pattern: "X does not update after Y"
+    match = re.search(r'(\w+(?:\s+\w+){0,2})\s+(?:does not|doesn\'t|don\'t)\s+update\s+(?:after|when)\s+([^\.]{5,40})', lowered)
     if match:
-        return f"Error when {match.group(1)}"
+        return f"{match.group(1)} does not update after {match.group(2)}"
 
-    # Pattern: "duplicate X" / "duplicates in X"
-    match = re.search(r'(?:duplicate|duplicates)\s+(?:in|on|for)\s+([^\.]{5,40})', lowered)
+    # Pattern: "X is out of sync with Y" (only with specific objects)
+    match = re.search(r'(\w+(?:\s+\w+){0,2})\s+(?:is|are)\s+out of sync\s+(?:with|and)\s+(\w+(?:\s+\w+){0,2})', lowered)
     if match:
-        return f"Duplicates in {match.group(1)}"
+        obj1, obj2 = match.group(1), match.group(2)
+        # Only accept if objects are specific (not just generic "data" or "file")
+        if obj1 not in ('data', 'file', 'files', 'info', 'information') or obj2 not in ('system', 'app', 'tool'):
+            return f"{obj1} out of sync with {obj2}"
 
-    # Pattern: "manually X" - extract specific task
-    match = re.search(r'manually\s+([a-z\s]{5,40})', lowered)
+    # Pattern: "X and Y don't reconcile"
+    match = re.search(r'(\w+)\s+and\s+(\w+)\s+(?:don\'t|doesn\'t)\s+reconcile', lowered)
     if match:
-        task = match.group(1).strip()
-        if len(task) > 5:
-            return f"Manually {task}"
+        return f"{match.group(1)} and {match.group(2)} don't reconcile"
 
-    # Pattern: "have to manually X"
-    match = re.search(r'have to\s+manually\s+([a-z]{4,30})', lowered)
+    # Pattern: "import X into Y results in wrong Z"
+    match = re.search(r'(?:import|upload|export)\s+(\w+(?:\s+\w+)?)\s+(?:into|to|from)\s+(\w+)\s+(?:results?|leads?)\s+(?:in|to)\s+(\w+(?:\s+\w+)?)', lowered)
     if match:
-        return f"Have to manually {match.group(1)}"
+        return f"{match.group(1)} imported to {match.group(2)} causes {match.group(3)} issues"
 
-    # Pattern: "spending X hours Y" - specific time waste
-    match = re.search(r'spend(?:ing|s)?\s+(\d+)\s+hours?\s+(?:on|doing|for)\s+([^\.]{5,40})', lowered)
+    # Pattern: "CSV import creates duplicates"
+    match = re.search(r'(csv|spreadsheet|excel)\s+import\s+(?:creates?|leads?)\s+(?:in|to)?\s+duplicate', lowered)
+    if match:
+        return f"{match.group(1)} import creates duplicates"
+
+    # Pattern: "X mismatch" (explicit) - validate object is specific
+    match = re.search(r'(\w+)\s+mismatch', lowered)
+    if match:
+        obj = match.group(1)
+        # Reject generic objects
+        if obj not in ('now', 'then', 'here', 'there', 'it', 'this', 'that', 'data', 'file', 'info'):
+            return f"{obj} mismatch"
+
+    # Pattern: "X and Y mismatch"
+    match = re.search(r'(\w+)\s+(?:and|with)\s+(\w+)\s+mismatch', lowered)
+    if match:
+        return f"{match.group(1)} and {match.group(2)} mismatch"
+
+    # Pattern: "matching X to Y"
+    match = re.search(r'matching\s+(\w+(?:\s+\w+)?)\s+(?:to|with)\s+(\w+(?:\s+\w+)?)', lowered)
+    if match:
+        return f"Matching {match.group(1)} to {match.group(2)}"
+
+    # =================================================================
+    # OBJECT-SPECIFIC FAILURES (require one concrete object + action)
+    # =================================================================
+
+    # Pattern: "error in X" / "errors when X" (specific context)
+    match = re.search(r'(?:error|errors)\s+(?:in|when|while)\s+([a-z\s]{5,40})', lowered)
+    if match and len(match.group(1)) > 8:
+        return f"Error in {match.group(1)}"
+
+    # Pattern: "formulas break" / "formula errors"
+    match = re.search(r'(?:formula|formulas|vlookup|match)\s+(?:error|break|fail)', lowered)
+    if match:
+        return "Formula errors in spreadsheet"
+
+    # Pattern: "version conflict" / "version mismatch"
+    match = re.search(r'version\s+(?:conflict|mismatch|problem)', lowered)
+    if match:
+        return "Version conflict in shared spreadsheet"
+
+    # Pattern: "invoice does not match payment" (specific domain)
+    match = re.search(r'(?:invoice|payment|transaction|entry|record)s?\s+(?:do(?:es)? not|don\'t)\s+match', lowered)
+    if match:
+        return "Transaction mismatch"
+
+    # =================================================================
+    # CONCRETE CONSEQUENCE PATTERNS (with specific objects)
+    # =================================================================
+
+    # Pattern: "spending X hours Y" - specific time waste with context
+    match = re.search(r'spend(?:ing|s)?\s+(\d+)\s+hours?\s+(?:on|doing|for|every)\s+([^\.]{5,40})', lowered)
     if match:
         return f"Spending {match.group(1)} hours {match.group(2)}"
 
-    # Pattern: "X takes too long" / "X takes hours"
-    match = re.search(r'([a-z\s]{5,30})\s+takes?\s+(?:too\s+)?long', lowered)
-    if match:
-        return f"{match.group(1)} takes too long"
+    # Pattern: "missed X" / "missing X" - specific item (not generic)
+    match = re.search(r'(?:missed|missing)\s+([a-z]{4,30})', lowered)
+    if match and len(match.group(1)) > 5:
+        item = match.group(1).strip()
+        # Only accept if item is specific (not generic)
+        generic_items = ('deadline', 'payment', 'payments', 'something', 'anything', 'everything', 'thing', 'things', 'delivery', 'email', 'item', 'items')
+        if item not in generic_items:
+            return f"Missed {item}"
 
-    # Pattern: "missed X" / "missing X"
-    match = re.search(r'(?:missed|missing)\s+([a-z\s]{5,30})', lowered)
+    # Pattern: "lost X hours" / "losing X hours"
+    match = re.search(r'(?:los[se]|lost)\s+(\d+)\s+hours?', lowered)
     if match:
-        return f"Missed {match.group(1)}"
+        return f"Losing {match.group(1)} hours"
 
-    return ""
+    # Reject if extracted failure is too short or too generic
+    if result and len(result) < 12:
+        return ""
+    if result:
+        # Reject if result is just a single word or too generic
+        generic_results = ('now mismatch', 'paste hell', 'missed something', 'missed delivery')
+        if result.lower() in generic_results:
+            return ""
+
+    return result if result else ""
 
 
 def _extract_trigger_moment(text: str) -> str:
@@ -1352,22 +1481,98 @@ def _extract_specific_workflow(text: str, platform: str = "") -> str:
 
 def _is_failure_event_atom(text: str) -> bool:
     """
-    Check if text contains a specific failure event, not generic summary.
+    Check if text contains a specific MISMATCH-BASED failure event.
+    Requires TWO concrete objects with a relationship between them.
+    Rejects vague phrases like "manual process", "data issues".
     """
     lowered = _normalized(text)
 
-    # Must have specific failure indicators
-    failure_indicators = [
-        'does not match', 'don\'t match', 'doesn\'t match',
-        'out of sync', 'out of date',
-        'break', 'broken', 'error', 'mistake',
-        'duplicate', 'mismatch', 'inconsistent',
-        'manually', 'have to manually',
-        'spend hours', 'takes too long',
-        'missed', 'missing',
+    # =================================================================
+    # REJECT VAGUE PHRASES FIRST
+    # =================================================================
+    vague_phrases = [
+        'manual process', 'manual work', 'manual task',
+        'data issue', 'data problem', 'data challenge',
+        'sync problem', 'sync issue', 'sync challenge',
+        'inefficient', 'frustrat', 'tedious', 'boring',
+        'hard to', 'difficult to', 'struggling with',
+        'keep in sync', 'data sync', 'data cleanup',
     ]
+    if any(phrase in lowered for phrase in vague_phrases):
+        return False
 
-    return any(ind in lowered for ind in failure_indicators)
+    # =================================================================
+    # REQUIRE TWO CONCRETE OBJECTS (mismatch patterns)
+    # =================================================================
+    # Pattern: "X does/do not match Y" / "X doesn't match Y"
+    if re.search(r'(\w+)\s+(?:does|do)\s+not\s+match\s+(\w+)', lowered):
+        return True
+    if re.search(r'(\w+)\s+(?:doesn\'t|don\'t)\s+match\s+(\w+)', lowered):
+        return True
+
+    # Pattern: "X missing from Y" / "X is missing in Y"
+    if re.search(r'(\w+)\s+(?:is\s+)?missing\s+(?:from|in)\s+(\w+)', lowered):
+        return True
+
+    # Pattern: "X and Y don't reconcile"
+    if re.search(r'(\w+)\s+and\s+(\w+)\s+(?:don\'t|doesn\'t)\s+reconcile', lowered):
+        return True
+
+    # Pattern: "X is out of sync with Y"
+    if re.search(r'(\w+)\s+(?:is|are)\s+out of sync\s+(?:with|and)\s+(\w+)', lowered):
+        return True
+
+    # Pattern: "X duplicates after Y" / "data got duplicated"
+    if re.search(r'(?:duplicate|duplicates)\s+(?:in|after|when)\s+', lowered):
+        return True
+    if re.search(r'(data|entries|rows)\s+(?:got|are|get)\s+duplicate', lowered):
+        return True
+
+    # Pattern: "X fails when Y" / "X breaks when Y"
+    if re.search(r'(\w+)\s+(?:fail|break)s?\s+(?:when|after|during)\s+', lowered):
+        return True
+
+    # Pattern: "X incorrect after Y" / "X wrong after Y"
+    if re.search(r'(\w+)\s+(?:incorrect|wrong|inaccurate)\s+(?:after|when)', lowered):
+        return True
+
+    # Pattern: "X does not update after Y"
+    if re.search(r'(\w+)\s+(?:does not|doesn\'t|don\'t)\s+update\s+(?:after|when)', lowered):
+        return True
+
+    # Pattern: "X and Y mismatch"
+    if re.search(r'(\w+)\s+(?:and|with)\s+(\w+)\s+mismatch', lowered):
+        return True
+
+    # =================================================================
+    # REQUIRE SPECIFIC OBJECT + ACTION (not generic)
+    # =================================================================
+    # Pattern: "import X into Y causes problems"
+    if re.search(r'(?:import|export)\s+\w+\s+(?:into|to)\s+\w+', lowered):
+        if re.search(r'(?:problem|issue|error|wrong|duplicate)', lowered):
+            return True
+
+    # Pattern: "spend X hours matching Y to Z"
+    if re.search(r'spend(?:ing|s)?\s+\d+\s+hours?\s+(?:on|doing|every|matching)\s+', lowered):
+        return True
+
+    # Pattern: "formula error" - specific domain
+    if re.search(r'(?:formula|vlookup|xlookup|match)\s+(?:error|break|fail)', lowered):
+        return True
+
+    # Pattern: "version conflict" - specific
+    if re.search(r'version\s+(?:conflict|mismatch)', lowered):
+        return True
+
+    # Pattern: specific transaction terms
+    if re.search(r'(?:invoice|payment|transaction|entry|record)s?\s+(?:mismatch|error|wrong)', lowered):
+        return True
+
+    # Pattern: "matching X to Y" - specific workflow
+    if re.search(r'matching\s+\w+\s+(?:to|with)\s+\w+', lowered):
+        return True
+
+    return False
 
 
 def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, Any]) -> dict[str, Any]:
@@ -1436,6 +1641,10 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
         fallback="",
         limit=120,
     )
+
+    # Set pain_statement from failure event or fallback
+    pain_statement = failure_mode if failure_mode else ""
+
     workarounds = _extract_workarounds(text)
     current_tools = _normalize_tools(finding_data.get("tool_used") or "")
     assumptions = _extract_assumptions(text)
@@ -1954,6 +2163,88 @@ def detect_service_first_bonus(atom_text: str) -> float:
     return 0.0
 
 
+# =============================================================================
+# MULTI-SIGNAL CORROBORATION - Cluster-based evidence boosting
+# =============================================================================
+
+def compute_cluster_corroboration(
+    cluster_key: str,
+    db_connection,
+    base_corroboration: float = 0.25,
+) -> dict[str, Any]:
+    """Compute cluster-level corroboration from multiple signals.
+
+    Returns:
+    - signal_count: number of signals in cluster
+    - source_diversity: number of distinct sources
+    - user_diversity: number of distinct user roles
+    - boosted_corroboration: base + cluster bonus
+    """
+    if not cluster_key:
+        return {
+            "signal_count": 1,
+            "source_diversity": 1,
+            "user_diversity": 1,
+            "boosted_corroboration": base_corroboration,
+        }
+
+    # Count signals in cluster
+    signal_count = db_connection.execute('''
+        SELECT COUNT(DISTINCT pa.signal_id) as cnt
+        FROM problem_atoms pa
+        WHERE pa.cluster_key = ?
+    ''', (cluster_key,)).fetchone()[0] or 1
+
+    # Count distinct sources
+    source_count = db_connection.execute('''
+        SELECT COUNT(DISTINCT rs.source_name) as cnt
+        FROM problem_atoms pa
+        JOIN raw_signals rs ON rs.id = pa.signal_id
+        WHERE pa.cluster_key = ?
+    ''', (cluster_key,)).fetchone()[0] or 1
+
+    # Count distinct user roles
+    user_count = db_connection.execute('''
+        SELECT COUNT(DISTINCT pa.user_role) as cnt
+        FROM problem_atoms pa
+        WHERE pa.cluster_key = ? AND pa.user_role IS NOT NULL
+    ''', (cluster_key,)).fetchone()[0] or 1
+
+    # Boost corroboration based on cluster size
+    # 1 signal: base (0.25)
+    # 2-3 signals: +0.15 (0.40)
+    # 4-9 signals: +0.25 (0.50)
+    # 10+ signals: +0.35 (0.60)
+    if signal_count >= 10:
+        cluster_bonus = 0.35
+    elif signal_count >= 4:
+        cluster_bonus = 0.25
+    elif signal_count >= 2:
+        cluster_bonus = 0.15
+    else:
+        cluster_bonus = 0.0
+
+    # Additional bonus for source diversity
+    if source_count >= 3:
+        cluster_bonus += 0.10
+    elif source_count >= 2:
+        cluster_bonus += 0.05
+
+    # Additional bonus for user diversity
+    if user_count >= 3:
+        cluster_bonus += 0.05
+
+    boosted = min(0.75, base_corroboration + cluster_bonus)
+
+    return {
+        "signal_count": signal_count,
+        "source_diversity": source_count,
+        "user_diversity": user_count,
+        "cluster_bonus": cluster_bonus,
+        "boosted_corroboration": boosted,
+    }
+
+
 def compute_problem_truth_score(scores: dict[str, Any]) -> float:
     """Compute Problem Truth Score (PTS).
 
@@ -2186,6 +2477,21 @@ def score_opportunity(
         + (0.16 if buildability < 0.55 else 0.0)
     )
     recurrence_doc_strength = clamp(min(recurrence_doc_count, 6) / 6 * 0.6 + min(recurrence_domain_count, 4) / 4 * 0.4)
+
+    # PART 3: MULTI-SIGNAL CORROBORATION BOOST
+    # Get cluster signal count from cluster_summary
+    cluster_signal_count = cluster_summary.get("signal_count", cluster_summary.get("atom_count", 1))
+
+    # Compute cluster bonus for corroboration
+    if cluster_signal_count >= 10:
+        cluster_bonus = 0.20
+    elif cluster_signal_count >= 4:
+        cluster_bonus = 0.15
+    elif cluster_signal_count >= 2:
+        cluster_bonus = 0.10
+    else:
+        cluster_bonus = 0.0
+
     # Fix 3: Removed recurrence_score to avoid triple-counting (now only in frequency_score)
     corroboration_strength = clamp(
         max(corroboration_score, 0.0) * 0.45
@@ -2194,6 +2500,7 @@ def score_opportunity(
         + min(corroborating_sources, 4) / 4 * 0.05
         + cross_source_match_score * 0.05
         + core_source_family_diversity / 4.0 * 0.03
+        + cluster_bonus  # Multi-signal corroboration boost
     )
     # Fix 3: Removed recurrence_score to avoid triple-counting (now only in frequency_score)
     evidence_sufficiency = clamp(

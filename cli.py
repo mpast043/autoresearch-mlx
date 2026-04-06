@@ -440,6 +440,8 @@ async def main() -> None:
             "scoring-report",
             "revalidate",
             "rescore-v4",
+            "term-lifecycle",
+            "term-state",
         ],
         help="Command to execute",
     )
@@ -493,6 +495,11 @@ async def main() -> None:
         action="store_true",
         help="run-once: discovery-only mode; do not requeue existing qualified findings for evidence",
     )
+    # term-lifecycle and term-state arguments
+    parser.add_argument("--term-type", default=None, help="Term type: keyword or subreddit")
+    parser.add_argument("--term-value", default=None, help="Term value to modify")
+    parser.add_argument("--action", default=None, help="term-state action: list, ban, reactivate, complete, reset, high-performers, exhausted")
+    parser.add_argument("--state", default=None, help="Filter by state")
     args = parser.parse_args()
 
     if args.command == "watch":
@@ -549,6 +556,133 @@ async def main() -> None:
                     money_claim_min_confidence=args.money_claims_min_confidence,
                 )
             )
+        finally:
+            await app.shutdown()
+        return
+
+    if args.command == "term-lifecycle":
+        app = AutoResearcher(config_path=args.config)
+        await app.initialize(start_new_run=False)
+        try:
+            from src.discovery_term_lifecycle import TermLifecycleManager
+
+            lifecycle = TermLifecycleManager(app.db)
+
+            # List terms by state
+            if args.term_type:
+                terms = app.db.list_search_terms(term_type=args.term_type, limit=args.limit or 100)
+            else:
+                terms = app.db.list_search_terms(limit=args.limit or 100)
+
+            print_json({
+                "terms": terms,
+                "counts": {
+                    "total": len(terms),
+                    "by_state": collections.Counter(t.get("state") for t in terms),
+                },
+            })
+        finally:
+            await app.shutdown()
+        return
+
+    if args.command == "term-state":
+        app = AutoResearcher(config_path=args.config)
+        await app.initialize(start_new_run=False)
+        try:
+            from src.discovery_term_lifecycle import TermLifecycleManager
+
+            lifecycle = TermLifecycleManager(app.db)
+            action = args.action or "list"
+
+            if action == "list":
+                # List all terms
+                terms = app.db.list_search_terms(
+                    term_type=args.term_type if args.term_type else None,
+                    state=args.state if args.state else None,
+                    limit=args.limit or 100,
+                )
+                print_json({"terms": terms})
+            elif action == "ban":
+                if not args.term_value:
+                    print("term-state ban requires --term-value", file=sys.stderr)
+                    sys.exit(1)
+                lifecycle.ban_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual ban")
+                print_json({"ok": True, "action": "ban", "term_type": args.term_type, "term_value": args.term_value})
+            elif action == "reactivate":
+                if not args.term_value:
+                    print("term-state reactivate requires --term-value", file=sys.stderr)
+                    sys.exit(1)
+                lifecycle.reactivate_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual reactivation")
+                print_json({"ok": True, "action": "reactivate", "term_type": args.term_type, "term_value": args.term_value})
+            elif action == "complete":
+                if not args.term_value:
+                    print("term-state complete requires --term-value", file=sys.stderr)
+                    sys.exit(1)
+                lifecycle.complete_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual completion")
+                print_json({"ok": True, "action": "complete", "term_type": args.term_type, "term_value": args.term_value})
+            elif action == "reset":
+                if not args.term_value:
+                    print("term-state reset requires --term-value", file=sys.stderr)
+                    sys.exit(1)
+                lifecycle.reset_term(args.term_type or "keyword", args.term_value)
+                print_json({"ok": True, "action": "reset", "term_type": args.term_type, "term_value": args.term_value})
+            elif action == "high-performers":
+                high_kw = lifecycle.get_terms_for_expansion("keyword", limit=args.limit or 20)
+                high_sub = lifecycle.get_terms_for_expansion("subreddit", limit=args.limit or 20)
+                print_json({
+                    "high_performing_keywords": high_kw,
+                    "high_performing_subreddits": high_sub,
+                })
+            elif action == "exhausted":
+                exh_kw = app.db.get_exhausted_terms("keyword", limit=args.limit or 50)
+                exh_sub = app.db.get_exhausted_terms("subreddit", limit=args.limit or 50)
+                print_json({
+                    "exhausted_keywords": exh_kw,
+                    "exhausted_subreddits": exh_sub,
+                })
+            elif action == "wedge-quality":
+                # Top terms by wedge quality (best plugin/add-on fit)
+                wedge_kw = lifecycle.get_terms_for_expansion_by_wedge_quality("keyword", limit=args.limit or 20)
+                wedge_sub = lifecycle.get_terms_for_expansion_by_wedge_quality("subreddit", limit=args.limit or 20)
+                print_json({
+                    "wedge_quality_keywords": wedge_kw,
+                    "wedge_quality_subreddits": wedge_sub,
+                })
+            elif action == "specificity":
+                # Top terms by specificity (sharpest niches)
+                spec_kw = lifecycle.get_terms_by_specificity("keyword", limit=args.limit or 20)
+                spec_sub = lifecycle.get_terms_by_specificity("subreddit", limit=args.limit or 20)
+                print_json({
+                    "specificity_keywords": spec_kw,
+                    "specificity_subreddits": spec_sub,
+                })
+            elif action == "platform-native":
+                # Top terms by platform-native yield
+                plat_kw = lifecycle.get_terms_by_platform_native("keyword", limit=args.limit or 20)
+                plat_sub = lifecycle.get_terms_by_platform_native("subreddit", limit=args.limit or 20)
+                print_json({
+                    "platform_native_keywords": plat_kw,
+                    "platform_native_subreddits": plat_sub,
+                })
+            elif action == "abstraction-collapse":
+                # Terms most responsible for vague buckets
+                collapse_kw = lifecycle.get_abstraction_collapse_terms("keyword", limit=args.limit or 20)
+                collapse_sub = lifecycle.get_abstraction_collapse_terms("subreddit", limit=args.limit or 20)
+                print_json({
+                    "abstraction_collapse_keywords": collapse_kw,
+                    "abstraction_collapse_subreddits": collapse_sub,
+                })
+            elif action == "buildable":
+                # Terms most responsible for buildable plugin/add-on wedges
+                build_kw = lifecycle.get_buildable_terms("keyword", limit=args.limit or 20)
+                build_sub = lifecycle.get_buildable_terms("subreddit", limit=args.limit or 20)
+                print_json({
+                    "buildable_keywords": build_kw,
+                    "buildable_subreddits": build_sub,
+                })
+            else:
+                print(f"Unknown action: {action}", file=sys.stderr)
+                sys.exit(1)
         finally:
             await app.shutdown()
         return

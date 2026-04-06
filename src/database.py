@@ -2677,13 +2677,17 @@ class Database:
             return None
         return Opportunity(**dict(row))
 
-    def get_opportunities(self, limit: int = 25, status: Optional[str] = None) -> list[Opportunity]:
+    def get_opportunities(self, limit: int = 25, status: Optional[str] = None, status_filter: Optional[list[str]] = None) -> list[Opportunity]:
         conn = self._get_connection()
         sql = "SELECT * FROM opportunities"
         params: list[Any] = []
         if status:
             sql += " WHERE status = ?"
             params.append(status)
+        elif status_filter:
+            placeholders = ",".join(["?"] * len(status_filter))
+            sql += f" WHERE status IN ({placeholders})"
+            params.extend(status_filter)
         sql += " ORDER BY composite_score DESC, evidence_quality DESC, updated_at DESC LIMIT ?"
         params.append(limit)
         return [Opportunity(**dict(row)) for row in conn.execute(sql, params).fetchall()]

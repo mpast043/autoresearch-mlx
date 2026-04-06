@@ -555,143 +555,173 @@ def validate_candidate(candidate: WedgeCandidate) -> tuple[bool, str]:
 # STAGE 3: SHARPENING - Narrow into specific wedge
 # =============================================================================
 
+# SYNTHETIC TRANSFORMATION BLOCKLIST
+# These patterns produce abstract wedges NOT grounded in evidence
+SYNTHETIC_PATTERNS = [
+    'time saver', 'speed optimizer', 'error prevention', 'error detector',
+    'deduplication', 'reminder', 'alert', 'sync automation', 'data pipeline',
+    'spreadsheet automation', 'automation tool', 'helper', 'assistant',
+    'workflow speed', 'smart reminder', 'data sync',
+]
+
+
+def _verify_evidence_alignment(
+    wedge_name: str,
+    workflow: str,
+    failure_mode: str,
+    consequence: str,
+    evidence_snippet: str,
+) -> tuple[bool, str]:
+    """Verify wedge is grounded in extracted evidence.
+
+    Returns (is_aligned, reason_if_not).
+    """
+    wedge_lower = wedge_name.lower()
+    source_text = f"{workflow} {failure_mode} {consequence} {evidence_snippet}".lower()
+
+    # Check 1: Wedge name must appear in source text (or be traceable)
+    # Allow for some transformation but core terms must be present
+    wedge_terms = wedge_lower.split()
+
+    # Filter out generic suffixes
+    filtered_terms = [
+        t for t in wedge_terms
+        if t not in ('tool', 'automator', 'system', 'solution', 'app', 'software', 'service')
+    ]
+
+    # At least one significant term must trace to source
+    has_trace = any(
+        term in source_text
+        for term in filtered_terms
+        if len(term) > 3
+    )
+
+    if not has_trace:
+        return False, "wedge_not_in_evidence"
+
+    # Check 2: If failure mode exists, it must relate to evidence snippet
+    if failure_mode and evidence_snippet:
+        failure_words = set(failure_mode.lower().split())
+        evidence_words = set(evidence_snippet.lower().split())
+
+        # At least 20% overlap or failure is in evidence
+        overlap = len(failure_words & evidence_words)
+        min_needed = max(3, len(failure_words) // 5)
+
+        if overlap < min_needed:
+            # Allow if failure describes a concrete event in evidence
+            failure_has_event = any(
+                kw in evidence_snippet.lower()
+                for kw in ('error', 'miss', 'fail', 'wrong', 'duplicate', 'lost', 'late', 'break')
+            )
+            if not failure_has_event:
+                return False, "failure_not_in_evidence"
+
+    # Check 3: Consequence should appear in source if present
+    if consequence:
+        consequence_terms = consequence.lower().split()
+        has_consequence_trace = any(
+            term in source_text
+            for term in consequence_terms
+            if len(term) > 3
+        )
+        if not has_consequence_trace:
+            return False, "consequence_not_in_evidence"
+
+    # Check 4: Reject synthetic patterns entirely
+    for pattern in SYNTHETIC_PATTERNS:
+        if pattern in wedge_lower:
+            return False, f"synthetic_pattern: {pattern}"
+
+    return True, "aligned"
+
+
 def _try_dynamic_sharpening(workflow: str, failure_mode: str, consequence: str, platform: str) -> dict | None:
-    """Attempt to extract a wedge from vague descriptions using pattern matching.
+    """Narrow vague descriptions into specific wedges - ONLY narrowing, no abstraction.
+
+    STRICT RULE: Only allow transformations that extract specific nouns/verbs from source.
+    Reject any transformation that introduces a new abstract concept.
 
     Returns dict with name, wedge, mvp or None if no sharpening possible.
     """
     pain_text = f"{workflow} {failure_mode} {consequence}".lower()
 
-    # Pattern: "manually X" → "Automate X"
-    match = re.search(r'manually\s+([a-z\s]{3,30})', pain_text)
+    # ALLOWED: Extract specific task from "manually [task]"
+    # This extracts the actual task mentioned, not inventing a new one
+    match = re.search(r'manually\s+([a-z]{3,30})', pain_text)
     if match:
         task = match.group(1).strip()
-        if platform != 'unknown':
+        # Only use if task is specific (not generic)
+        if task and task not in ('work', 'task', 'job', 'process', 'entry', 'data'):
+            if platform != 'unknown':
+                return {
+                    'name': f'{platform.title()} {task.title()} Fix',
+                    'wedge': f'Fixes manual {task} problem',
+                    'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} for {task}',
+                }
             return {
-                'name': f'{platform.title()} {task.title()} Automator',
-                'wedge': f'Automates manual {task}',
-                'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} that automates {task}',
+                'name': f'{task.title()} Problem Fix',
+                'wedge': f'Fixes manual {task}',
+                'mvp': f'Script that fixes {task}',
             }
-        return {
-            'name': f'{task.title()} Automator',
-            'wedge': f'Automates manual {task}',
-            'mvp': f'Script that automates {task}',
-        }
 
-    # Pattern: "spending X hours" → "Time Saver"
-    match = re.search(r'spend(?:ing|s)?\s+(\d+)\s+hours?', pain_text)
+    # ALLOWED: Extract specific noun from failure mode
+    # "duplicate X" → extract X
+    match = re.search(r'duplicate[s]?\s+([a-z]{3,30})', pain_text)
     if match:
-        hours = match.group(1)
+        target = match.group(1).strip()
+        if target and target not in ('data', 'entry', 'record', 'item'):
+            return {
+                'name': f'{target.title()} Deduplicator',
+                'wedge': f'Removes duplicate {target}',
+                'mvp': f'Tool that deduplicates {target}',
+            }
+
+    # ALLOWED: Extract specific noun from "error in X"
+    match = re.search(r'error[s]?\s+(?:in|with|on)\s+([a-z]{3,30})', pain_text)
+    if match:
+        target = match.group(1).strip()
         if platform != 'unknown':
             return {
-                'name': f'{platform.title()} Time Saver',
-                'wedge': f'Saves {hours} hours of manual work',
-                'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} that saves {hours} hours',
+                'name': f'{platform.title()} {target.title()} Error Fix',
+                'wedge': f'Fixes {target} errors',
+                'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} that fixes {target} errors',
             }
-        return {
-            'name': 'Time Saver',
-            'wedge': f'Saves {hours} hours of manual work',
-            'mvp': f'Automation that saves {hours} hours per week',
-        }
 
-    # Pattern: "error" / "mistake" → "Error Prevention"
-    if 'error' in pain_text or 'mistake' in pain_text:
-        if platform != 'unknown':
+    # ALLOWED: Extract specific thing being missed/forgotten
+    match = re.search(r'(?:missed?|forgot(?:ten)?)\s+([a-z]{3,30})', pain_text)
+    if match:
+        target = match.group(1).strip()
+        if target and target not in ('deadline', 'payment', 'order'):
             return {
-                'name': f'{platform.title()} Error Detector',
-                'wedge': 'Prevents errors before they happen',
-                'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} that catches errors',
+                'name': f'{target.title()} Tracker',
+                'wedge': f'Tracks missed {target}',
+                'mvp': f'Tool that tracks {target}',
             }
+
+    # ALLOWED: Extract specific workflow from explicit mentions
+    # "X reconciliation" → extract X
+    match = re.search(r'(\w+)\s+reconcil', pain_text)
+    if match:
+        domain = match.group(1).strip()
         return {
-            'name': 'Error Prevention Tool',
-            'wedge': 'Prevents common mistakes',
-            'mvp': 'Tool that detects and prevents errors',
+            'name': f'{domain.title()} Reconciliation',
+            'wedge': f'{domain.title()} transaction reconciliation',
+            'mvp': f'Tool that reconciles {domain} transactions',
         }
 
-    # Pattern: "duplicate" → "Deduplication"
-    if 'duplicate' in pain_text:
-        return {
-            'name': 'Deduplication Tool',
-            'wedge': 'Removes duplicate entries',
-            'mvp': 'Tool that identifies and removes duplicates',
-        }
-
-    # Pattern: "missed" / "forgot" → "Reminder/Alert"
-    if 'missed' in pain_text or 'forgot' in pain_text or 'forget' in pain_text:
-        if platform != 'unknown':
+    # ALLOWED: Extract specific platform operation
+    if 'paste' in pain_text or 'copy' in pain_text:
+        match = re.search(r'(?:copy|paste)\s+(\w+)', pain_text)
+        if match:
+            target = match.group(1).strip()
             return {
-                'name': f'{platform.title()} Reminder',
-                'wedge': 'Prevents missed items',
-                'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} that sends reminders',
+                'name': f'{target.title()} Paste Fix',
+                'wedge': f'Fixes {target} paste issues',
+                'mvp': f'Tool that fixes {target} pasting',
             }
-        return {
-            'name': 'Smart Reminder',
-            'wedge': 'Prevents missed tasks',
-            'mvp': 'System that reminds about forgotten items',
-        }
 
-    # Pattern: "slow" → "Speed Optimizer"
-    if 'slow' in pain_text or 'takes too long' in pain_text:
-        if platform != 'unknown':
-            return {
-                'name': f'{platform.title()} Speed Optimizer',
-                'wedge': 'Speeds up workflow',
-                'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} that speeds up work',
-            }
-        return {
-            'name': 'Workflow Speed Tool',
-            'wedge': 'Speeds up manual processes',
-            'mvp': 'Tool that accelerates workflow',
-        }
-
-    # Pattern: "sync" / "in sync" → "Sync Automation"
-    if 'sync' in pain_text and 'manual' in pain_text:
-        if platform != 'unknown':
-            return {
-                'name': f'{platform.title()} Sync',
-                'wedge': 'Keeps data in sync automatically',
-                'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} that syncs data',
-            }
-        return {
-            'name': 'Data Sync Automation',
-            'wedge': 'Keeps data synchronized',
-            'mvp': 'Tool that syncs data between systems',
-        }
-
-    # Pattern: "export" / "import" → "Data Pipeline"
-    if 'export' in pain_text or 'import' in pain_text:
-        if platform != 'unknown':
-            return {
-                'name': f'{platform.title()} Data Pipeline',
-                'wedge': 'Automates data import/export',
-                'mvp': f'{PLATFORM_FORMATS.get(platform, "integration")} that moves data',
-            }
-        return {
-            'name': 'Data Pipeline',
-            'wedge': 'Automates data movement',
-            'mvp': 'Tool that automates exports/imports',
-        }
-
-    # Pattern: "spreadsheet" → "Spreadsheet Automation"
-    if 'spreadsheet' in pain_text or 'excel' in pain_text or 'sheet' in pain_text:
-        if platform == 'excel':
-            return {
-                'name': 'Excel Automation',
-                'wedge': 'Automates spreadsheet tasks',
-                'mvp': 'Script that automates Excel workflows',
-            }
-        elif platform == 'google_sheets':
-            return {
-                'name': 'Google Sheets Automation',
-                'wedge': 'Automates spreadsheet tasks',
-                'mvp': 'Script that automates Sheets workflows',
-            }
-        return {
-            'name': 'Spreadsheet Automation',
-            'wedge': 'Automates spreadsheet tasks',
-            'mvp': 'Tool that automates spreadsheet workflows',
-        }
-
+    # NO synthetic abstractions allowed - reject everything else
     return None
 
 
@@ -700,7 +730,7 @@ def sharpen_candidate(candidate: WedgeCandidate) -> tuple[bool, str]:
 
     Uses workflow and failure_mode to determine specific wedge.
     Does NOT use synthetic generation - relies on extracted signals.
-    Now attempts dynamic sharpening before giving up.
+    STRICT: Wedge must be evidence-grounded - no abstract transformations.
     """
     candidate.current_stage = "sharpening"
 
@@ -728,32 +758,42 @@ def sharpen_candidate(candidate: WedgeCandidate) -> tuple[bool, str]:
             candidate.wedge_name = sharpened['name']
             candidate.value_proposition = sharpened['wedge']
             candidate.product_format = PLATFORM_FORMATS.get(platform, 'integration')
-            return True, "sharpened"
 
-    # Try dynamic sharpening - extract from vague descriptions
+            # Verify evidence alignment before accepting
+            aligned, reason = _verify_evidence_alignment(
+                candidate.wedge_name,
+                candidate.workflow or '',
+                candidate.failure_mode or '',
+                candidate.consequence or '',
+                candidate.evidence_snippet or '',
+            )
+            if aligned:
+                return True, "sharpened"
+            # If not aligned, fall through to try other options
+
+    # Try dynamic sharpening - ONLY narrowing transformations
     dynamic = _try_dynamic_sharpening(workflow, failure_mode, consequence, platform)
     if dynamic:
         candidate.wedge_name = dynamic['name']
         candidate.value_proposition = dynamic['wedge']
         candidate.product_format = PLATFORM_FORMATS.get(platform, 'integration') if platform != 'unknown' else dynamic['mvp'].split(' ')[0]
-        return True, "dynamic_sharpened"
 
-    # Generic patterns for unknown platform (but with good validation scores)
-    if 'match' in failure_mode or 'reconcil' in failure_mode:
-        candidate.wedge_name = "Transaction Matcher"
-        candidate.value_proposition = "Matches transactions across sources"
-        candidate.product_format = "integration"
-        return True, "generic_match"
+        # Verify evidence alignment before accepting
+        aligned, reason = _verify_evidence_alignment(
+            candidate.wedge_name,
+            candidate.workflow or '',
+            candidate.failure_mode or '',
+            candidate.consequence or '',
+            candidate.evidence_snippet or '',
+        )
+        if aligned:
+            return True, "dynamic_sharpened"
+        # If not aligned, fall through to reject
 
-    if 'copy' in failure_mode and 'paste' in failure_mode:
-        candidate.wedge_name = "Data Paste Automator"
-        candidate.value_proposition = "Transforms data when pasting"
-        candidate.product_format = "tool"
-        return True, "generic_copy_paste"
-
-    # No sharpening possible
-    candidate.rejection_reasons.append("no_sharpen")
-    return False, "no_sharpen"
+    # NO generic fallbacks - all wedges must be evidence-grounded
+    # This is stricter: reject rather than create synthetic wedges
+    candidate.rejection_reasons.append("no_evidence_grounded_wedge")
+    return False, "no_evidence_grounded_wedge"
 
 
 # =============================================================================
@@ -910,7 +950,29 @@ def gate_wedge(candidate: WedgeCandidate) -> tuple[bool, str]:
             return False, "missing_trigger"
         # For inferred/unknown, we'll allow through to research-needed
 
+    # Check 5: EVIDENCE ALIGNMENT - verify wedge is grounded in extracted signals
+    # This must pass before accepting ANY wedge
+    if wedge_name:
+        aligned, reason = _verify_evidence_alignment(
+            wedge_name,
+            workflow,
+            failure_mode,
+            consequence,
+            candidate.evidence_snippet or '',
+        )
+        if not aligned:
+            candidate.output_bucket = "rejected"
+            candidate.rejection_reasons.append(f"evidence_mismatch: {reason}")
+            return False, reason
+
     # PLATFORM CHECKS (existing logic)
+
+    # STRICT: Category-level wedges are ALWAYS rejected - no exceptions
+    # This applies regardless of platform confidence
+    if is_category:
+        candidate.output_bucket = "rejected"
+        candidate.rejection_reasons.append("category_label")
+        return False, "category_label"
 
     # Explicit platform: strong gate with specific wedge
     if platform_conf == 'explicit':
