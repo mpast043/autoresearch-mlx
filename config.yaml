@@ -170,6 +170,24 @@ orchestration:
 builder:
   auto_build: true
 
+# Security agent for vulnerability scanning
+security:
+  enabled: true
+  min_severity: "nit"  # blocker, suggestion, nit
+
+# Technical writer for auto-documentation
+technical_writer:
+  enabled: true
+  output_dir: "output/docs"
+
+# SRE agent for wedge health monitoring
+sre:
+  enabled: true
+  score_drop_threshold: 0.15
+  validation_drop_threshold: 0.30
+  corroboration_min: 0.3
+  stall_days: 7
+
 # LLM config for builder_v2 code generation
 llm:
   provider: ollama

@@ -442,6 +442,9 @@ async def main() -> None:
             "rescore-v4",
             "term-lifecycle",
             "term-state",
+            "security-scan",
+            "generate-docs",
+            "sre-health",
         ],
         help="Command to execute",
     )
@@ -479,6 +482,9 @@ async def main() -> None:
         default="low",
         help="suggest-discovery: minimum confidence tier for money claims (default: low)",
     )
+    parser.add_argument("--wedge-id", type=int, help="Specific wedge ID for security-scan, sre-health")
+    parser.add_argument("--code", type=str, help="Code to scan (for security-scan)")
+    parser.add_argument("--file-name", type=str, default="stdin", help="File name for security-scan context")
     parser.add_argument(
         "--pattern",
         type=str,
@@ -683,6 +689,87 @@ async def main() -> None:
             else:
                 print(f"Unknown action: {action}", file=sys.stderr)
                 sys.exit(1)
+        finally:
+            await app.shutdown()
+        return
+
+    if args.command == "security-scan":
+        app = AutoResearcher(config_path=args.config)
+        await app.initialize(start_new_run=False)
+        try:
+            from src.agents.security import SecurityAgent
+            config = app.config.get("security", {})
+            security = SecurityAgent(config)
+
+            wedge_id = args.wedge_id if hasattr(args, "wedge_id") else None
+            code = args.code if hasattr(args, "code") else None
+
+            if code:
+                report = security.scan_code(code, file_name=args.file_name if hasattr(args, "file_name") else "stdin")
+                print(security.format_report(report))
+            elif wedge_id:
+                # Scan wedge solution
+                opportunities = app.db.get_opportunities(limit=100)
+                for opp in opportunities:
+                    if opp.id == wedge_id:
+                        spec = {"id": str(opp.id), "wedge_id": opp.wedge_id, "title": opp.title}
+                        report = security.scan_solution_spec(spec)
+                        print(security.format_report(report))
+                        break
+            else:
+                # Scan all build-ready opportunities
+                opportunities = app.db.get_opportunities_by_status("build_ready")
+                for opp in opportunities[:10]:
+                    spec = {"id": str(opp.id), "wedge_id": opp.wedge_id, "title": opp.title}
+                    report = security.scan_solution_spec(spec)
+                    print(f"\n--- Wedge {opp.wedge_id}: {opp.title} ---")
+                    print(security.format_report(report))
+        finally:
+            await app.shutdown()
+        return
+
+    if args.command == "generate-docs":
+        app = AutoResearcher(config_path=args.config)
+        await app.initialize(start_new_run=False)
+        try:
+            from src.agents.technical_writer import TechnicalWriterAgent
+            from pathlib import Path
+
+            config = app.config.get("technical_writer", {})
+            writer = TechnicalWriterAgent(config)
+
+            output_dir = Path(config.get("output_dir", "output/docs"))
+
+            # Generate docs for build-ready opportunities
+            opportunities = app.db.get_opportunities_by_status("build_ready")
+            for opp in opportunities[:5]:
+                spec = app.db.get_opportunity(opp.id)
+                if spec:
+                    spec_dict = {"id": str(spec.id), "wedge_id": spec.wedge_id, "title": spec.title}
+                    bundle = writer.generate_docs(spec_dict)
+                    wedge_dir = output_dir / f"wedge_{spec.wedge_id}"
+                    files = writer.save_docs(bundle, wedge_dir)
+                    print(f"Generated docs for wedge {spec.wedge_id}: {list(files.keys())}")
+        finally:
+            await app.shutdown()
+        return
+
+    if args.command == "sre-health":
+        app = AutoResearcher(config_path=args.config)
+        await app.initialize(start_new_run=False)
+        try:
+            from src.agents.sre import SREAgent
+
+            config = app.config.get("sre", {})
+            sre = SREAgent(app.db, config)
+
+            wedge_id = args.wedge_id if hasattr(args, "wedge_id") else None
+
+            if wedge_id:
+                print(sre.format_wedge_status(wedge_id))
+            else:
+                report = sre.generate_report()
+                print(report.summary)
         finally:
             await app.shutdown()
         return
