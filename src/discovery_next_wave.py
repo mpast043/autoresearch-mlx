@@ -22,6 +22,7 @@ DEFAULT_MAX_KEYWORDS = 5
 DEFAULT_MAX_SUBREDDITS = 5
 DEFAULT_CHALLENGER_MARGIN = 0.2
 DEFAULT_MIN_HYBRID_SCORE = 0.05
+DEFAULT_LOCKED_SEED_MIN_QUALITY = 0.1
 
 # Regression blocklist - terms always penalized
 REGRESSION_BLOCKLIST = [
@@ -192,6 +193,7 @@ def generate_next_wave(
     allow_replacement: bool = True,
     challenger_margin: float = DEFAULT_CHALLENGER_MARGIN,
     min_hybrid_score: float = DEFAULT_MIN_HYBRID_SCORE,
+    locked_seed_min_quality_score: float = DEFAULT_LOCKED_SEED_MIN_QUALITY,
     locked_config: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Generate next-wave terms using hybrid selector.
@@ -204,6 +206,7 @@ def generate_next_wave(
         allow_replacement: Allow challengers to replace locked terms
         challenger_margin: How much better a challenger must be to replace
         min_hybrid_score: Minimum hybrid score to be included
+        locked_seed_min_quality_score: Minimum quality score for historical locked seeds
         locked_config: Locked term config (defaults to LOCKED_*)
 
     Returns:
@@ -249,17 +252,19 @@ def generate_next_wave(
     keyword_scores.sort(key=lambda x: x['hybrid_score'], reverse=True)
     sub_scores.sort(key=lambda x: x['hybrid_score'], reverse=True)
 
+    placeholder_baseline = max(min_hybrid_score, locked_seed_min_quality_score)
+
     def _placeholder_score(term_value: str, term_type: str) -> dict[str, Any]:
         return {
             'term_value': term_value,
             'term_type': term_type,
             'state': 'locked_default',
-            'hybrid_score': 0.0,
-            'quality_component': 0.0,
+            'hybrid_score': round(placeholder_baseline, 3),
+            'quality_component': round(placeholder_baseline, 3),
             'output_component': 0.0,
-            'wedge_quality': 0.0,
-            'specificity': 0.0,
-            'consequence': 0.0,
+            'wedge_quality': round(placeholder_baseline, 3),
+            'specificity': round(placeholder_baseline, 3),
+            'consequence': round(placeholder_baseline, 3),
             'platform_native': 0.0,
             'plugin_fit': 0.0,
             'vague_bucket': 0,
@@ -269,18 +274,51 @@ def generate_next_wave(
             'prototype_candidates': 0,
             'build_briefs': 0,
             'screened_out': 0,
+            'score_source': 'placeholder_no_history',
+            'quality_known': False,
         }
+
+    def _locked_seed_score(term_value: str, term_type: str) -> dict[str, Any] | None:
+        score = calculate_hybrid_score(term_value, term_type, conn)
+        if score is None:
+            return _placeholder_score(term_value, term_type)
+        seeded = dict(score)
+        seeded['score_source'] = 'historical'
+        seeded['quality_known'] = True
+        if is_excluded_by_lifecycle(str(seeded.get('state', ''))):
+            return None
+        quality_history = any(
+            float(seeded.get(key, 0.0) or 0.0) > 0.0
+            for key in ('wedge_quality', 'specificity', 'consequence', 'platform_native', 'plugin_fit')
+        ) or any(
+            int(seeded.get(key, 0) or 0) > 0
+            for key in ('vague_bucket', 'abstraction_collapse')
+        )
+        if not quality_history:
+            placeholder = _placeholder_score(term_value, term_type)
+            placeholder['state'] = seeded.get('state', 'locked_default')
+            placeholder['score_source'] = 'placeholder_missing_quality_history'
+            return placeholder
+        if float(seeded.get('quality_component', 0.0) or 0.0) < locked_seed_min_quality_score:
+            return None
+        return seeded
 
     # === SELECT KEYWORDS ===
     selected_keywords = []
     keyword_retained = []
     keyword_replaced = []
     keyword_rejected = []
-    keyword_scores_by_term = {score['term_value']: score for score in keyword_scores}
 
     if use_locked_as_seed:
         for term in locked_keywords_list[:max_keywords]:
-            seeded = dict(keyword_scores_by_term.get(term) or _placeholder_score(term, 'keyword'))
+            seeded = dict(_locked_seed_score(term, 'keyword') or {})
+            if not seeded:
+                keyword_rejected.append({
+                    'term': term,
+                    'reason': 'locked_seed_quality_below_threshold',
+                    'score': 0.0,
+                })
+                continue
             seeded['selection_reason'] = 'locked_default'
             seeded['retained'] = True
             selected_keywords.append(seeded)
@@ -342,11 +380,17 @@ def generate_next_wave(
     sub_retained = []
     sub_replaced = []
     sub_rejected = []
-    sub_scores_by_term = {score['term_value']: score for score in sub_scores}
 
     if use_locked_as_seed:
         for term in locked_subreddits_list[:max_subreddits]:
-            seeded = dict(sub_scores_by_term.get(term) or _placeholder_score(term, 'subreddit'))
+            seeded = dict(_locked_seed_score(term, 'subreddit') or {})
+            if not seeded:
+                sub_rejected.append({
+                    'term': term,
+                    'reason': 'locked_seed_quality_below_threshold',
+                    'score': 0.0,
+                })
+                continue
             seeded['selection_reason'] = 'locked_default'
             seeded['retained'] = True
             selected_subs.append(seeded)

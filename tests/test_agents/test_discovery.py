@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from src.agents.base import AgentStatus
-from src.agents.discovery import DiscoveryAgent
+from src.agents.discovery import DiscoveryAgent, is_wedge_ready_signal
 from src.database import Database, Finding, Validation
 from src.messaging import MessageType
 
@@ -158,6 +158,86 @@ def test_process_finding_screens_out_generic_review_without_atom(temp_db):
     assert finding.status == "screened_out"
     assert temp_db.get_raw_signals_by_finding(finding_id) == []
     assert temp_db.get_problem_atoms_by_finding(finding_id) == []
+
+
+def test_is_wedge_ready_signal_rejects_meta_post():
+    finding_data = {
+        "product_built": "What should I automate?",
+        "outcome_summary": "Looking to build a workflow automation tool and asking people what annoys them most at work.",
+    }
+
+    is_ready, reason = is_wedge_ready_signal(finding_data)
+
+    assert is_ready is False
+    assert reason == "meta_post"
+
+
+def test_process_finding_persists_pre_atom_filtered_signal_as_screened_out(temp_db):
+    agent = DiscoveryAgent(temp_db)
+    finding_data = {
+        "source": "reddit-problem",
+        "source_url": "https://reddit.com/r/entrepreneur/comments/meta",
+        "product_built": "What workflow should I automate next?",
+        "outcome_summary": "Looking to build an automation product and asking founders which workflow annoys them most.",
+        "finding_kind": "problem_signal",
+    }
+
+    finding_id = asyncio.run(agent._process_finding(finding_data))
+
+    assert finding_id is not None
+    finding = temp_db.get_finding(finding_id)
+    assert finding is not None
+    assert finding.status == "screened_out"
+    assert (finding.evidence or {}).get("pre_atom_filter", {}).get("accepted") is False
+    assert temp_db.get_raw_signals_by_finding(finding_id) == []
+    assert temp_db.get_problem_atoms_by_finding(finding_id) == []
+
+
+def test_duplicate_pre_atom_filtered_signal_by_hash_not_stored(temp_db):
+    agent = DiscoveryAgent(temp_db)
+    finding_data = {
+        "source": "reddit-problem",
+        "source_url": "https://reddit.com/r/entrepreneur/comments/meta-dup",
+        "product_built": "What workflow should I automate next?",
+        "outcome_summary": "Looking to build an automation product and asking founders which workflow annoys them most.",
+        "finding_kind": "problem_signal",
+    }
+
+    finding_id_1 = asyncio.run(agent._process_finding(finding_data))
+    finding_id_2 = asyncio.run(agent._process_finding(finding_data))
+
+    assert finding_id_1 is not None
+    assert finding_id_2 is None
+    assert temp_db.get_finding(finding_id_1).status == "screened_out"
+
+
+def test_screened_out_retention_trims_oldest_findings(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        config={"discovery": {"screened_out_retention": {"max_findings": 1}}},
+    )
+    first = {
+        "source": "reddit-problem",
+        "source_url": "https://reddit.com/r/entrepreneur/comments/weak-1",
+        "product_built": "What workflow should I automate first?",
+        "outcome_summary": "Looking to build an automation product and asking which workflow annoys people the most.",
+        "finding_kind": "problem_signal",
+    }
+    second = {
+        "source": "reddit-problem",
+        "source_url": "https://reddit.com/r/entrepreneur/comments/weak-2",
+        "product_built": "What task should I automate next?",
+        "outcome_summary": "Looking to build an automation product and asking which task people want automated the most.",
+        "finding_kind": "problem_signal",
+    }
+
+    first_id = asyncio.run(agent._process_finding(first))
+    second_id = asyncio.run(agent._process_finding(second))
+
+    assert first_id is not None
+    assert second_id is not None
+    assert temp_db.get_finding(first_id) is None
+    assert temp_db.get_finding(second_id) is not None
 
 
 def test_duplicate_finding_by_hash_not_stored(temp_db):

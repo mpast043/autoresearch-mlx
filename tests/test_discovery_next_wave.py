@@ -187,6 +187,69 @@ class TestLockedTermRetention:
             # At least some should be in results
             assert any(locked_kw in r for r in result_kw)
 
+    def test_locked_seed_skips_historical_terms_below_quality_threshold(self, temp_db):
+        locked_term = LOCKED_KEYWORDS[0]
+        challenger = "higher quality challenger"
+
+        temp_db.insert_search_term("keyword", locked_term, state="locked")
+        temp_db.insert_search_term("keyword", challenger, state="active")
+        temp_db.update_search_term_metrics("keyword", locked_term, findings_emitted=12)
+        temp_db.update_search_term_metrics("keyword", challenger, findings_emitted=8, prototype_candidates=2)
+
+        conn = temp_db._get_connection()
+        conn.execute(
+            """
+            UPDATE discovery_search_terms
+            SET wedge_quality_score = CASE
+                WHEN term_value = ? THEN 0.0
+                WHEN term_value = ? THEN 0.35
+                ELSE wedge_quality_score
+            END,
+                vague_bucket_count = CASE
+                WHEN term_value = ? THEN 1
+                ELSE vague_bucket_count
+            END
+            WHERE term_value IN (?, ?)
+            """,
+            (locked_term, challenger, locked_term, locked_term, challenger),
+        )
+        conn.commit()
+
+        result = generate_next_wave(
+            temp_db,
+            max_keywords=2,
+            use_locked_as_seed=True,
+            allow_replacement=False,
+            locked_seed_min_quality_score=0.1,
+            locked_config={"keywords": [locked_term], "subreddits": []},
+        )
+
+        result_kw = [kw["term_value"] for kw in result["keywords"]]
+        assert locked_term not in result_kw
+        assert challenger in result_kw
+        assert any(
+            item["term"] == locked_term and item["reason"] == "locked_seed_quality_below_threshold"
+            for item in result["observability"]["keyword_rejected"]
+        )
+
+    def test_locked_seed_placeholder_is_flagged_and_nonzero(self, temp_db):
+        locked_term = LOCKED_KEYWORDS[0]
+
+        result = generate_next_wave(
+            temp_db,
+            max_keywords=1,
+            max_subreddits=0,
+            use_locked_as_seed=True,
+            allow_replacement=False,
+            locked_config={"keywords": [locked_term], "subreddits": []},
+        )
+
+        selected = result["keywords"][0]
+        assert selected["term_value"] == locked_term
+        assert selected["score_source"] in {"placeholder_no_history", "placeholder_missing_quality_history"}
+        assert selected["quality_known"] is False
+        assert selected["hybrid_score"] > 0.0
+
 
 class TestChallengerReplacement:
     """Tests for challenger replacement logic."""

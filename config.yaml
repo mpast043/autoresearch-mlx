@@ -7,9 +7,12 @@ discovery:
   # Self-expanding discovery: automatically add new keywords/subreddits based on what works
   auto_expand: true
   exploration_slots_per_cycle: 1
+  theme_query_limit_per_cycle: 2
   max_queries_per_concept: 1
   query_family_decay_hours: 18
   query_family_decay_min_queries: 2
+  screened_out_retention:
+    max_findings: 2000
   source_selection:
     always_run: ["reddit", "web"]
     exploratory_low_yield_sources_per_cycle: 1

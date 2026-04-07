@@ -2633,6 +2633,51 @@ class Database:
             params.append(limit)
         return [self._row_to_finding(row) for row in conn.execute(sql, params).fetchall()]
 
+    def trim_screened_out_findings(self, keep_limit: int) -> int:
+        """Trim oldest screened-out findings that have no derived artifacts."""
+        if keep_limit <= 0:
+            return 0
+        conn = self._get_connection()
+        eligible_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM findings f
+                LEFT JOIN raw_signals rs ON rs.finding_id = f.id
+                LEFT JOIN problem_atoms pa ON pa.finding_id = f.id
+                WHERE f.status = 'screened_out'
+                  AND rs.id IS NULL
+                  AND pa.id IS NULL
+                """
+            ).fetchone()["n"]
+            or 0
+        )
+        excess = max(0, eligible_count - keep_limit)
+        if excess <= 0:
+            return 0
+        ids = [
+            int(row["id"])
+            for row in conn.execute(
+                """
+                SELECT f.id
+                FROM findings f
+                LEFT JOIN raw_signals rs ON rs.finding_id = f.id
+                LEFT JOIN problem_atoms pa ON pa.finding_id = f.id
+                WHERE f.status = 'screened_out'
+                  AND rs.id IS NULL
+                  AND pa.id IS NULL
+                ORDER BY f.discovered_at ASC, f.id ASC
+                LIMIT ?
+                """,
+                (excess,),
+            ).fetchall()
+        ]
+        if not ids:
+            return 0
+        conn.executemany("DELETE FROM findings WHERE id = ?", [(finding_id,) for finding_id in ids])
+        conn.commit()
+        return len(ids)
+
     def get_raw_signals(self, *, finding_id: Optional[int] = None, limit: Optional[int] = None) -> list[Any]:
         conn = self._get_connection()
         sql = "SELECT * FROM raw_signals"

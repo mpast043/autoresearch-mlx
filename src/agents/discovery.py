@@ -257,6 +257,22 @@ class DiscoveryAgent(BaseAgent):
         # Term lifecycle manager for forward+reverse search space control
         self.term_lifecycle = TermLifecycleManager(db)
 
+    def _screened_out_retention_limit(self) -> int:
+        retention = self.config.get("discovery", {}).get("screened_out_retention", {}) or {}
+        try:
+            return max(0, int(retention.get("max_findings", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _enforce_screened_out_retention(self) -> int:
+        keep_limit = self._screened_out_retention_limit()
+        if keep_limit <= 0:
+            return 0
+        trimmed = self.db.trim_screened_out_findings(keep_limit)
+        if trimmed:
+            logger.info("trimmed %s screened_out findings to enforce retention limit=%s", trimmed, keep_limit)
+        return trimmed
+
     async def _run_loop(self) -> None:
         while self.status in (AgentStatus.RUNNING, AgentStatus.PAUSED):
             try:
@@ -325,6 +341,7 @@ class DiscoveryAgent(BaseAgent):
         self._publish_cycle_health()
         # Update term lifecycle states based on this wave's results
         self._update_term_lifecycle()
+        self._enforce_screened_out_retention()
         return finding_ids
 
     def _feedback_source_names(self, normalized_source: str) -> list[str]:
@@ -740,6 +757,7 @@ class DiscoveryAgent(BaseAgent):
                     source_class="low_signal_summary",
                     screening_score=0.0,
                 )
+            self._enforce_screened_out_retention()
             logger.debug("filtered weak signal %s as screened_out finding %s", reject_reason, finding_id)
             return finding_id
 
@@ -791,6 +809,7 @@ class DiscoveryAgent(BaseAgent):
                 self.status_tracker.log(
                     f"screened_out finding={finding_id} score={screening['score']} negatives={','.join(screening['negative_signals']) or 'none'}"
                 )
+            self._enforce_screened_out_retention()
             return finding_id
 
         signal = RawSignal(
