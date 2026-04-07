@@ -9,7 +9,8 @@ from typing import Any, Dict, Optional
 from src.agents.base import BaseAgent
 from src.database import Database, Product
 from src.messaging import MessageQueue, MessageType
-from src.research_tools import ToolingManager, slugify
+from src.research_tools import slugify
+from src.utils.tooling import ToolingManager
 
 
 class BuilderAgent(BaseAgent):
