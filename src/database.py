@@ -33,7 +33,15 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value or {})
 
 
+def _validate_identifier(name: str) -> None:
+    """Validate that a name is a safe SQL identifier (table or column name)."""
+    import re
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", name):
+        raise ValueError(f"Invalid SQL identifier: {name!r}")
+
+
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    _validate_identifier(table)
     try:
         rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     except sqlite3.OperationalError:
@@ -73,6 +81,8 @@ def _ensure_column(
     *,
     backfill_sql: str | None = None,
 ) -> None:
+    _validate_identifier(table)
+    _validate_identifier(column)
     columns = _table_columns(conn, table)
     if column in columns:
         return
@@ -526,7 +536,19 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._local = threading.local()
-        self.active_run_id = ""
+        self._local.active_run_id = ""
+        self._run_id_lock = threading.Lock()
+
+    @property
+    def active_run_id(self) -> str:
+        """Thread-safe access to active_run_id."""
+        return getattr(self._local, "active_run_id", "")
+
+    @active_run_id.setter
+    def active_run_id(self, value: str) -> None:
+        """Thread-safe setter for active_run_id."""
+        with self._run_id_lock:
+            self._local.active_run_id = value
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -535,6 +557,8 @@ class Database:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             self._local.conn = conn
         return conn
 
@@ -567,6 +591,7 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
             CREATE INDEX IF NOT EXISTS idx_findings_source ON findings(source);
+            CREATE INDEX IF NOT EXISTS idx_findings_source_url ON findings(source_url);
             CREATE TABLE IF NOT EXISTS raw_signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 finding_id INTEGER REFERENCES findings(id),
@@ -602,6 +627,9 @@ class Database:
                 metadata_json TEXT DEFAULT '{}',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE INDEX IF NOT EXISTS idx_raw_signals_finding_id ON raw_signals(finding_id);
+            CREATE INDEX IF NOT EXISTS idx_problem_atoms_finding_id ON problem_atoms(finding_id);
+            CREATE INDEX IF NOT EXISTS idx_findings_finding_kind ON findings(finding_kind);
             CREATE TABLE IF NOT EXISTS opportunity_clusters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 label TEXT NOT NULL,
@@ -1344,6 +1372,16 @@ class Database:
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM raw_signals WHERE id = ?", (signal_id,)).fetchone()
         return self._row_to_raw_signal(row) if row else None
+
+    def get_raw_signals_by_ids(self, ids: list[int]) -> list[RawSignal]:
+        if not ids:
+            return []
+        conn = self._get_connection()
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT * FROM raw_signals WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        return [self._row_to_raw_signal(row) for row in rows]
 
     def get_raw_signals_by_finding(self, finding_id: int) -> list[RawSignal]:
         return [self._row_to_raw_signal(row) for row in self._get_connection().execute(
@@ -2632,6 +2670,11 @@ class Database:
             sql += " LIMIT ?"
             params.append(limit)
         return [self._row_to_finding(row) for row in conn.execute(sql, params).fetchall()]
+
+    def get_finding_by_url(self, url: str) -> Optional[Finding]:
+        conn = self._get_connection()
+        row = conn.execute("SELECT * FROM findings WHERE source_url = ? LIMIT 1", (url,)).fetchone()
+        return self._row_to_finding(row) if row else None
 
     def trim_screened_out_findings(self, keep_limit: int) -> int:
         """Trim oldest screened-out findings that have no derived artifacts."""

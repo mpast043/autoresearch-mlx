@@ -4,6 +4,8 @@ database:
   path: data/autoresearch.db
 
 discovery:
+  # Max concurrent outbound HTTP requests during discovery (default 6).
+  api_concurrency: 6
   # Self-expanding discovery: automatically add new keywords/subreddits based on what works
   auto_expand: true
   exploration_slots_per_cycle: 1

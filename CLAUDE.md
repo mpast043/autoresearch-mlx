@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AutoResearch MLX is an evidence-first weak-signal problem discovery and validation pipeline. It harvests raw pain signals from multiple sources (Reddit, GitHub, WordPress Plugin Directory, Shopify App Store, YouTube, web search), screens and classifies them, extracts structured problem atoms, clusters recurring patterns, scores market opportunities, plans falsifiable experiments, and gates validated opportunities toward build briefs.
 
-The default pipeline path is: `discovery -> evidence -> validation -> build_prep`. **Auto-ideate** can be enabled in `config.yaml` (`orchestration.auto_ideate_after_validation`); it runs on **promote** (`passed`) or on **prototype_candidate** when a **build brief** exists (see `docs/PRODUCT_LOOP.md`). **Auto-build** remains off by default (`builder.auto_build`).
+The default pipeline path is: `discovery -> evidence -> validation -> build_prep`. **Auto-ideate** can be enabled in `config.yaml` (`orchestration.auto_ideate_after_validation`); it runs on **promote** (`passed`) or on **prototype_candidate** when a **build brief** exists (see `docs/PRODUCT_LOOP.md`). **Auto-build** defaults to `builder.auto_build: true` in `config.yaml`; disable explicitly to skip.
 
 ## Commands
 
@@ -20,6 +20,7 @@ python cli.py watch                  # continuous watch mode (renders pipeline_s
 # Deep research (targeted vertical exploration)
 python cli.py deep-research --vertical devtools   # multi-source synthesis for devtools vertical
 python cli.py deep-research --vertical ecommerce # ecommerce vertical
+python cli.py run-unseeded --vertical devtools    # unseeded discovery for a vertical
 
 # Behavioral evaluation
 python cli.py eval                   # runs gold-set behavioral eval harness
@@ -47,20 +48,54 @@ python cli.py experiments
 python cli.py ledger
 python cli.py build-briefs
 python cli.py build-prep
+python cli.py ideas           # list generated ideas
+python cli.py products        # list products
+python cli.py patterns        # emerging pain patterns
 python cli.py report     # includes run_diff, decision_reason_mix, corroboration_depth, wedge provenance
 python cli.py gate-diagnostics   # why promote/park/kill + selection_status (see docs/gates.md)
 python cli.py pipeline-health      # why run_once may show 0 new validations (backlog + dedupe)
+python cli.py scoring-report       # scoring percentile monitor with version distribution
+python cli.py search <query>       # search opportunities by query
 
-# Dashboard (Next.js, port 3001)
-cd dashboard/
-npm install
-npm run dev
-npm run build
-npm run lint
+# Operator workbenches
+python cli.py workbench             # candidate workbench view
+python cli.py decision-surface      # same as workbench
+python cli.py operator-report       # operator-facing report
+python cli.py backlog-workbench     # backlog workbench view
+python cli.py builder-jobs          # builder job queue
+
+# Re-scoring and term management
+python cli.py revalidate            # re-run validation for unvalidated opportunities
+python cli.py rescore-v4            # re-score all opportunities with v4 formula
+python cli.py term-lifecycle        # list search terms by state
+python cli.py term-state <action>   # manage term state (ban/reactivate/complete/reset/high-performers/exhausted/wedge-quality/specificity/platform-native/abstraction-collapse/buildable)
+python cli.py discovery-sort-diagnostics  # Reddit sort-mode yield analysis
+
+# Security and SRE
+python cli.py security-scan         # OWASP vulnerability scan on code or wedge solutions
+python cli.py sre-health            # SRE wedge health monitoring report
+python cli.py generate-docs         # auto-generate documentation for build-ready opportunities
+
+# Dashboard (Next.js, port 3001) — currently stubbed, no source files present
+# cd dashboard/
+# npm install
+# npm run dev
+# npm run build
+# npm run lint
 
 # Tests
 pytest tests/ -v
+# pytest.ini: asyncio_mode = auto (no @pytest.mark.asyncio needed)
 ```
+
+## Environment Setup
+
+- **Python >=3.10** required (see `pyproject.toml`)
+- Install dependencies: `pip install -r requirements.txt`
+- Dev dependencies: `pip install -r requirements-dev.txt`
+- Optional (Anthropic SDK, scikit-learn, sentence-transformers): `pip install -r requirements-optional.txt`
+- Copy `.env.example` to `.env` and fill in API keys (Reddit bridge, etc.)
+- Default LLM: **Ollama** with `llama3.1:8b` (configure in `config.yaml` under `llm`)
 
 ## Architecture
 
@@ -75,7 +110,12 @@ Messages flow through an async priority queue (`src/messaging.py`). Lower priori
 - **EvidenceAgent** (`src/agents/evidence.py`) — gathers corroboration and market enrichment per run
 - **ValidationAgent** (`src/agents/validation.py`) — clusters atoms, scores opportunities, searches counterevidence, plans experiments, makes promote/park/kill decisions
 - **Build-prep chain** (`src/agents/build_prep.py`) — `solution_framing -> experiment_design -> spec_generation` only runs for `prototype_candidate` opportunities
-- **Optional** (`src/agents/ideation.py`, `src/agents/builder.py`) — disabled by default; enable via `orchestration.auto_ideate_after_validation` and `builder.auto_build` in config
+- **Optional** (`src/agents/ideation.py`, `src/agents/builder.py`) — ideation runs on promote when `auto_ideate_after_validation` is true; builder runs when `auto_build` is true
+- **DeepResearchAgent** (`src/agents/deep_research.py`) — multi-source weak-signal synthesis across Reddit + GitHub + web for targeted verticals
+- **SecurityAgent** (`src/agents/security.py`) — OWASP Top 10 vulnerability scanning of generated solutions; enabled via `security.enabled`
+- **SREAgent** (`src/agents/sre.py`) — wedge health monitoring and regression detection; enabled via `sre.enabled`
+- **TechnicalWriterAgent** (`src/agents/technical_writer.py`) — auto-generate API/endpoint documentation for build-ready opportunities; enabled via `technical_writer.enabled`
+- **BuilderAgentV2** (`src/agents/builder_v2.py`) — LLM code-generating builder (Ollama/llama3.1), alternative to deterministic BuilderAgent
 
 ### Key Files
 | File | Purpose |
@@ -85,10 +125,30 @@ Messages flow through an async priority queue (`src/messaging.py`). Lower priori
 | `config.yaml` | All configuration (sources, weights, thresholds, API keys via `${ENV_VAR}`) |
 | `src/database.py` | SQLite schema and CRUD — source of truth at runtime |
 | `src/orchestrator.py` | Message routing between agents |
-| `src/messaging.py` | `MessageQueue`, `MessageType`, async message protocol |
+| `src/messaging.py` | `MessageBus`, `MessageQueue`, `MessageType`, async message protocol |
 | `src/opportunity_engine.py` | Clustering, scoring, falsification (~110K file) |
 | `src/research_tools.py` | Reddit, GitHub, YouTube, web scraping, DuckDuckGo integrations (~115K file) |
 | `src/source_policy.py` | Signal classification: `pain_signal`, `success_signal`, `demand_signal`, `competition_signal`, `meta_guidance`, `low_signal_summary` — only `pain_signal` enters atom generation |
+| `src/discovery_expander.py` | Auto-expansion of discovery keywords/subreddits |
+| `src/discovery_governance.py` | Discovery governance controls and retention |
+| `src/discovery_next_wave.py` | Next-wave discovery scheduling |
+| `src/discovery_term_lifecycle.py` | `TermLifecycleManager` — ban/reactivate/complete/exhaust search terms |
+| `src/discovery_queries.py` | Curated Reddit subreddits, problem keywords, success keywords |
+| `src/discovery_suggestions.py` | `build_discovery_suggestions()` — suggests new keywords/subs from clusters |
+| `src/wedge_queue.py` | Wedge queue management |
+| `src/builder_output.py` | Builder output handling |
+| `src/pipeline_health.py` | `compute_pipeline_health()` |
+| `src/status_tracker.py` | `StatusTracker` — runtime status snapshots |
+| `src/gate_diagnostics.py` | Gate diagnostics reports for validation |
+| `src/validation_thresholds.py` | `resolve_promotion_park_thresholds()` — resolution order for config overrides |
+| `src/rag_finder.py` | RAG-based finding search |
+| `src/search_models.py` | Search-related data models |
+
+### Subpackages
+- **`src/research/`** — `classification.py` (signal classification), `enrichment.py` (signal enrichment), `scoring.py` (signal scoring), `scraping.py` (web scraping utilities)
+- **`src/runtime/`** — `env.py` (`load_local_env()` — .env loading), `paths.py` (`resolve_project_path()`, `build_runtime_paths()`)
+- **`src/utils/`** — `hashing.py`, `jina_reader.py`, `retry.py`, `text.py`, `tooling.py`, `search_plan.py`, `opportunity_helpers.py`
+- **`src/resources/`** — `config.default.yaml` (conservative defaults), `evals/behavior_gold.json` (eval fixtures)
 
 ### Data Model
 The authoritative schema is in `src/database.py`. Key runtime tables:
@@ -154,3 +214,8 @@ API keys use `${ENV_VAR}` syntax and are loaded from `.env` at startup via `load
 - `shopify_reviews` lane uses bounded popularity proxies (review count) since install counts are not public
 - GitHub issues with generic feature wishlists or thin product noise are screened out before atom generation
 - Live status file: `output/pipeline_status.json`; runtime log: `output/autoresearcher.log`
+- Dashboard is stubbed — `dashboard/` has no source files, only `node_modules/`; npm commands will fail
+- Default LLM is Ollama/llama3.1:8b (local), not a cloud provider — ensure Ollama is running for builder_v2
+- No test coverage for: `ideation.py`, `builder.py`, `deep_research.py`, `competitor_intel.py`
+- `build_prep.py` contains 3 sub-agent classes: `SolutionFramingAgent`, `ExperimentDesignAgent`, `SpecGenerationAgent`
+- `pyproject.toml` exposes `autoresearch` as a console script entry point

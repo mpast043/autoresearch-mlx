@@ -6,7 +6,7 @@ The active runtime path is:
 
 `discovery -> evidence -> validation -> build_prep`
 
-Optional downstream stages exist for ideation and code generation, but they sit behind validation and build-prep gates.
+Optional downstream stages exist for ideation and code generation, but they sit behind validation and build-prep gates. Optional agents (SecurityAgent, SREAgent, TechnicalWriterAgent, DeepResearchAgent) can be enabled in `config.yaml`.
 
 ## What The System Does
 
@@ -17,12 +17,22 @@ Optional downstream stages exist for ideation and code generation, but they sit 
 - Persists build briefs and build-prep outputs only for `prototype_candidate` opportunities.
 - Learns from both good yield and bad yield to adjust discovery scope over time.
 - Supports autonomous Reddit keyword/subreddit expansion while still preserving curated practitioner lanes.
+- Scans generated solutions for OWASP Top 10 vulnerabilities (SecurityAgent).
+- Monitors wedge health and detects regressions (SREAgent).
+- Auto-generates documentation for build-ready opportunities (TechnicalWriterAgent).
+- Supports targeted deep research across multiple sources for specific verticals (DeepResearchAgent).
 
 ## Quick Start
 
 ```bash
 # Install editable package + console script
 python -m pip install -e .
+
+# Install dev dependencies (pytest, pytest-asyncio)
+python -m pip install -r requirements-dev.txt
+
+# Copy environment template and fill in API keys
+cp .env.example .env
 
 # Single pass
 autoresearch run-once
@@ -40,6 +50,8 @@ autoresearch run
 autoresearch watch
 ```
 
+**Prerequisites:** Python >=3.10, [Ollama](https://ollama.ai) running locally for builder_v2 (uses `llama3.1:8b` by default).
+
 The repo-root entrypoint still works for local development via `python cli.py ...`, but the packaged console script is now the preferred surface.
 
 ## Key Commands
@@ -51,13 +63,25 @@ autoresearch run-once
 autoresearch run-once --skip-backlog --verbose
 autoresearch watch
 
+# Deep research (targeted vertical exploration)
+autoresearch deep-research --vertical devtools
+autoresearch deep-research --vertical ecommerce
+autoresearch run-unseeded --vertical devtools
+
 # Diagnostics and operator review
 autoresearch report
 autoresearch gate-diagnostics
 autoresearch pipeline-health
+autoresearch scoring-report
 autoresearch backlog-workbench --limit 20
 autoresearch review-queue
 autoresearch review-mark --finding-id 10 --label needs_more_evidence --note "plausible but thin"
+
+# Operator workbenches
+autoresearch workbench
+autoresearch decision-surface
+autoresearch operator-report
+autoresearch builder-jobs
 
 # Data inspection
 autoresearch findings
@@ -69,10 +93,25 @@ autoresearch experiments
 autoresearch ledger
 autoresearch build-briefs
 autoresearch build-prep
+autoresearch ideas
+autoresearch products
+autoresearch patterns
+autoresearch search <query>
 
 # Discovery support
 autoresearch suggest-discovery --min-atoms 2 --limit 25
-autoresearch patterns
+autoresearch discovery-sort-diagnostics
+
+# Re-scoring and term management
+autoresearch revalidate
+autoresearch rescore-v4
+autoresearch term-lifecycle
+autoresearch term-state <action>   # ban/reactivate/complete/reset/high-performers/exhausted/wedge-quality/specificity/platform-native/abstraction-collapse/buildable
+
+# Security and SRE
+autoresearch security-scan
+autoresearch sre-health
+autoresearch generate-docs
 
 # Relay and recovery
 autoresearch check-bridge
@@ -88,6 +127,9 @@ autoresearch eval
 ```bash
 # Editable local install
 python -m pip install -e .
+
+# Optional: Anthropic SDK, scikit-learn, sentence-transformers
+python -m pip install -r requirements-optional.txt
 
 # Verify the console script works outside the repo root
 cd /tmp
@@ -111,6 +153,22 @@ The runtime uses:
 - `src/messaging.py` for the async per-agent message bus
 - `src/database.py` for the SQLite schema and CRUD
 - `src/status_tracker.py` for `output/pipeline_status.json`
+
+Key agents:
+
+| Agent | Module | Purpose |
+|-------|--------|---------|
+| DiscoveryAgent | `src/agents/discovery.py` | Harvests pain signals from configured sources |
+| EvidenceAgent | `src/agents/evidence.py` | Gathers corroboration and market enrichment |
+| ValidationAgent | `src/agents/validation.py` | Clusters, scores, promotes/parks/kills |
+| Build-prep chain | `src/agents/build_prep.py` | Solution framing, experiment design, spec generation |
+| IdeationAgent | `src/agents/ideation.py` | Turns promoted opportunities into research briefs |
+| BuilderAgent | `src/agents/builder.py` | Deterministic local product artifacts |
+| BuilderAgentV2 | `src/agents/builder_v2.py` | LLM code-generating builder (Ollama) |
+| DeepResearchAgent | `src/agents/deep_research.py` | Multi-source vertical synthesis |
+| SecurityAgent | `src/agents/security.py` | OWASP Top 10 vulnerability scanning |
+| SREAgent | `src/agents/sre.py` | Wedge health monitoring and regression detection |
+| TechnicalWriterAgent | `src/agents/technical_writer.py` | Auto-generate documentation |
 
 The important persisted dataflow is:
 
@@ -154,6 +212,9 @@ Important sections:
 - `orchestration`
 - `validation`
 - `builder`
+- `security`
+- `technical_writer`
+- `sre`
 - `llm`
 - `reddit_bridge`
 - `reddit_relay`
@@ -177,9 +238,19 @@ Use these together with `python cli.py report`, `python cli.py gate-diagnostics`
 - Gates: [docs/gates.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/gates.md)
 - Loop operations: [docs/LOOP.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/LOOP.md)
 - Product loop: [docs/PRODUCT_LOOP.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/PRODUCT_LOOP.md)
+- Calibration: [docs/CALIBRATION_v4.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/CALIBRATION_v4.md)
+- Build brief contract: [docs/build_brief_contract.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/build_brief_contract.md)
+- Recovery: [docs/RECOVERY.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/RECOVERY.md)
+- Production runtime: [docs/production-runtime.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/production-runtime.md)
+- Render deploy: [docs/render-deploy.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/render-deploy.md)
+- Codespaces setup: [docs/codespaces.md](/Users/meganpastore/Projects/autoresearch-mlx/docs/codespaces.md)
 
 ## Tests
 
 ```bash
 pytest tests/ -v
 ```
+
+Test configuration: `pytest.ini` sets `asyncio_mode = auto` (no `@pytest.mark.asyncio` decorator needed).
+
+**Note:** No test coverage exists for `ideation.py`, `builder.py`, `deep_research.py`, or `competitor_intel.py`.

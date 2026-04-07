@@ -214,6 +214,21 @@ class GitHubIssueAdapter:
         self.fetch_content = fetch_content
         self.token = _resolve_env(token)
         self.user_agent = user_agent
+        self._session: aiohttp.ClientSession | None = None
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=20)
+            headers = {"User-Agent": self.user_agent, "Accept": "application/vnd.github+json"}
+            if self.token:
+                headers["Authorization"] = f"Bearer {self.token}"
+            self._session = aiohttp.ClientSession(timeout=timeout, headers=headers)
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def discover_items(
         self,
@@ -224,54 +239,50 @@ class GitHubIssueAdapter:
     ) -> list[dict[str, Any]]:
         findings: list[dict[str, Any]] = []
         seen_urls: set[str] = set()
-        timeout = aiohttp.ClientTimeout(total=20)
-        headers = {"User-Agent": self.user_agent, "Accept": "application/vnd.github+json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            for query in queries:
-                api_items = await self._search_issue_api(session, query, per_page=max_results_per_query)
-                if observer:
-                    observer(
-                        {
-                            "source_name": "github-problem",
-                            "query_text": query,
-                            "docs_seen": len(api_items),
-                            "status": "ok",
-                            "error": "",
-                        }
-                    )
-                for item in api_items:
-                    html_url = str(item.get("html_url", "") or "")
-                    if not html_url or html_url in seen_urls:
-                        continue
-                    seen_urls.add(html_url)
-                    record = self._build_issue_record_from_api(item, query)
-                    if record:
-                        findings.append(record.as_finding())
+        session = self._get_session()
+        for query in queries:
+            api_items = await self._search_issue_api(session, query, per_page=max_results_per_query)
+            if observer:
+                observer(
+                    {
+                        "source_name": "github-problem",
+                        "query_text": query,
+                        "docs_seen": len(api_items),
+                        "status": "ok",
+                        "error": "",
+                    }
+                )
+            for item in api_items:
+                html_url = str(item.get("html_url", "") or "")
+                if not html_url or html_url in seen_urls:
+                    continue
+                seen_urls.add(html_url)
+                record = self._build_issue_record_from_api(item, query)
+                if record:
+                    findings.append(record.as_finding())
 
-                docs = await self.search_web(query, max_results=max_results_per_query, site="github.com")
-                if observer:
-                    observer(
-                        {
-                            "source_name": "github-problem",
-                            "query_text": f"{query} [discussion-fallback]",
-                            "docs_seen": len(docs),
-                            "status": "ok",
-                            "error": "",
-                        }
-                    )
-                for doc in docs:
-                    if doc.url in seen_urls or not any(token in doc.url for token in ["/issues/", "/discussions/"]):
-                        continue
-                    repo, item_type, item_number = _extract_repo_and_kind(doc.url)
-                    if item_type not in {"issues", "discussions"} or not repo:
-                        continue
-                    seen_urls.add(doc.url)
-                    content = await self.fetch_content(doc.url)
-                    record = self._build_record_from_doc(doc, content, query, repo, item_type, item_number)
-                    if record:
-                        findings.append(record.as_finding())
+            docs = await self.search_web(query, max_results=max_results_per_query, site="github.com")
+            if observer:
+                observer(
+                    {
+                        "source_name": "github-problem",
+                        "query_text": f"{query} [discussion-fallback]",
+                        "docs_seen": len(docs),
+                        "status": "ok",
+                        "error": "",
+                    }
+                )
+            for doc in docs:
+                if doc.url in seen_urls or not any(token in doc.url for token in ["/issues/", "/discussions/"]):
+                    continue
+                repo, item_type, item_number = _extract_repo_and_kind(doc.url)
+                if item_type not in {"issues", "discussions"} or not repo:
+                    continue
+                seen_urls.add(doc.url)
+                content = await self.fetch_content(doc.url)
+                record = self._build_record_from_doc(doc, content, query, repo, item_type, item_number)
+                if record:
+                    findings.append(record.as_finding())
         return findings
 
     async def search_issue_records(
@@ -280,12 +291,8 @@ class GitHubIssueAdapter:
         *,
         max_results: int = 4,
     ) -> list[dict[str, Any]]:
-        timeout = aiohttp.ClientTimeout(total=10)
-        headers = {"User-Agent": self.user_agent, "Accept": "application/vnd.github+json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            api_items = await self._search_issue_api(session, query, per_page=max_results)
+        session = self._get_session()
+        api_items = await self._search_issue_api(session, query, per_page=max_results)
         findings: list[dict[str, Any]] = []
         for item in api_items:
             record = self._build_issue_record_from_api(item, query)

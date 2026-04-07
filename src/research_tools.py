@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from typing import Any, Callable, Iterable, Optional
 from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 
 import requests
+import aiohttp
 from bs4 import BeautifulSoup
 
 try:
@@ -753,6 +755,8 @@ class ResearchToolkit:
         self._fetch_cache: dict[str, dict[str, Any]] = {}
         self._recurrence_attempt_cache: dict[str, tuple[list[SearchDocument], dict[str, Any]]] = {}
         self._discovery_feedback: dict[str, dict[str, dict[str, Any]]] = {}
+        self._cache_timestamps: dict[str, float] = {}
+        self._cache_ttl: float = 3600.0  # 1 hour
         self.reddit_transport = RedditTransport(
             config=self.config,
             reddit_bridge=self.reddit_bridge,
@@ -795,6 +799,7 @@ class ResearchToolkit:
         self.request_timeout_general = max(1, float(validation_search.get("request_timeout_general", 12)))
         # YouTube API key
         self.youtube_api_key = os.environ.get("YOUTUBE_API_KEY", "")
+        self._session: aiohttp.ClientSession | None = None
 
         api_keys = self.config.get("api_keys", {}) if isinstance(self.config.get("api_keys", {}), dict) else {}
         github_cfg = api_keys.get("github", {}) if isinstance(api_keys.get("github", {}), dict) else {}
@@ -814,9 +819,72 @@ class ResearchToolkit:
             ),
         )
 
+    def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
     async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
         if self.reddit_transport:
             await self.reddit_transport.close()
+        if self.github_adapter:
+            await self.github_adapter.close()
+        if self.wordpress_review_adapter:
+            await self.wordpress_review_adapter.close()
+        if self.shopify_review_adapter:
+            await self.shopify_review_adapter.close()
+
+    # ------------------------------------------------------------------
+    # TTL-aware cache helpers
+    # ------------------------------------------------------------------
+
+    def _cache_key_str(self, key: Any) -> str:
+        """Return a string representation usable as a timestamp-dict key."""
+        if isinstance(key, str):
+            return key
+        return str(key)
+
+    def _evict_expired_caches(self) -> None:
+        """Remove entries from all caches whose TTL has expired."""
+        now = time.time()
+        expired: list[str] = []
+        for k, ts in self._cache_timestamps.items():
+            if now - ts > self._cache_ttl:
+                expired.append(k)
+        for k in expired:
+            self._cache_timestamps.pop(k, None)
+            # Remove from the appropriate cache dict.
+            # We try each cache; the key type determines which one owns it.
+            # Tuple keys belong to _search_cache; string keys may be in
+            # _fetch_cache, _recurrence_attempt_cache, or _discovery_feedback.
+            self._search_cache.pop(k, None)  # type: ignore[arg-type]
+            self._fetch_cache.pop(k, None)
+            self._recurrence_attempt_cache.pop(k, None)
+            # _discovery_feedback is nested — skip; it is repopulated each run.
+
+    def _cache_get(self, cache: dict, key: Any) -> Any:
+        """Get a value from *cache*, returning ``None`` if expired."""
+        self._evict_expired_caches()
+        key_str = self._cache_key_str(key)
+        if key_str not in self._cache_timestamps:
+            # Not tracked — treat as expired / absent.
+            cache.pop(key, None)
+            return None
+        if time.time() - self._cache_timestamps[key_str] > self._cache_ttl:
+            # Expired — evict.
+            self._cache_timestamps.pop(key_str, None)
+            cache.pop(key, None)
+            return None
+        return cache.get(key)
+
+    def _cache_set(self, cache: dict, key: Any, value: Any) -> None:
+        """Store *value* in *cache* under *key* and record the timestamp."""
+        key_str = self._cache_key_str(key)
+        self._cache_timestamps[key_str] = time.time()
+        cache[key] = value
 
     def get_reddit_runtime_metrics(self) -> dict[str, Any]:
         return self.reddit_transport.get_runtime_metrics()
@@ -1596,8 +1664,9 @@ class ResearchToolkit:
         intent: str = "general",
     ) -> list[SearchDocument]:
         cache_key = (query, max_results, site, intent)
-        if cache_key in self._search_cache:
-            return list(self._search_cache[cache_key])
+        cached = self._cache_get(self._search_cache, cache_key)
+        if cached is not None:
+            return list(cached)
 
         full_query = f"site:{site} {query}" if site else query
         results: list[SearchDocument] = []
@@ -1665,7 +1734,7 @@ class ResearchToolkit:
                 if len(results) >= max_results:
                     break
             if results:
-                self._search_cache[cache_key] = list(results)
+                self._cache_set(self._search_cache, cache_key, list(results))
                 return list(results)
 
         async def _run_ddg_provider(import_path: str, timeout: int) -> list[dict[str, Any]]:
@@ -1692,21 +1761,21 @@ class ResearchToolkit:
                 if len(results) >= max_results:
                     break
             if results:
-                self._search_cache[cache_key] = list(results)
+                self._cache_set(self._search_cache, cache_key, list(results))
                 return list(results)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("ddgs search provider failed: %s", exc)
 
         try:
             for row in await _run_ddg_provider("duckduckgo_search", provider_timeout):
                 _append_result(row.get("title", ""), row.get("href", ""), row.get("body", ""))
                 if len(results) >= max_results:
                     break
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("duckduckgo_search provider failed: %s", exc)
 
         if results:
-            self._search_cache[cache_key] = list(results)
+            self._cache_set(self._search_cache, cache_key, list(results))
             return list(results)
 
         try:
@@ -1733,11 +1802,11 @@ class ResearchToolkit:
                         snippet = snippet_el.get_text(" ", strip=True)
                 if _append_result(title, href, snippet) and len(results) >= max_results:
                     break
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("DDG HTML search failed: %s", exc)
 
         if validation_intent and not (intent == "validation_recurrence" and site):
-            self._search_cache[cache_key] = list(results)
+            self._cache_set(self._search_cache, cache_key, list(results))
             return list(results)
 
         if not results:
@@ -1769,12 +1838,13 @@ class ResearchToolkit:
             except Exception:
                 return []
 
-        self._search_cache[cache_key] = list(results)
+        self._cache_set(self._search_cache, cache_key, list(results))
         return list(results)
 
     async def fetch_content(self, url: str) -> dict[str, Any]:
-        if url in self._fetch_cache:
-            return dict(self._fetch_cache[url])
+        cached = self._cache_get(self._fetch_cache, url)
+        if cached is not None:
+            return dict(cached)
 
         # Check for Jina Reader config
         use_jina = self.config.get("discovery", {}).get("web", {}).get("use_jina_reader", False)
@@ -1790,7 +1860,7 @@ class ResearchToolkit:
                         "description": compact_text(result.markdown[:900] if result.markdown else "", 900),
                         "text": compact_text(result.markdown or "", 2500),
                     }
-                    self._fetch_cache[url] = normalized
+                    self._cache_set(self._fetch_cache, url, normalized)
                     return dict(normalized)
             except Exception:
                 pass  # Fall through to other methods
@@ -1805,10 +1875,10 @@ class ResearchToolkit:
                         "description": compact_text(str(payload.get("description", "") or payload.get("text", "")), 900),
                         "text": compact_text(str(payload.get("text", "") or payload.get("description", "")), 2500),
                     }
-                    self._fetch_cache[url] = normalized
+                    self._cache_set(self._fetch_cache, url, normalized)
                     return dict(normalized)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("async web fetch failed for %s: %s", url, exc)
 
         def _request() -> dict[str, Any]:
             response = requests.get(
@@ -1826,7 +1896,7 @@ class ResearchToolkit:
             payload = await asyncio.to_thread(_request)
         except Exception:
             payload = {"url": url, "title": url, "description": "", "text": ""}
-        self._fetch_cache[url] = payload
+        self._cache_set(self._fetch_cache, url, payload)
         return dict(payload)
 
     async def reddit_search(
@@ -1880,38 +1950,37 @@ class ResearchToolkit:
 
         comments: list[dict[str, Any]] = []
         try:
-            import aiohttp
-
-            async with aiohttp.ClientSession() as session:
-                # Get comment threads
-                url = "https://www.googleapis.com/youtube/v3/commentThreads"
-                params = {
-                    "part": "snippet",
-                    "videoId": video_id,
-                    "maxResults": min(limit, 100),
-                    "key": self.youtube_api_key,
-                }
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status != 200:
-                        return []
-                    data = await resp.json()
-                    for item in data.get("items", []):
-                        snippet = item.get("snippet", {})
-                        top_comment = snippet.get("topLevelComment", {}).get("snippet", {})
-                        comments.append({
-                            "author": top_comment.get("authorDisplayName", ""),
-                            "text": top_comment.get("textDisplay", ""),
-                            "like_count": top_comment.get("likeCount", 0),
-                            "published_at": top_comment.get("publishedAt", ""),
-                        })
-        except Exception:
-            pass
+            session = self._get_session()
+            # Get comment threads
+            url = "https://www.googleapis.com/youtube/v3/commentThreads"
+            params = {
+                "part": "snippet",
+                "videoId": video_id,
+                "maxResults": min(limit, 100),
+                "key": self.youtube_api_key,
+            }
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+                for item in data.get("items", []):
+                    snippet = item.get("snippet", {})
+                    top_comment = snippet.get("topLevelComment", {}).get("snippet", {})
+                    comments.append({
+                        "author": top_comment.get("authorDisplayName", ""),
+                        "text": top_comment.get("textDisplay", ""),
+                        "like_count": top_comment.get("likeCount", 0),
+                        "published_at": top_comment.get("publishedAt", ""),
+                    })
+        except Exception as exc:
+            logger.debug("YouTube comment fetch failed: %s", exc)
         return comments
 
     async def youtube_search(self, query: str, limit: int = 5) -> list[SearchDocument]:
         cache_key = (f"youtube:{query}", limit, "youtube", "general")
-        if cache_key in self._search_cache:
-            return list(self._search_cache[cache_key])
+        cached = self._cache_get(self._search_cache, cache_key)
+        if cached is not None:
+            return list(cached)
 
         if self.yt_dlp_command:
             payload = await self._run_text_command(
@@ -1939,7 +2008,7 @@ class ResearchToolkit:
                             )
                         )
                     if docs:
-                        self._search_cache[cache_key] = list(docs)
+                        self._cache_set(self._search_cache, cache_key, list(docs))
                         return docs
                 except json.JSONDecodeError:
                     pass
@@ -1948,33 +2017,31 @@ class ResearchToolkit:
         # Fallback to YouTube Data API if no results
         if not docs and self.youtube_api_key:
             try:
-                import aiohttp
-
-                async with aiohttp.ClientSession() as session:
-                    url = "https://www.googleapis.com/youtube/v3/search"
-                    params = {
-                        "part": "snippet",
-                        "q": query,
-                        "maxResults": min(limit, 10),
-                        "type": "video",
-                        "key": self.youtube_api_key,
-                    }
-                    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            for item in data.get("items", [])[:limit]:
-                                snippet = item.get("snippet", {})
-                                docs.append(
-                                    SearchDocument(
-                                        title=snippet.get("title", ""),
-                                        url=f'https://www.youtube.com/watch?v={item["id"]["videoId"]}',
-                                        snippet=snippet.get("description", "")[:200],
-                                        source="youtube",
-                                    )
+                session = self._get_session()
+                url = "https://www.googleapis.com/youtube/v3/search"
+                params = {
+                    "part": "snippet",
+                    "q": query,
+                    "maxResults": min(limit, 10),
+                    "type": "video",
+                    "key": self.youtube_api_key,
+                }
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for item in data.get("items", [])[:limit]:
+                            snippet = item.get("snippet", {})
+                            docs.append(
+                                SearchDocument(
+                                    title=snippet.get("title", ""),
+                                    url=f'https://www.youtube.com/watch?v={item["id"]["videoId"]}',
+                                    snippet=snippet.get("description", "")[:200],
+                                    source="youtube",
                                 )
-            except Exception:
-                pass
-        self._search_cache[cache_key] = list(docs)
+                            )
+            except Exception as exc:
+                logger.debug("YouTube search API failed: %s", exc)
+        self._cache_set(self._search_cache, cache_key, list(docs))
         return docs
 
     async def discover_success_signals(self) -> list[dict[str, Any]]:
@@ -4812,7 +4879,7 @@ class ResearchToolkit:
             finding_kind=finding_kind,
             budget_profile=budget_profile,
         )
-        cached_attempt = self._recurrence_attempt_cache.get(cache_key)
+        cached_attempt = self._cache_get(self._recurrence_attempt_cache, cache_key)
         if cached_attempt is not None:
             docs, meta = cached_attempt
             return list(docs), dict(meta)
@@ -5044,7 +5111,7 @@ class ResearchToolkit:
             "near_miss_enrichment_action": source_family_branch.get("near_miss_enrichment_action", ""),
             "sufficiency_priority_reason": source_family_branch.get("sufficiency_priority_reason", ""),
         }
-        self._recurrence_attempt_cache[cache_key] = (list(recurrence_docs), dict(result_meta))
+        self._cache_set(self._recurrence_attempt_cache, cache_key, (list(recurrence_docs), dict(result_meta)))
         return recurrence_docs, result_meta
 
     def _recurrence_site_plan(

@@ -62,7 +62,7 @@ class WebScraper:
         results = []
         url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(query)}"
         try:
-            resp = requests.get(url, timeout=self.request_timeout_general)
+            resp = await asyncio.to_thread(requests.get, url, timeout=self.request_timeout_general)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
             for result in soup.select(".result__snippet")[:limit]:
@@ -80,9 +80,27 @@ class WebScraper:
 
     async def fetch_content(self, url: str) -> dict[str, Any]:
         """Fetch content from a URL."""
+        # SSRF protection: validate URL scheme and reject private IPs
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https"):
+                return {"url": url, "error": f"Unsupported scheme: {parsed.scheme}"}
+            import ipaddress
+            import socket
+            hostname = parsed.hostname or ""
+            try:
+                resolved_ip = socket.getaddrinfo(hostname, None)[0][4][0]
+                ip = ipaddress.ip_address(resolved_ip)
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                    return {"url": url, "error": "Private/internal IP addresses are not allowed"}
+            except (socket.gaierror, ValueError):
+                pass  # Hostname may not resolve; let the request proceed and fail naturally
+        except Exception:
+            pass
         try:
             headers = {"User-Agent": self.user_agent}
-            resp = requests.get(url, headers=headers, timeout=self.request_timeout_general)
+            resp = await asyncio.to_thread(requests.get, url, headers=headers, timeout=self.request_timeout_general)
             resp.raise_for_status()
 
             content_type = resp.headers.get("Content-Type", "")
@@ -141,6 +159,10 @@ class YouTubeClient:
 
     async def get_transcript(self, video_id: str) -> Optional[str]:
         """Get YouTube video transcript."""
+        # Validate video ID format (YouTube IDs are exactly 11 chars, alphanumeric + - and _)
+        if not re.match(r"^[a-zA-Z0-9_-]{11}$", video_id):
+            logger.warning("Invalid YouTube video ID format: %s", video_id)
+            return None
         if not self.yt_dlp_bin:
             return None
         try:

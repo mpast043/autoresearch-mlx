@@ -185,7 +185,8 @@ class TestRetryWithBackoff:
         result = retry_with_backoff(mock_func, max_retries=3, base_delay=1.0)
         assert result == "success"
         assert mock_func.call_count == 2
-        mock_sleep.assert_called_once_with(1.0)
+        # Full jitter: random.uniform(0, ceiling) returns 0 when mocked, so sleep(0)
+        mock_sleep.assert_called_once_with(0)
 
     @patch("utils.retry.time.sleep")
     @patch("utils.retry.random.uniform", return_value=0)

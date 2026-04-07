@@ -96,8 +96,8 @@ def reddit_problem_subreddits(config: dict[str, Any] | None = None) -> list[str]
             if subs:
                 logger.info(f"Using governed subreddits: {subs}")
                 return subs
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to load governed subreddits: %s", exc)
 
     # Fall back to config.yaml
     reddit_config = config.get("discovery", {}).get("reddit", {})
@@ -129,8 +129,8 @@ def reddit_problem_keywords(config: dict[str, Any] | None = None) -> list[str]:
             if kw:
                 logger.info(f"Using governed keywords: {kw}")
                 return kw
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to load governed keywords: %s", exc)
 
     # Fall back to config.yaml
     reddit_config = config.get("discovery", {}).get("reddit", {})

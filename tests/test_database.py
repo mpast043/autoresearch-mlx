@@ -37,9 +37,15 @@ class TestDatabase(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
+        # WAL mode creates -wal and -shm files; clean them up before removing the directory
+        for ext in ("-wal", "-shm"):
+            wal_path = self.db_path + ext
+            if os.path.exists(wal_path):
+                os.remove(wal_path)
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
-        os.rmdir(self.temp_dir)
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_foreign_keys_pragma_enabled(self) -> None:
         conn = self.db._get_connection()

@@ -25,6 +25,12 @@ def _normalized(text: str) -> str:
 def _value(obj: Any, name: str, default: Any = "") -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
+    # Handle sqlite3.Row which supports key access but not attribute access
+    if hasattr(obj, "__getitem__"):
+        try:
+            return obj[name]
+        except (KeyError, TypeError):
+            pass
     return getattr(obj, name, default)
 
 

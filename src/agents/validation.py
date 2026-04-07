@@ -458,7 +458,7 @@ class ValidationAgent(BaseAgent):
         cluster_atoms = self.db.get_problem_atoms_by_cluster_key(anchor_atom.cluster_key)
         if not cluster_atoms:
             cluster_atoms = [anchor_atom]
-        signals = [self.db.get_raw_signal(atom.signal_id) for atom in cluster_atoms]
+        signals = self.db.get_raw_signals_by_ids([atom.signal_id for atom in cluster_atoms if atom.signal_id])
         resolved_signals = [signal for signal in signals if signal is not None]
         cluster_payload = build_cluster_summary(cluster_atoms, resolved_signals)
         cluster = OpportunityCluster(

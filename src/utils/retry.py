@@ -27,11 +27,9 @@ class PermanentError(Exception):
 
 
 def _calculate_delay(attempt: int, base_delay: float, max_delay: float) -> float:
-    """Calculate exponential backoff delay with jitter."""
-    return min(
-        base_delay * 2 ** (attempt - 1) + random.uniform(0, 1),
-        max_delay,
-    )
+    """Calculate exponential backoff delay with full jitter."""
+    ceiling = min(base_delay * 2 ** (attempt - 1), max_delay)
+    return random.uniform(0, ceiling)
 
 
 def retry_with_backoff(

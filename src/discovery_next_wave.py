@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -485,9 +486,6 @@ def save_next_wave_config(
     output_path.write_text(json.dumps(config, indent=2))
 
     return output_path
-
-
-import sqlite3
 
 
 def get_next_wave(

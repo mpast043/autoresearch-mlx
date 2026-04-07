@@ -17,6 +17,20 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
+# Global rate-limiting semaphore: caps concurrent outbound HTTP requests
+# from WordPress and Shopify review adapters. Default 6; override via
+# review_sources.set_api_concurrency(limit) before first await.
+_API_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(6)
+
+
+def set_api_concurrency(limit: int) -> None:
+    """Replace the module-level API semaphore with a new limit.
+
+    Must be called before the first concurrent request (i.e. at startup).
+    """
+    global _API_SEMAPHORE
+    _API_SEMAPHORE = asyncio.Semaphore(max(1, int(limit)))
+
 
 def _compact(text: str, limit: int = 2000) -> str:
     return " ".join((text or "").split())[:limit]
@@ -170,6 +184,19 @@ class WordPressPluginReviewAdapter:
         self.user_agent = user_agent or "Mozilla/5.0 (compatible; AutoResearcher/1.0)"
         self.rate_limit_cooldown_seconds = max(60, int(rate_limit_cooldown_seconds))
         self._rate_limited_until: Optional[datetime] = None
+        self._session: aiohttp.ClientSession | None = None
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=25)
+            headers = {"User-Agent": self.user_agent}
+            self._session = aiohttp.ClientSession(timeout=timeout, headers=headers)
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def fetch_reviews(
         self,
@@ -181,19 +208,17 @@ class WordPressPluginReviewAdapter:
         if not plugin_slugs:
             return []
         star_filters = star_filters or [1]
-        timeout = aiohttp.ClientTimeout(total=25)
-        headers = {"User-Agent": self.user_agent}
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            tasks = [
-                self._fetch_plugin_reviews(
-                    session,
-                    slug=slug,
-                    reviews_per_plugin=reviews_per_plugin,
-                    star_filters=star_filters,
-                )
-                for slug in plugin_slugs
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        session = self._get_session()
+        tasks = [
+            self._fetch_plugin_reviews(
+                session,
+                slug=slug,
+                reviews_per_plugin=reviews_per_plugin,
+                star_filters=star_filters,
+            )
+            for slug in plugin_slugs
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         reviews: list[WordPressPluginReview] = []
         for result in results:
             if isinstance(result, Exception):
@@ -348,10 +373,11 @@ class WordPressPluginReviewAdapter:
         }
 
     async def _fetch_html(self, session: aiohttp.ClientSession, url: str) -> str:
-        async with session.get(url) as response:
-            if response.status != 200:
-                return ""
-            return await response.text()
+        async with _API_SEMAPHORE:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    return ""
+                return await response.text()
 
 
 @dataclass
@@ -431,6 +457,19 @@ class ShopifyAppReviewAdapter:
         self.user_agent = user_agent or "Mozilla/5.0 (compatible; AutoResearcher/1.0)"
         self.rate_limit_cooldown_seconds = max(60, int(rate_limit_cooldown_seconds))
         self._rate_limited_until: Optional[datetime] = None
+        self._session: aiohttp.ClientSession | None = None
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            timeout = aiohttp.ClientTimeout(total=30)
+            headers = {"User-Agent": self.user_agent}
+            self._session = aiohttp.ClientSession(timeout=timeout, headers=headers)
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def fetch_reviews(
         self,
@@ -449,35 +488,33 @@ class ShopifyAppReviewAdapter:
             )
             return []
         rating_filters = rating_filters or [1]
-        timeout = aiohttp.ClientTimeout(total=30)
-        headers = {"User-Agent": self.user_agent}
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            handles = [handle.strip().strip("/") for handle in (app_handles or []) if handle.strip()]
-            if not handles and use_sitemap_discovery:
-                handles = await self._discover_app_handles_from_sitemap(session, max_apps=max_apps)
-            handles = handles[:max_apps]
-            if not handles:
-                return []
-            results: list[list[ShopifyAppReview] | Exception] = []
-            for handle in handles:
-                if self._shopify_rate_limit_active():
-                    logger.info(
-                        "shopify review fetch skipped reason=rate_limited handle=%s cooldown_until=%s",
-                        handle,
-                        self._rate_limited_until.isoformat() if self._rate_limited_until else "",
-                    )
-                    break
-                try:
-                    result = await self._fetch_app_reviews(
-                        session,
-                        app_handle=handle,
-                        reviews_per_app=reviews_per_app,
-                        rating_filters=rating_filters,
-                        sort_by=sort_by,
-                    )
-                except Exception as exc:
-                    result = exc
-                results.append(result)
+        session = self._get_session()
+        handles = [handle.strip().strip("/") for handle in (app_handles or []) if handle.strip()]
+        if not handles and use_sitemap_discovery:
+            handles = await self._discover_app_handles_from_sitemap(session, max_apps=max_apps)
+        handles = handles[:max_apps]
+        if not handles:
+            return []
+        results: list[list[ShopifyAppReview] | Exception] = []
+        for handle in handles:
+            if self._shopify_rate_limit_active():
+                logger.info(
+                    "shopify review fetch skipped reason=rate_limited handle=%s cooldown_until=%s",
+                    handle,
+                    self._rate_limited_until.isoformat() if self._rate_limited_until else "",
+                )
+                break
+            try:
+                result = await self._fetch_app_reviews(
+                    session,
+                    app_handle=handle,
+                    reviews_per_app=reviews_per_app,
+                    rating_filters=rating_filters,
+                    sort_by=sort_by,
+                )
+            except Exception as exc:
+                result = exc
+            results.append(result)
         reviews: list[ShopifyAppReview] = []
         for handle, result in zip(handles, results):
             if isinstance(result, Exception):
@@ -504,7 +541,8 @@ class ShopifyAppReviewAdapter:
         if not xml:
             return []
         try:
-            root = ET.fromstring(xml)
+            import defusedxml.ElementTree as DET
+            root = DET.fromstring(xml)
         except ET.ParseError as exc:
             logger.warning("shopify sitemap parse failed: %s", exc)
             return []
@@ -708,21 +746,22 @@ class ShopifyAppReviewAdapter:
         )
 
     async def _fetch_html(self, session: aiohttp.ClientSession, url: str) -> str:
-        try:
-            async with session.get(url) as response:
-                if response.status == 429:
-                    self._mark_shopify_rate_limited()
-                    logger.info(
-                        "shopify fetch skipped url=%s status=%s cooldown_until=%s",
-                        url,
-                        response.status,
-                        self._rate_limited_until.isoformat() if self._rate_limited_until else "",
-                    )
-                    return ""
-                if response.status != 200:
-                    logger.info("shopify fetch skipped url=%s status=%s", url, response.status)
-                    return ""
-                return await response.text()
-        except Exception as exc:  # pragma: no cover - network variance
-            logger.warning("shopify fetch failed url=%s error=%s", url, exc)
-            return ""
+        async with _API_SEMAPHORE:
+            try:
+                async with session.get(url) as response:
+                    if response.status == 429:
+                        self._mark_shopify_rate_limited()
+                        logger.info(
+                            "shopify fetch skipped url=%s status=%s cooldown_until=%s",
+                            url,
+                            response.status,
+                            self._rate_limited_until.isoformat() if self._rate_limited_until else "",
+                        )
+                        return ""
+                    if response.status != 200:
+                        logger.info("shopify fetch skipped url=%s status=%s", url, response.status)
+                        return ""
+                    return await response.text()
+            except Exception as exc:  # pragma: no cover - network variance
+                logger.warning("shopify fetch failed url=%s error=%s", url, exc)
+                return ""

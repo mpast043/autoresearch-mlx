@@ -256,6 +256,9 @@ class DiscoveryAgent(BaseAgent):
         self.bypass_cache = bypass_cache
         # Term lifecycle manager for forward+reverse search space control
         self.term_lifecycle = TermLifecycleManager(db)
+        # Rate-limiting semaphore: caps concurrent outbound HTTP calls
+        _sem_limit = int(self.config.get("discovery", {}).get("api_concurrency", 6))
+        self._api_semaphore = asyncio.Semaphore(max(1, _sem_limit))
 
     def _screened_out_retention_limit(self) -> int:
         retention = self.config.get("discovery", {}).get("screened_out_retention", {}) or {}
@@ -293,6 +296,8 @@ class DiscoveryAgent(BaseAgent):
                     break
 
     async def _discover_once(self) -> list[int]:
+        # Clear seen hashes from previous cycles to allow dedup within a single cycle only
+        self._seen_hashes.clear()
         # Run expansion to add new keywords/subreddits based on previous wave's feedback
         try:
             expansion_result = run_expansion(self.db, self.base_config)
@@ -316,8 +321,13 @@ class DiscoveryAgent(BaseAgent):
                 f"source_selection active={','.join(planned_sources)} skipped={','.join(skipped_sources)}"
             )
         prime_task = asyncio.create_task(self._prime_reddit_relay())
+
+        async def _gated_check(source: str) -> list[dict[str, Any]]:
+            async with self._api_semaphore:
+                return await self._check_source(source)
+
         grouped_results = await asyncio.gather(
-            *(self._check_source(source) for source in planned_sources),
+            *(_gated_check(source) for source in planned_sources),
             return_exceptions=True,
         )
         finding_ids: list[int] = []

@@ -91,6 +91,9 @@ def normalize_source_class(raw_source_class: str | None, finding_kind: str | Non
         return source_class
     if (finding_kind or "").strip() == "success_signal":
         return "success_signal"
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("Unknown source class '%s' normalized to 'low_signal_summary'; finding_kind=%s", raw_source_class, finding_kind)
     return "low_signal_summary"
 
 

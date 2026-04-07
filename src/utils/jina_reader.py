@@ -59,6 +59,31 @@ async def read_url(url: str, timeout: float = 30.0) -> JinaReadResult:
             success=False,
             error=f"Invalid URL: {url}",
         )
+    if parsed.scheme not in ("http", "https"):
+        return JinaReadResult(
+            url=url,
+            title="",
+            markdown="",
+            success=False,
+            error=f"Unsupported scheme: {parsed.scheme}",
+        )
+    # SSRF protection: reject private/internal IPs
+    try:
+        import ipaddress
+        import socket
+        hostname = parsed.hostname or ""
+        resolved_ip = socket.getaddrinfo(hostname, None)[0][4][0]
+        ip = ipaddress.ip_address(resolved_ip)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return JinaReadResult(
+                url=url,
+                title="",
+                markdown="",
+                success=False,
+                error="Private/internal IP addresses are not allowed",
+            )
+    except (socket.gaierror, ValueError):
+        pass  # Hostname may not resolve; let the request proceed and fail naturally
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

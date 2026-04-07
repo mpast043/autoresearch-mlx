@@ -58,7 +58,7 @@ def resolve_project_path(path: str | Path | None, *, default: str | Path | None 
     resolved = Path(target)
     if not resolved.is_absolute():
         resolved = RUNTIME_ROOT / resolved
-    return resolved
+    return resolved.resolve()
 
 
 def build_runtime_paths(config: dict[str, Any]) -> dict[str, Path]:

@@ -11,6 +11,14 @@ from urllib.parse import urlparse
 
 from src.database import OpportunityCluster, ProblemAtom, RawSignal, ValidationExperiment
 from src.research_tools import compact_text, infer_recurrence_key
+from src.utils.opportunity_helpers import (
+    _clean_fragment,
+    _normalized,
+    _pick_first_sentence,
+    _value,
+    clamp,
+    json_dumps,
+)
 
 # =============================================================================
 # SCORING VERSION CONTROL
@@ -409,47 +417,6 @@ INTERNAL_IDENTIFIER_PATTERNS = [
     "ticket only",
     "template id",
 ]
-
-
-def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
-    return max(lower, min(upper, float(value)))
-
-
-def _normalized(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip()).lower()
-
-
-def _value(obj: Any, name: str, default: Any = "") -> Any:
-    if isinstance(obj, dict):
-        return obj.get(name, default)
-    # Handle sqlite3.Row which supports key access but not attribute access
-    if hasattr(obj, "__getitem__"):
-        try:
-            return obj[name]  # sqlite3.Row supports key access
-        except (KeyError, TypeError):
-            pass
-    return getattr(obj, name, default)
-
-
-def json_dumps(value: Any) -> str:
-    return json.dumps(value)
-
-
-def _pick_first_sentence(text: str, hints: list[str]) -> str:
-    text = compact_text(text or "", 1600)
-    if not text:
-        return ""
-    parts = [part.strip(" .:-") for part in re.split(r"(?<=[.!?])\s+|\n+", text) if part.strip()]
-    for part in parts:
-        lowered = _normalized(part)
-        if any(hint in lowered for hint in hints):
-            return compact_text(part, 220)
-    return compact_text(parts[0], 220) if parts else ""
-
-
-def _clean_fragment(text: str) -> str:
-    cleaned = compact_text(re.sub(r"\s+", " ", (text or "").strip(" .:-")), 140)
-    return cleaned.rstrip(".")
 
 
 def _is_generic_phrase(text: str) -> bool:
@@ -984,9 +951,11 @@ def get_patterns_for_discovery(db_path: str, min_atoms: int = 2) -> list[dict[st
     ]
 
     for tools, pattern_name in tool_pairs:
-        # Build query for multiple terms
-        like_clause = " AND ".join([f"LOWER(body_excerpt) LIKE '%{t}%'" for t in tools])
-        cursor = conn.execute(f"SELECT COUNT(*) as cnt FROM raw_signals WHERE {like_clause}")
+        # Build parameterized query for multiple terms
+        like_clauses = [f"LOWER(body_excerpt) LIKE ?" for _ in tools]
+        params = [f"%{t}%" for t in tools]
+        where_clause = " AND ".join(like_clauses)
+        cursor = conn.execute(f"SELECT COUNT(*) as cnt FROM raw_signals WHERE {where_clause}", params)
         count = cursor.fetchone()["cnt"] if cursor else 0
 
         if count >= min_atoms:

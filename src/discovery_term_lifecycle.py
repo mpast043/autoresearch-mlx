@@ -476,9 +476,13 @@ def compute_next_state(
             return ("paused", "pausing due to poor performance")
         return ("weak", "still weak but not yet exhausted")
 
-    # From paused state - can be reactivated manually or stays paused
+    # From paused state - auto-reactivate after cooldown if metrics suggest viability
     if current_state == "paused":
-        return ("paused", "paused - requires manual reactivation")
+        cooldown_waves = config.get("lifecycle", {}).get("paused_cooldown_waves", 3)
+        waves_since_pause = metrics.get("waves_since_state_change", 0)
+        if waves_since_pause >= cooldown_waves:
+            return ("active", "auto-reactivated after cooldown period")
+        return ("paused", f"paused - {cooldown_waves - waves_since_pause} waves until auto-reactivation")
 
     # From exhausted state - stays exhausted unless manually reactivated
     if current_state == "exhausted":

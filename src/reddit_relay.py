@@ -390,12 +390,17 @@ async def auth_middleware(request: web.Request, handler):
 
     token = request.app[AUTH_TOKEN_KEY]
     allow_no_auth = request.app[ALLOW_NO_AUTH_KEY]
-    if not token and allow_no_auth:
-        return await handler(request)
+
+    if not token:
+        if allow_no_auth:
+            logger.warning("Relay running without auth (allow_no_auth=True)")
+            return await handler(request)
+        # No token configured and allow_no_auth is False — reject all requests
+        return _json_error(401, "auth_failed", "no token configured and allow_no_auth is false")
 
     authorization = request.headers.get("Authorization", "")
-    expected = f"Bearer {token}" if token else ""
-    if not token or not hmac.compare_digest(authorization, expected):
+    expected = f"Bearer {token}"
+    if not hmac.compare_digest(authorization, expected):
         return _json_error(401, "auth_failed", "missing or invalid bearer token")
     return await handler(request)
 
@@ -456,7 +461,6 @@ async def health(request: web.Request) -> web.Response:
             "service": "autoresearch-reddit-relay",
             "auth_enabled": bool(request.app[AUTH_TOKEN_KEY]),
             "allow_no_auth": request.app[ALLOW_NO_AUTH_KEY],
-            "db_path": request.app[STORE_KEY].db_path,
         }
     )
 

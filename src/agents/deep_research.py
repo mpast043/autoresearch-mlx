@@ -116,9 +116,15 @@ class DeepResearchAgent(BaseAgent):
 
     # ── BaseAgent abstract method ─────────────────────────────────────────────
 
-    async def process(self, message):
-        '''No-op: DeepResearchAgent is invoked programmatically, not via messages.'''
-        pass
+    async def process(self, message) -> dict[str, Any]:
+        """Process incoming messages — dispatch to deep research if requested."""
+        payload = message.payload if hasattr(message, 'payload') else {}
+        vertical = payload.get("vertical", self.vertical)
+        if vertical != self.vertical:
+            self.vertical = vertical
+            self.keywords = VERTICAL_KEYWORDS.get(vertical, VERTICAL_KEYWORDS["devtools"])
+        result = await self.run_deep_research()
+        return {"status": "completed", "vertical": vertical, "result": result}
 
     # ── Public entry point ──────────────────────────────────────────────────
 
@@ -389,10 +395,9 @@ class DeepResearchAgent(BaseAgent):
     def _upsert_finding(self, sig: PainSignal, run_id: str, content_hash: str) -> Optional[int]:
         """Create a finding from a pain signal. Returns finding_id."""
         # Check if URL already has a finding
-        existing_findings = self.db.get_findings(limit=500)
-        for f in existing_findings:
-            if f.source_url == sig.url:
-                return int(f.id) if f.id else None
+        existing = self.db.get_finding_by_url(sig.url)
+        if existing is not None:
+            return int(existing.id) if existing.id else None
 
         finding = Finding(
             source="deep_research",

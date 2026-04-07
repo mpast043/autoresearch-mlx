@@ -71,7 +71,8 @@ VERTICAL_NICHES = {
 
 
 @dataclass
-class RawSignal:
+class UnseededRawSignal:
+    """Lightweight signal container for unseeded discovery (distinct from src.database.RawSignal)."""
     title: str
     body: str
     url: str
@@ -91,7 +92,7 @@ class UnseededResult:
     errors: list[str]
 
 
-async def _search_reddit(config: dict, vertical: str, niche: dict) -> list[RawSignal]:
+async def _search_reddit(config: dict, vertical: str, niche: dict) -> list[UnseededRawSignal]:
     """Search Reddit for pain signals in vertical subreddits."""
     from src.research_tools import RedditClient
     signals = []
@@ -103,7 +104,7 @@ async def _search_reddit(config: dict, vertical: str, niche: dict) -> list[RawSi
                 query = f"{subreddit.replace('r/', '')} {kw}"
                 results = await client.search_subreddit(query, limit=5)
                 for r in results:
-                    signals.append(RawSignal(
+                    signals.append(UnseededRawSignal(
                         title=r.get("title", ""),
                         body=r.get("body", ""),
                         url=r.get("url", ""),
@@ -118,7 +119,7 @@ async def _search_reddit(config: dict, vertical: str, niche: dict) -> list[RawSi
     return signals
 
 
-async def _search_github(config: dict, vertical: str, niche: dict) -> list[RawSignal]:
+async def _search_github(config: dict, vertical: str, niche: dict) -> list[UnseededRawSignal]:
     """Search GitHub issues for pain signals."""
     signals = []
     for kw in niche["keywords"][:5]:
@@ -133,7 +134,7 @@ async def _search_github(config: dict, vertical: str, niche: dict) -> list[RawSi
             )
             if result.returncode == 0:
                 for issue in json.loads(result.stdout):
-                    signals.append(RawSignal(
+                    signals.append(UnseededRawSignal(
                         title=issue["title"],
                         body=issue.get("body", "")[:500],
                         url=issue["url"],
@@ -148,7 +149,7 @@ async def _search_github(config: dict, vertical: str, niche: dict) -> list[RawSi
     return signals
 
 
-async def _search_web(config: dict, vertical: str, niche: dict) -> list[RawSignal]:
+async def _search_web(config: dict, vertical: str, niche: dict) -> list[UnseededRawSignal]:
     """Search web for pain signals via Tavily or ddgs."""
     signals = []
     for kw in niche["keywords"][:5]:
@@ -167,7 +168,7 @@ async def _search_web(config: dict, vertical: str, niche: dict) -> list[RawSigna
                     )
                     r.raise_for_status()
                     for item in r.json().get("results", []):
-                        signals.append(RawSignal(
+                        signals.append(UnseededRawSignal(
                             title=item.get("title", ""),
                             body=item.get("content", ""),
                             url=item.get("url", ""),
@@ -184,7 +185,7 @@ async def _search_web(config: dict, vertical: str, niche: dict) -> list[RawSigna
             try:
                 results = await search_web(query, config, limit=5)
                 for item in results:
-                    signals.append(RawSignal(
+                    signals.append(UnseededRawSignal(
                         title=item.get("title", ""),
                         body=item.get("snippet", ""),
                         url=item.get("url", ""),
@@ -198,7 +199,7 @@ async def _search_web(config: dict, vertical: str, niche: dict) -> list[RawSigna
     return signals
 
 
-def _score_raw_signal(signal: RawSignal, niche: dict) -> float:
+def _score_raw_signal(signal: UnseededRawSignal, niche: dict) -> float:
     """
     Quick score for a raw signal to decide if it merits full validation.
     Returns 0.0-1.0.

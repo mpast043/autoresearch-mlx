@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -51,6 +52,8 @@ class RedditTransport:
         self.bridge_seed_on_miss = bool(bridge_config.get("seed_on_miss", True))
         self.search_cache: dict[tuple[str, str, int, str, str], list[SearchDocument]] = {}
         self.thread_cache: dict[str, dict[str, Any]] = {}
+        self._cache_timestamps: dict[str, float] = {}
+        self._cache_ttl: float = 1800.0  # 30 minutes
         self.bridge_seed_attempted_pairs: set[tuple[str, str]] = set()
         self.metrics = {
             "reddit_mode": self.reddit_mode,
@@ -65,6 +68,47 @@ class RedditTransport:
             "reddit_validation_seed_uncovered_after": 0,
         }
         self.validation_seeded_pairs: set[tuple[str, str]] = set()
+
+    # ------------------------------------------------------------------
+    # TTL-aware cache helpers
+    # ------------------------------------------------------------------
+
+    def _cache_key_str(self, key: Any) -> str:
+        """Return a string representation usable as a timestamp-dict key."""
+        if isinstance(key, str):
+            return key
+        return str(key)
+
+    def _evict_expired_caches(self) -> None:
+        """Remove entries from both caches whose TTL has expired."""
+        now = time.time()
+        expired: list[str] = []
+        for k, ts in self._cache_timestamps.items():
+            if now - ts > self._cache_ttl:
+                expired.append(k)
+        for k in expired:
+            self._cache_timestamps.pop(k, None)
+            self.search_cache.pop(k, None)  # type: ignore[arg-type]
+            self.thread_cache.pop(k, None)
+
+    def _cache_get(self, cache: dict, key: Any) -> Any:
+        """Get a value from *cache*, returning ``None`` if expired."""
+        self._evict_expired_caches()
+        key_str = self._cache_key_str(key)
+        if key_str not in self._cache_timestamps:
+            cache.pop(key, None)
+            return None
+        if time.time() - self._cache_timestamps[key_str] > self._cache_ttl:
+            self._cache_timestamps.pop(key_str, None)
+            cache.pop(key, None)
+            return None
+        return cache.get(key)
+
+    def _cache_set(self, cache: dict, key: Any, value: Any) -> None:
+        """Store *value* in *cache* under *key* and record the timestamp."""
+        key_str = self._cache_key_str(key)
+        self._cache_timestamps[key_str] = time.time()
+        cache[key] = value
 
     def _reddit_search_time_filter(self) -> str:
         """Reddit JSON search ``t`` param: hour|day|week|month|year|all."""
@@ -204,8 +248,9 @@ class RedditTransport:
     ) -> list[SearchDocument]:
         time_filter = self._reddit_search_time_filter()
         cache_key = (subreddit, query, limit, sort, time_filter)
-        if cache_key in self.search_cache:
-            return list(self.search_cache[cache_key])
+        cached = self._cache_get(self.search_cache, cache_key)
+        if cached is not None:
+            return list(cached)
 
         if self.reddit_mode in {"bridge_with_fallback", "bridge_only"}:
             if not self.reddit_bridge.enabled:
@@ -217,7 +262,7 @@ class RedditTransport:
                     self.reddit_mode,
                 )
                 if self.reddit_mode == "bridge_only":
-                    self.search_cache[cache_key] = []
+                    self._cache_set(self.search_cache, cache_key, [])
                     return []
                 # bridge_with_fallback should continue to legacy/public paths when the bridge
                 # is not configured in the current environment (e.g. Codespaces).
@@ -247,7 +292,7 @@ class RedditTransport:
                     len(docs),
                     self.reddit_mode,
                 )
-                self.search_cache[cache_key] = list(docs)
+                self._cache_set(self.search_cache, cache_key, list(docs))
                 return docs
             except BridgeError as exc:
                 self.metrics["reddit_bridge_misses"] += 1
@@ -258,7 +303,7 @@ class RedditTransport:
                         subreddit,
                         query,
                     )
-                    self.search_cache[cache_key] = []
+                    self._cache_set(self.search_cache, cache_key, [])
                     return []
                 seeded = False
                 if exc.code == "no_cached_result":
@@ -289,7 +334,7 @@ class RedditTransport:
                                 limit,
                                 len(docs),
                             )
-                            self.search_cache[cache_key] = list(docs)
+                            self._cache_set(self.search_cache, cache_key, list(docs))
                             return docs
                         except BridgeError as retry_exc:
                             exc = retry_exc
@@ -337,7 +382,7 @@ class RedditTransport:
                     for post in payload.get("data", {}).get("posts", [])
                     if post.get("permalink")
                 ]
-                self.search_cache[cache_key] = list(docs)
+                self._cache_set(self.search_cache, cache_key, list(docs))
                 return docs
 
         def _request() -> list[SearchDocument]:
@@ -378,21 +423,22 @@ class RedditTransport:
                 limit,
                 len(docs),
             )
-            self.search_cache[cache_key] = list(docs)
+            self._cache_set(self.search_cache, cache_key, list(docs))
             return docs
         except Exception:
             return []
 
     async def thread_context(self, url: str) -> dict[str, Any]:
-        if url in self.thread_cache:
-            return dict(self.thread_cache[url])
+        cached = self._cache_get(self.thread_cache, url)
+        if cached is not None:
+            return dict(cached)
 
         if self.reddit_mode in {"bridge_with_fallback", "bridge_only"}:
             if not self.reddit_bridge.enabled:
                 self.metrics["reddit_bridge_misses"] += 1
                 self._logger.info("reddit_thread_context bridge unavailable url=%s mode=%s", url, self.reddit_mode)
                 if self.reddit_mode == "bridge_only":
-                    self.thread_cache[url] = {}
+                    self._cache_set(self.thread_cache, url, {})
                     return {}
                 # bridge_with_fallback should continue to legacy/public paths when the bridge
                 # is not configured in the current environment (e.g. Codespaces).
@@ -427,7 +473,7 @@ class RedditTransport:
                     "comment_metadata": comment_metadata,
                 }
                 self.metrics["reddit_bridge_hits"] += 1
-                self.thread_cache[url] = result
+                self._cache_set(self.thread_cache, url, result)
                 return result
             except BridgeError as exc:
                 self.metrics["reddit_bridge_misses"] += 1
@@ -437,7 +483,7 @@ class RedditTransport:
                         exc.code,
                         url,
                     )
-                    self.thread_cache[url] = {}
+                    self._cache_set(self.thread_cache, url, {})
                     return {}
                 self._logger.info("reddit_thread_context bridge failure code=%s url=%s (%s)", exc.code, url, exc.message)
                 self.metrics["reddit_fallback_queries"] += 1
@@ -488,7 +534,7 @@ class RedditTransport:
                     "comments": comments,
                     "comment_metadata": comment_metadata,
                 }
-                self.thread_cache[url] = result
+                self._cache_set(self.thread_cache, url, result)
                 self._logger.info(
                     "reddit_thread_context using fallback path=readonly_script url=%s comments=%s",
                     url,
@@ -538,7 +584,7 @@ class RedditTransport:
 
         try:
             payload = await asyncio.to_thread(_request)
-            self.thread_cache[url] = payload
+            self._cache_set(self.thread_cache, url, payload)
             self._logger.info(
                 "reddit_thread_context using fallback path=public_json url=%s comments=%s",
                 url,

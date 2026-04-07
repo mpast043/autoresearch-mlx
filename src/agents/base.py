@@ -52,6 +52,14 @@ class BaseAgent(ABC):
             except asyncio.CancelledError:
                 pass
 
+    async def reset(self) -> None:
+        """Reset agent from ERROR state back to IDLE, clearing error count."""
+        if self.status != AgentStatus.ERROR:
+            return
+        self._error_count = 0
+        self.status = AgentStatus.IDLE
+        self._pause_event.set()
+
     async def pause(self) -> None:
         if self.status != AgentStatus.RUNNING:
             return
@@ -85,6 +93,8 @@ class BaseAgent(ABC):
             except asyncio.CancelledError:
                 break
             except Exception:
+                import logging
+                logging.getLogger(__name__).exception("Agent %s error in run loop", self.name)
                 self._error_count += 1
                 if self._error_count >= self._max_errors:
                     self.status = AgentStatus.ERROR

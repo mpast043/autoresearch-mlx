@@ -96,8 +96,10 @@ class MessageBus:
     async def send(self, message: Message) -> None:
         """Send a message to its recipient's queue with priority."""
         queue = await self._get_queue(message.to_agent)
-        self._counter += 1
-        await queue.put((message.priority, self._counter, message))
+        async with self._lock:
+            self._counter += 1
+            counter = self._counter
+        await queue.put((message.priority, counter, message))
 
     async def put(self, message: Message) -> None:
         """Alias for send() for backward compatibility."""
