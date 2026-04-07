@@ -213,8 +213,10 @@ def generate_next_wave(
     if locked_config is None:
         locked_config = load_locked_terms()
 
-    locked_keywords = set(locked_config.get('keywords', LOCKED_KEYWORDS))
-    locked_subreddits = set(locked_config.get('subreddits', LOCKED_SUBREDDITS))
+    locked_keywords_list = list(locked_config.get('keywords', LOCKED_KEYWORDS))
+    locked_subreddits_list = list(locked_config.get('subreddits', LOCKED_SUBREDDITS))
+    locked_keywords = set(locked_keywords_list)
+    locked_subreddits = set(locked_subreddits_list)
 
     conn = db._get_connection()
     conn.row_factory = sqlite3.Row
@@ -247,49 +249,80 @@ def generate_next_wave(
     keyword_scores.sort(key=lambda x: x['hybrid_score'], reverse=True)
     sub_scores.sort(key=lambda x: x['hybrid_score'], reverse=True)
 
+    def _placeholder_score(term_value: str, term_type: str) -> dict[str, Any]:
+        return {
+            'term_value': term_value,
+            'term_type': term_type,
+            'state': 'locked_default',
+            'hybrid_score': 0.0,
+            'quality_component': 0.0,
+            'output_component': 0.0,
+            'wedge_quality': 0.0,
+            'specificity': 0.0,
+            'consequence': 0.0,
+            'platform_native': 0.0,
+            'plugin_fit': 0.0,
+            'vague_bucket': 0,
+            'abstraction_collapse': 0,
+            'findings_emitted': 0,
+            'validations': 0,
+            'prototype_candidates': 0,
+            'build_briefs': 0,
+            'screened_out': 0,
+        }
+
     # === SELECT KEYWORDS ===
     selected_keywords = []
     keyword_retained = []
     keyword_replaced = []
     keyword_rejected = []
+    keyword_scores_by_term = {score['term_value']: score for score in keyword_scores}
+
+    if use_locked_as_seed:
+        for term in locked_keywords_list[:max_keywords]:
+            seeded = dict(keyword_scores_by_term.get(term) or _placeholder_score(term, 'keyword'))
+            seeded['selection_reason'] = 'locked_default'
+            seeded['retained'] = True
+            selected_keywords.append(seeded)
+            keyword_retained.append(term)
 
     for score in keyword_scores:
         term = score['term_value']
+        if term in [s['term_value'] for s in selected_keywords]:
+            continue
 
-        if term in locked_keywords:
-            # Locked default term - always include
+        if len(selected_keywords) < max_keywords:
+            # Challenger term
             selected_keywords.append({
                 **score,
-                'selection_reason': 'locked_default',
-                'retained': True
+                'selection_reason': 'selected' if not use_locked_as_seed else 'fallback',
+                'retained': False
             })
-            keyword_retained.append(term)
-        elif len(selected_keywords) < max_keywords:
-            # Challenger term
-            if allow_replacement:
-                # Check margin against retained locked terms
-                beats_locked = False
-                for sel in selected_keywords:
-                    if sel.get('retained'):
-                        if score['hybrid_score'] >= sel['hybrid_score'] + challenger_margin:
-                            beats_locked = True
-                            break
+        elif allow_replacement:
+            retained_locked = [
+                (index, selected)
+                for index, selected in enumerate(selected_keywords)
+                if selected.get('retained')
+            ]
+            if not retained_locked:
+                keyword_rejected.append({'term': term, 'reason': 'budget_filled', 'score': score['hybrid_score']})
+                continue
 
-                if beats_locked or len(selected_keywords) < len(locked_keywords):
-                    selected_keywords.append({
-                        **score,
-                        'selection_reason': 'challenger_outperformed' if beats_locked else 'fallback',
-                        'retained': False
-                    })
-                    keyword_replaced.append(term)
-                else:
-                    keyword_rejected.append({'term': term, 'reason': 'insufficient_margin', 'score': score['hybrid_score']})
-            else:
-                selected_keywords.append({
+            weakest_index, weakest_locked = min(
+                retained_locked,
+                key=lambda item: item[1].get('hybrid_score', 0.0),
+            )
+            if score['hybrid_score'] >= weakest_locked.get('hybrid_score', 0.0) + challenger_margin:
+                selected_keywords[weakest_index] = {
                     **score,
-                    'selection_reason': 'selected',
-                    'retained': False
-                })
+                    'selection_reason': 'challenger_outperformed',
+                    'retained': False,
+                }
+                keyword_replaced.append(term)
+            else:
+                keyword_rejected.append({'term': term, 'reason': 'insufficient_margin', 'score': score['hybrid_score']})
+        else:
+            keyword_rejected.append({'term': term, 'reason': 'budget_filled', 'score': score['hybrid_score']})
 
     # Fill remaining slots if needed
     for score in keyword_scores:
@@ -309,41 +342,52 @@ def generate_next_wave(
     sub_retained = []
     sub_replaced = []
     sub_rejected = []
+    sub_scores_by_term = {score['term_value']: score for score in sub_scores}
+
+    if use_locked_as_seed:
+        for term in locked_subreddits_list[:max_subreddits]:
+            seeded = dict(sub_scores_by_term.get(term) or _placeholder_score(term, 'subreddit'))
+            seeded['selection_reason'] = 'locked_default'
+            seeded['retained'] = True
+            selected_subs.append(seeded)
+            sub_retained.append(term)
 
     for score in sub_scores:
         term = score['term_value']
+        if term in [s['term_value'] for s in selected_subs]:
+            continue
 
-        if term in locked_subreddits:
+        if len(selected_subs) < max_subreddits:
             selected_subs.append({
                 **score,
-                'selection_reason': 'locked_default',
-                'retained': True
+                'selection_reason': 'selected' if not use_locked_as_seed else 'fallback',
+                'retained': False
             })
-            sub_retained.append(term)
-        elif len(selected_subs) < max_subreddits:
-            if allow_replacement:
-                beats_locked = False
-                for sel in selected_subs:
-                    if sel.get('retained'):
-                        if score['hybrid_score'] >= sel['hybrid_score'] + challenger_margin:
-                            beats_locked = True
-                            break
+        elif allow_replacement:
+            retained_locked = [
+                (index, selected)
+                for index, selected in enumerate(selected_subs)
+                if selected.get('retained')
+            ]
+            if not retained_locked:
+                sub_rejected.append({'term': term, 'reason': 'budget_filled', 'score': score['hybrid_score']})
+                continue
 
-                if beats_locked or len(selected_subs) < len(locked_subreddits):
-                    selected_subs.append({
-                        **score,
-                        'selection_reason': 'challenger_outperformed' if beats_locked else 'fallback',
-                        'retained': False
-                    })
-                    sub_replaced.append(term)
-                else:
-                    sub_rejected.append({'term': term, 'reason': 'insufficient_margin', 'score': score['hybrid_score']})
-            else:
-                selected_subs.append({
+            weakest_index, weakest_locked = min(
+                retained_locked,
+                key=lambda item: item[1].get('hybrid_score', 0.0),
+            )
+            if score['hybrid_score'] >= weakest_locked.get('hybrid_score', 0.0) + challenger_margin:
+                selected_subs[weakest_index] = {
                     **score,
-                    'selection_reason': 'selected',
+                    'selection_reason': 'challenger_outperformed',
                     'retained': False
-                })
+                }
+                sub_replaced.append(term)
+            else:
+                sub_rejected.append({'term': term, 'reason': 'insufficient_margin', 'score': score['hybrid_score']})
+        else:
+            sub_rejected.append({'term': term, 'reason': 'budget_filled', 'score': score['hybrid_score']})
 
     # Fill remaining slots
     for score in sub_scores:

@@ -508,25 +508,49 @@ def generate_builder_outputs(db, run_id: str | None = None) -> list[BuilderCard]
 
 def _get_opportunity_evidence(db, opportunity_id: int) -> list[dict[str, Any]]:
     """Get supporting evidence for an opportunity."""
+    opportunity = db.get_opportunity(opportunity_id)
+    if not opportunity:
+        return []
 
-    evidence = []
+    conn = db._get_connection()
+    member_columns = {row["name"] for row in conn.execute("PRAGMA table_info(cluster_members)").fetchall()}
+    atom_column = "problem_atom_id" if "problem_atom_id" in member_columns else "atom_id"
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT f.source, f.outcome_summary, f.source_url, f.entrepreneur
+        FROM cluster_members cm
+        JOIN problem_atoms pa ON pa.id = cm.{atom_column}
+        JOIN findings f ON f.id = pa.finding_id
+        WHERE cm.cluster_id = ?
+        ORDER BY pa.id ASC
+        """,
+        (opportunity.cluster_id,),
+    ).fetchall()
 
-    # Get findings from this cluster
-    atoms = db.get_problem_atoms(limit=100)
+    if not rows:
+        cluster = db.get_cluster(opportunity.cluster_id)
+        cluster_key = cluster.cluster_key if cluster else ""
+        if cluster_key:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT f.source, f.outcome_summary, f.source_url, f.entrepreneur
+                FROM problem_atoms pa
+                JOIN findings f ON f.id = pa.finding_id
+                WHERE pa.cluster_key = ?
+                ORDER BY pa.id ASC
+                """,
+                (cluster_key,),
+            ).fetchall()
 
-    for atom in atoms:
-        # Get associated finding
-        if atom.finding_id:
-            finding = db.get_finding(atom.finding_id)
-            if finding:
-                evidence.append({
-                    "source": finding.source,
-                    "outcome_summary": finding.outcome_summary,
-                    "source_url": finding.source_url,
-                    "entrepreneur": finding.entrepreneur,
-                })
-
-    return evidence
+    return [
+        {
+            "source": row["source"],
+            "outcome_summary": row["outcome_summary"],
+            "source_url": row["source_url"],
+            "entrepreneur": row["entrepreneur"],
+        }
+        for row in rows
+    ]
 
 
 def save_builder_cards(cards: list[BuilderCard], output_dir: Path) -> None:

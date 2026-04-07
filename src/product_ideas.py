@@ -431,6 +431,76 @@ def _get_row_value(row: sqlite3.Row, key: str, default: Any = None) -> Any:
         return default
 
 
+def _build_wedge_query(db: Database) -> str:
+    """Build a wedge query that matches the live SQLite storage model."""
+    conn = db._get_connection()
+    atom_columns = {row["name"] for row in conn.execute("PRAGMA table_info(problem_atoms)").fetchall()}
+    cluster_columns = {row["name"] for row in conn.execute("PRAGMA table_info(opportunity_clusters)").fetchall()}
+
+    atom_cluster_expr = "pa.cluster_key" if "cluster_key" in atom_columns else "json_extract(pa.metadata_json, '$.cluster_key')"
+    cluster_key_expr = (
+        "oc.cluster_key" if "cluster_key" in cluster_columns else "json_extract(oc.metadata_json, '$.cluster_key')"
+    )
+    atom_segment_expr = "pa.segment" if "segment" in atom_columns else "json_extract(pa.metadata_json, '$.segment')"
+    cluster_segment_expr = "oc.segment" if "segment" in cluster_columns else "json_extract(oc.metadata_json, '$.segment')"
+    atom_consequence_expr = (
+        "pa.cost_consequence_clues"
+        if "cost_consequence_clues" in atom_columns
+        else "json_extract(pa.metadata_json, '$.cost_consequence_clues')"
+    )
+    atom_platform_expr = (
+        "pa.platform"
+        if "platform" in atom_columns
+        else "COALESCE(json_extract(pa.metadata_json, '$.platform'), json_extract(pa.atom_json, '$.platform'))"
+    )
+    raw_signal_expr = "pa.raw_signal_id" if "raw_signal_id" in atom_columns else "pa.signal_id"
+
+    return f"""
+        SELECT
+            o.id as opportunity_id,
+            o.cluster_id,
+            o.title,
+            o.decision_score,
+            o.problem_truth_score,
+            o.revenue_readiness_score,
+            o.composite_score,
+            o.frequency_score,
+            o.urgency_score,
+            o.buildability,
+            o.corroboration_strength,
+            o.evidence_quality,
+            o.pain_severity,
+            o.willingness_to_pay_proxy,
+            o.problem_plausibility,
+            o.reachability,
+            o.status as opportunity_status,
+            pa.id as atom_id,
+            pa.job_to_be_done,
+            pa.pain_statement,
+            pa.trigger_event,
+            pa.failure_mode,
+            {atom_consequence_expr} as cost_consequence_clues,
+            {atom_segment_expr} as segment,
+            pa.user_role,
+            {atom_platform_expr} as atom_platform,
+            rs.source_name,
+            rs.source_url,
+            rs.title as signal_title,
+            rs.body_excerpt,
+            rs.role_hint,
+            rs.quote_text,
+            {cluster_segment_expr} as cluster_segment
+        FROM opportunities o
+        JOIN opportunity_clusters oc ON oc.id = o.cluster_id
+        LEFT JOIN problem_atoms pa ON {atom_cluster_expr} = {cluster_key_expr}
+        LEFT JOIN raw_signals rs ON rs.id = {raw_signal_expr}
+        WHERE o.status IN ('promoted', 'active')
+            AND (o.decision_score > 0 OR o.composite_score > 0)
+        ORDER BY o.decision_score DESC, o.problem_truth_score DESC
+        LIMIT 500
+    """
+
+
 def extract_candidate_from_opportunity(row: sqlite3.Row) -> WedgeCandidate:
     """Extract WedgeCandidate from opportunity row with validation scores."""
     candidate = WedgeCandidate()
@@ -1115,52 +1185,7 @@ def generate_wedges(db: Database, limit: int = 10) -> list[ProductIdea]:
     conn = db._get_connection()
     conn.row_factory = sqlite3.Row
 
-    # Query opportunities WITH validation scores - THIS IS THE KEY CHANGE
-    # Join with problem_atoms and raw_signals to get extraction data
-    rows = conn.execute('''
-        SELECT
-            o.id as opportunity_id,
-            o.cluster_id,
-            o.title,
-            o.decision_score,
-            o.problem_truth_score,
-            o.revenue_readiness_score,
-            o.composite_score,
-            o.frequency_score,
-            o.urgency_score,
-            o.buildability,
-            o.corroboration_strength,
-            o.evidence_quality,
-            o.pain_severity,
-            o.willingness_to_pay_proxy,
-            o.problem_plausibility,
-            o.reachability,
-            o.status as opportunity_status,
-            pa.id as atom_id,
-            pa.job_to_be_done,
-            pa.pain_statement,
-            pa.trigger_event,
-            pa.failure_mode,
-            pa.cost_consequence_clues,
-            pa.segment,
-            pa.user_role,
-            pa.platform as atom_platform,
-            rs.source_name,
-            rs.source_url,
-            rs.title as signal_title,
-            rs.body_excerpt,
-            rs.role_hint,
-            rs.quote_text,
-            c.segment as cluster_segment
-        FROM opportunities o
-        JOIN clusters c ON c.id = o.cluster_id
-        LEFT JOIN problem_atoms pa ON pa.cluster_id = o.cluster_id
-        LEFT JOIN raw_signals rs ON rs.id = pa.signal_id
-        WHERE o.status IN ('promoted', 'active')
-            AND (o.decision_score > 0 OR o.composite_score > 0)
-        ORDER BY o.decision_score DESC, o.problem_truth_score DESC
-        LIMIT 500
-    ''').fetchall()
+    rows = conn.execute(_build_wedge_query(db)).fetchall()
 
     candidates: list[WedgeCandidate] = []
     rejected_counts: dict[str, int] = {}
@@ -1332,50 +1357,7 @@ def generate_wedges_with_metrics(db: Database, limit: int = 10) -> tuple[list[Pr
     conn = db._get_connection()
     conn.row_factory = sqlite3.Row
 
-    rows = conn.execute('''
-        SELECT
-            o.id as opportunity_id,
-            o.cluster_id,
-            o.title,
-            o.decision_score,
-            o.problem_truth_score,
-            o.revenue_readiness_score,
-            o.composite_score,
-            o.frequency_score,
-            o.urgency_score,
-            o.buildability,
-            o.corroboration_strength,
-            o.evidence_quality,
-            o.pain_severity,
-            o.willingness_to_pay_proxy,
-            o.problem_plausibility,
-            o.reachability,
-            o.status as opportunity_status,
-            pa.id as atom_id,
-            pa.job_to_be_done,
-            pa.pain_statement,
-            pa.trigger_event,
-            pa.failure_mode,
-            pa.cost_consequence_clues,
-            pa.segment,
-            pa.user_role,
-            pa.platform as atom_platform,
-            rs.source_name,
-            rs.source_url,
-            rs.title as signal_title,
-            rs.body_excerpt,
-            rs.role_hint,
-            rs.quote_text,
-            c.segment as cluster_segment
-        FROM opportunities o
-        JOIN clusters c ON c.id = o.cluster_id
-        LEFT JOIN problem_atoms pa ON pa.cluster_key = c.cluster_key
-        LEFT JOIN raw_signals rs ON rs.id = pa.signal_id
-        WHERE o.status IN ('promoted', 'active')
-            AND (o.decision_score > 0 OR o.composite_score > 0)
-        ORDER BY o.decision_score DESC, o.problem_truth_score DESC
-        LIMIT 500
-    ''').fetchall()
+    rows = conn.execute(_build_wedge_query(db)).fetchall()
 
     candidates: list[WedgeCandidate] = []
     rejected_counts: dict[str, int] = {}

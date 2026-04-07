@@ -89,6 +89,7 @@ class SourceFamilyGovernance:
     total_findings: int = 0
     total_qualified: int = 0
     total_promoted: int = 0
+    total_build_briefs: int = 0
     total_screened_out: int = 0
     screened_out_rate: float = 0.0
     last_updated: float = field(default_factory=time.time)
@@ -140,6 +141,7 @@ class GovernanceState:
                 "total_findings": v.total_findings,
                 "total_qualified": v.total_qualified,
                 "total_promoted": v.total_promoted,
+                "total_build_briefs": v.total_build_briefs,
                 "total_screened_out": v.total_screened_out,
                 "screened_out_rate": v.screened_out_rate,
                 "last_updated": v.last_updated,
@@ -183,7 +185,13 @@ class DiscoveryGovernance:
         self.db = db
         self.conn = db._get_connection()
         self.config = {**DEFAULT_CONFIG, **(config or {})}
-        self.state_path = state_path or DEFAULT_STATE_PATH
+        db_path = Path(getattr(db, "db_path", "") or "")
+        default_state_path = (
+            db_path.with_name(f"{db_path.stem}_governance_state.json")
+            if db_path.name
+            else DEFAULT_STATE_PATH
+        )
+        self.state_path = state_path or default_state_path or DEFAULT_STATE_PATH
         self.state = self._load_state()
 
         # Initialize source families if not present
@@ -225,6 +233,27 @@ class DiscoveryGovernance:
 
     def _get_term_key(self, term_value: str, term_type: str) -> str:
         return f"{term_type}:{term_value}"
+
+    def _normalize_source_family(self, source_name: str) -> str:
+        raw = str(source_name or "").strip().lower()
+        family = raw.split("/", 1)[0] if "/" in raw else raw
+        aliases = {
+            "reddit": "reddit-problem",
+            "reddit-problem": "reddit-problem",
+            "web": "web-problem",
+            "web-problem": "web-problem",
+            "web-success": "web-success",
+            "github": "github-issue",
+            "github-problem": "github-issue",
+            "github-issue": "github-issue",
+            "shopify_reviews": "shopify-review",
+            "shopify-review": "shopify-review",
+            "wordpress_reviews": "wordpress-review",
+            "wordpress-review": "wordpress-review",
+            "market": "market-problem",
+            "market-problem": "market-problem",
+        }
+        return aliases.get(family, family)
 
     def evaluate_wave(self) -> dict[str, Any]:
         """Evaluate the most recent wave and update governance.
@@ -286,37 +315,45 @@ class DiscoveryGovernance:
         """Evaluate a single term for retention/replacement."""
         key = self._get_term_key(term_value, term_type)
 
-        # Get term metrics
-        row = self.conn.execute('''
+        row = self.conn.execute(
+            """
             SELECT
-                COALESCE(SUM(findings_emitted), 0) as findings,
-                COALESCE(SUM(validations), 0) as validations,
-                COALESCE(SUM(prototype_candidates), 0) as pc,
-                COALESCE(SUM(build_briefs), 0) as bf,
-                COALESCE(SUM(screened_out), 0) as screened
-            FROM discovery_feedback
-            WHERE query_text LIKE ?
-        ''', (f'%{term_value[:30]}%',)).fetchone()
+                findings_emitted as findings,
+                validations,
+                passes,
+                prototype_candidates as pc,
+                build_briefs as bf,
+                screened_out as screened
+            FROM discovery_search_terms
+            WHERE term_type = ? AND term_value = ?
+            """,
+            (term_type, term_value),
+        ).fetchone()
 
-        if not row or not row[0]:
-            # Try subreddit query for subs
-            if term_type == "subreddit":
-                row = self.conn.execute('''
-                    SELECT
-                        COUNT(*) as findings,
-                        SUM(CASE WHEN status = 'qualified' THEN 1 ELSE 0 END) as qualified,
-                        SUM(CASE WHEN status = 'promoted' THEN 1 ELSE 0 END) as promoted
-                    FROM findings
-                    WHERE source = ?
-                ''', (f'reddit-problem/{term_value}',)).fetchone()
+        if not row and term_type == "subreddit":
+            row = self.conn.execute(
+                """
+                SELECT
+                    COUNT(*) as findings,
+                    SUM(CASE WHEN status = 'qualified' THEN 1 ELSE 0 END) as validations,
+                    SUM(CASE WHEN status = 'promoted' THEN 1 ELSE 0 END) as passes,
+                    0 as pc,
+                    0 as bf,
+                    SUM(CASE WHEN status = 'screened_out' THEN 1 ELSE 0 END) as screened
+                FROM findings
+                WHERE source = ?
+                """,
+                (f"reddit-problem/{term_value}",),
+            ).fetchone()
 
         if not row:
             return None
 
-        findings = row[0] if row else 0
-        validations = row[1] if row and len(row) > 1 else 0
-        pc = row[2] if row and len(row) > 2 else 0
-        bf = row[3] if row and len(row) > 3 else 0
+        findings = int(row["findings"] or 0)
+        validations = int(row["validations"] or 0)
+        passes = int(row["passes"] or 0)
+        pc = int(row["pc"] or 0)
+        bf = int(row["bf"] or 0)
 
         # Get or create governance record
         if key not in self.state.terms:
@@ -328,10 +365,11 @@ class DiscoveryGovernance:
             )
 
         term = self.state.terms[key]
-        term.total_findings += findings or 0
-        term.total_qualified += validations or 0
-        term.total_prototype_candidates += pc or 0
-        term.total_build_briefs += bf or 0
+        term.total_findings = findings
+        term.total_qualified = validations
+        term.total_promoted = passes
+        term.total_prototype_candidates = pc
+        term.total_build_briefs = bf
         term.last_updated = time.time()
 
         # Check for replacement by checking if there are better challengers
@@ -339,16 +377,22 @@ class DiscoveryGovernance:
 
         if challengers:
             best_challenger = challengers[0]
-            margin = self.config.get("challenger_margin", 0.2)
+            current_output_score = (pc * 0.5) + (bf * 0.5)
 
             # If challenger significantly outperforms, consider replacement
-            if (best_challenger["output_score"] > term.total_prototype_candidates * self.config.get("challenger_outperformance_factor", 1.5) and
-                best_challenger["output_score"] >= self.config.get("min_prototype_candidates_to_retain", 1)):
+            if (
+                best_challenger["output_score"]
+                > current_output_score * self.config.get("challenger_outperformance_factor", 1.5)
+                and best_challenger["output_score"] >= self.config.get("min_prototype_candidates_to_retain", 1)
+            ):
 
                 # Replace the term
                 term.state = "replaced"
                 term.replaced_by = best_challenger["term_value"]
-                term.replacement_reason = f"challenger {best_challenger['term_value']} outperformed by {best_challenger['output_score']} vs {term.total_prototype_candidates}"
+                term.replacement_reason = (
+                    f"challenger {best_challenger['term_value']} outperformed by "
+                    f"{best_challenger['output_score']} vs {current_output_score}"
+                )
                 term.waves_at_locked = self.state.wave_count
 
                 return "replaced"
@@ -395,28 +439,57 @@ class DiscoveryGovernance:
 
     def _evaluate_source_families(self, summary: dict) -> None:
         """Evaluate source families and update their states."""
-
-        # Get source family metrics
-        rows = self.conn.execute('''
-            SELECT
-                SUBSTR(source, 1, INSTR(source, '/') - 1) as family,
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'qualified' THEN 1 ELSE 0 END) as qualified,
-                SUM(CASE WHEN status = 'promoted' THEN 1 ELSE 0 END) as promoted,
-                SUM(CASE WHEN status = 'screened_out' THEN 1 ELSE 0 END) as screened
+        source_rows = self.conn.execute(
+            """
+            SELECT source, status, COUNT(*) as total
             FROM findings
-            GROUP BY family
-        ''').fetchall()
-
-        for r in rows:
-            family = r["family"]
+            GROUP BY source, status
+            """
+        ).fetchall()
+        family_metrics: dict[str, dict[str, int]] = {}
+        for row in source_rows:
+            family = self._normalize_source_family(row["source"])
             if not family:
                 continue
+            bucket = family_metrics.setdefault(
+                family,
+                {"total": 0, "qualified": 0, "promoted": 0, "screened": 0, "build_briefs": 0},
+            )
+            count = int(row["total"] or 0)
+            status = str(row["status"] or "")
+            bucket["total"] += count
+            if status == "qualified":
+                bucket["qualified"] += count
+            elif status == "promoted":
+                bucket["promoted"] += count
+            elif status == "screened_out":
+                bucket["screened"] += count
 
-            total = r["total"]
-            qualified = r["qualified"]
-            promoted = r["promoted"]
-            screened = r["screened"]
+        build_brief_rows = self.conn.execute(
+            """
+            SELECT f.source, COUNT(*) as total
+            FROM build_briefs bb
+            JOIN validations v ON v.id = bb.validation_id
+            JOIN findings f ON f.id = v.finding_id
+            GROUP BY f.source
+            """
+        ).fetchall()
+        for row in build_brief_rows:
+            family = self._normalize_source_family(row["source"])
+            if not family:
+                continue
+            bucket = family_metrics.setdefault(
+                family,
+                {"total": 0, "qualified": 0, "promoted": 0, "screened": 0, "build_briefs": 0},
+            )
+            bucket["build_briefs"] += int(row["total"] or 0)
+
+        for family, metrics in family_metrics.items():
+            total = metrics["total"]
+            qualified = metrics["qualified"]
+            promoted = metrics["promoted"]
+            screened = metrics["screened"]
+            build_briefs = metrics["build_briefs"]
             screened_rate = screened / total if total > 0 else 0
 
             # Get or create governance record
@@ -424,10 +497,11 @@ class DiscoveryGovernance:
                 self.state.source_families[family] = SourceFamilyGovernance(family=family)
 
             source = self.state.source_families[family]
-            source.total_findings += total or 0
-            source.total_qualified += qualified or 0
-            source.total_promoted += promoted or 0
-            source.total_screened_out += screened or 0
+            source.total_findings = total
+            source.total_qualified = qualified
+            source.total_promoted = promoted
+            source.total_build_briefs = build_briefs
+            source.total_screened_out = screened
             source.screened_out_rate = screened_rate
             source.last_updated = time.time()
 
@@ -479,8 +553,13 @@ class DiscoveryGovernance:
             if state.state == "active":
                 active.append(family)
 
-        # Always include reddit-problem as primary
-        if "reddit-problem" not in active:
+        # Always include reddit-problem as primary unless explicitly paused/disabled.
+        reddit_state = self.state.source_families.get("reddit-problem")
+        if (
+            "reddit-problem" not in active
+            and reddit_state
+            and reddit_state.state not in {"paused", "disabled", "manual_override"}
+        ):
             active.insert(0, "reddit-problem")
 
         return active

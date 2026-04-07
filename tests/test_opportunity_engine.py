@@ -82,6 +82,36 @@ def test_extract_problem_atom_captures_workaround_and_why_now():
     assert atom.confidence >= 0.5
 
 
+def test_build_problem_atom_keeps_workflow_distinct_and_caps_consequence_score():
+    text = "QuickBooks invoices do not match Stripe payouts during weekly reconciliation costing 3 hours every week"
+    payload = {
+        "source_name": "reddit-problem",
+        "source_type": "reddit",
+        "source_url": "https://example.com/test",
+        "title": text,
+        "body_excerpt": text,
+        "quote_text": text,
+        "role_hint": "ops manager",
+        "metadata_json": {},
+    }
+    finding = {
+        "source": "reddit-problem/accounting",
+        "source_url": "https://example.com/test",
+        "product_built": text,
+        "outcome_summary": text,
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+        "tool_used": "",
+    }
+
+    atom = build_problem_atom(payload, finding)
+
+    assert atom["failure_mode"]
+    assert atom["job_to_be_done"]
+    assert atom["job_to_be_done"] != atom["failure_mode"]
+    assert atom["consequence_score"] <= 1.0
+
+
 def test_score_opportunity_penalizes_false_signal():
     engine = OpportunityEngine()
     atom = ProblemAtom(

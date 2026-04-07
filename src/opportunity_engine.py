@@ -577,6 +577,8 @@ def _validate_atom_quality(atom: dict[str, Any], source_text: str) -> dict[str, 
     # Calculate overall specificity
     if quality["specificity_score"] > 0:
         quality["specificity_score"] = min(1.0, quality["specificity_score"])
+    if quality["consequence_score"] > 0:
+        quality["consequence_score"] = min(1.0, quality["consequence_score"])
 
     # Reject only if too many issues
     if len(quality["quality_issues"]) >= 3:
@@ -1597,13 +1599,11 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
     specific_consequence = _extract_consequence(text)
     specific_workflow = _extract_specific_workflow(text, platform)
 
-    # Use extracted failure event as job_to_be_done if available
-    if failure_event:
-        job_to_be_done = failure_event
-    elif specific_workflow:
+    # Keep the workflow separate from the failure so downstream stages
+    # can reason about the task and the breakage independently.
+    if specific_workflow:
         job_to_be_done = specific_workflow
     else:
-        # Fallback to generic only if no specific extraction
         job_to_be_done = _match_rule(text, JTBD_RULES, "keep a recurring workflow reliable without manual cleanup")
 
     descriptive_text = cleaned_body_text or body_text or text
@@ -1679,8 +1679,9 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
     if not failure_mode and workarounds:
         failure_mode = f"teams fall back to {', '.join(workarounds)}"
 
-    if _is_generic_phrase(job_to_be_done) and failure_mode:
-        job_to_be_done = _normalize_problem_fragment(failure_mode, fallback=job_to_be_done, limit=120)
+    if _is_generic_phrase(job_to_be_done):
+        fallback_workflow = specific_workflow or job_to_be_done
+        job_to_be_done = _normalize_problem_fragment(fallback_workflow, fallback=job_to_be_done, limit=120)
     else:
         job_to_be_done = _normalize_problem_fragment(job_to_be_done, fallback=job_to_be_done, limit=120)
 

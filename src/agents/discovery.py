@@ -27,7 +27,17 @@ from src.opportunity_engine import (
 from src.reddit_seed import RedditSeeder
 from src.research_tools import DiscoveryQueryPlan, ResearchToolkit
 from src.discovery_expander import run_expansion, get_expanded_config
-from src.discovery_term_lifecycle import TermLifecycleManager
+from src.discovery_term_lifecycle import (
+    TermLifecycleManager,
+    TermMetrics,
+    calculate_consequence_score,
+    calculate_platform_native_score,
+    calculate_plugin_fit_score,
+    calculate_quality_score,
+    calculate_specificity_score,
+    calculate_wedge_quality_score,
+    compute_next_state,
+)
 
 
 # =============================================================================
@@ -600,12 +610,6 @@ class DiscoveryAgent(BaseAgent):
             default_limit=max(4, len(reddit_problem_keywords(self.config))),
         )
         learned_queries, _theme_keys = self._learned_theme_queries("reddit-problem")
-        if learned_queries:
-            merged_queries: list[str] = []
-            for query in [*learned_queries, *queries]:
-                if query not in merged_queries:
-                    merged_queries.append(query)
-            queries = merged_queries
         seed_limit = max(
             1,
             int(
@@ -615,13 +619,25 @@ class DiscoveryAgent(BaseAgent):
                 )
             ),
         )
+        reserved_learned = max(0, int(self.config.get("discovery", {}).get("theme_query_limit_per_cycle", 2)))
+        learned_seed_queries: list[str] = []
+        for query in learned_queries:
+            if query not in learned_seed_queries:
+                learned_seed_queries.append(query)
+            if len(learned_seed_queries) >= min(seed_limit, reserved_learned):
+                break
+        remaining_seed_slots = max(0, seed_limit - len(learned_seed_queries))
         seed_plan = self.toolkit.build_discovery_query_plan(
             "reddit-relay-seed",
             list(queries),
-            limit=min(seed_limit, len(queries)),
+            limit=min(remaining_seed_slots, len(queries)),
             cycle_index=self._cycle_counts.get("reddit-relay-seed", 0),
         )
-        queries = list(seed_plan.queries)
+        merged_queries: list[str] = []
+        for query in [*learned_seed_queries, *seed_plan.queries]:
+            if query not in merged_queries:
+                merged_queries.append(query)
+        queries = merged_queries[:seed_limit]
         self._cycle_counts["reddit-relay-seed"] = self._cycle_counts.get("reddit-relay-seed", 0) + 1
         try:
             seeder = RedditSeeder(self.config, bypass_cache=self.bypass_cache)
@@ -683,17 +699,50 @@ class DiscoveryAgent(BaseAgent):
             self._seen_hashes.add(content_hash)
             return None
 
-        # PART 5: PRE-ATOM FILTER - Reject weak signals before atom creation
-        is_ready, reject_reason = is_wedge_ready_signal(finding_data)
-        if not is_ready:
-            logger.debug(f"filtering weak signal: {reject_reason}")
-            self._seen_hashes.add(content_hash)
-            return None
-
         evidence = dict(finding_data.get("evidence", {}) or {})
         evidence.setdefault("run_id", self.db.get_active_run_id())
         discovery_query = evidence.get("discovery_query")
         source_plan = evidence.get("source_plan")
+
+        # PART 5: PRE-ATOM FILTER - Reject weak signals before atom creation
+        is_ready, reject_reason = is_wedge_ready_signal(finding_data)
+        if not is_ready:
+            evidence["pre_atom_filter"] = {"accepted": False, "reason": reject_reason}
+            evidence["screening"] = {
+                "accepted": False,
+                "score": 0.0,
+                "positive_signals": [],
+                "negative_signals": [f"pre_atom_filter:{reject_reason}"],
+                "source_class": "low_signal_summary",
+            }
+            finding = Finding(
+                source=finding_data.get("source", "unknown"),
+                source_url=finding_data.get("source_url", ""),
+                entrepreneur=finding_data.get("entrepreneur"),
+                tool_used=finding_data.get("tool_used"),
+                product_built=finding_data.get("product_built"),
+                monetization_method=finding_data.get("monetization_method"),
+                outcome_summary=finding_data.get("outcome_summary"),
+                content_hash=content_hash,
+                status="screened_out",
+                finding_kind=finding_data.get("finding_kind", "problem_signal"),
+                source_class="low_signal_summary",
+                recurrence_key=finding_data.get("recurrence_key"),
+                evidence=evidence,
+            )
+            finding_id = self.db.insert_finding(finding)
+            self._seen_hashes.add(content_hash)
+            if source_plan and discovery_query:
+                self.db.record_discovery_screening(
+                    source_plan,
+                    discovery_query,
+                    accepted=False,
+                    source_class="low_signal_summary",
+                    screening_score=0.0,
+                )
+            logger.debug("filtered weak signal %s as screened_out finding %s", reject_reason, finding_id)
+            return finding_id
+
         signal_payload = build_raw_signal_payload(finding_data)
         atom_payload = build_problem_atom(signal_payload, finding_data)
         source_classification = classify_source_signal(finding_data, signal_payload, atom_payload)
@@ -1351,98 +1400,131 @@ class DiscoveryAgent(BaseAgent):
     def _update_term_lifecycle(self) -> dict[str, Any]:
         """Update term lifecycle states based on cycle results.
 
-        Aggregates query-level feedback into term-level state transitions.
+        Synchronizes cumulative query feedback into term lifecycle state exactly once.
         """
-        # Get feedback aggregated by keyword/subreddit
         feedback_rows = self.db.get_discovery_feedback()
 
-        # Track which terms we've seen to update
-        keyword_metrics: dict[str, dict[str, int]] = defaultdict(lambda: {
-            "findings_emitted": 0, "validations": 0, "passes": 0,
-            "prototype_candidates": 0, "build_briefs": 0, "screened_out": 0,
-            "low_yield": 0, "noisy": 0, "thin_validation": 0,
-        })
-        subreddit_metrics: dict[str, dict[str, int]] = defaultdict(lambda: {
-            "findings_emitted": 0, "validations": 0, "passes": 0,
-            "prototype_candidates": 0, "build_briefs": 0, "screened_out": 0,
-            "low_yield": 0, "noisy": 0, "thin_validation": 0,
+        keyword_metrics: dict[str, dict[str, float]] = defaultdict(lambda: {
+            "runs": 0,
+            "findings_emitted": 0,
+            "validations": 0,
+            "passes": 0,
+            "prototype_candidates": 0,
+            "build_briefs": 0,
+            "screened_out": 0,
+            "validation_score_total": 0.0,
+            "screening_score_total": 0.0,
+            "screening_weight": 0,
         })
 
         for row in feedback_rows:
             source_name = row.get("source_name", "")
             query_text = row.get("query_text", "")
+            if not query_text or query_text == "[source-skipped]":
+                continue
 
-            # Determine source type
-            if source_name.startswith("reddit"):
-                # Try to extract subreddit from query or source
-                # For now, track keywords
-                keyword_metrics[query_text] = {
-                    "findings_emitted": keyword_metrics[query_text]["findings_emitted"] + int(row.get("findings_emitted", 0)),
-                    "validations": keyword_metrics[query_text]["validations"] + int(row.get("validations", 0)),
-                    "passes": keyword_metrics[query_text]["passes"] + int(row.get("passes", 0)),
-                    "prototype_candidates": keyword_metrics[query_text]["prototype_candidates"] + int(row.get("prototype_candidates", 0)),
-                    "build_briefs": keyword_metrics[query_text]["build_briefs"] + int(row.get("build_briefs", 0)),
-                    "screened_out": keyword_metrics[query_text]["screened_out"] + int(row.get("screened_out", 0)),
-                    "low_yield": keyword_metrics[query_text]["low_yield"],
-                    "noisy": keyword_metrics[query_text]["noisy"],
-                    "thin_validation": keyword_metrics[query_text]["thin_validation"],
-                }
-            elif source_name.startswith("web"):
-                keyword_metrics[query_text] = {
-                    "findings_emitted": keyword_metrics[query_text]["findings_emitted"] + int(row.get("findings_emitted", 0)),
-                    "validations": keyword_metrics[query_text]["validations"] + int(row.get("validations", 0)),
-                    "passes": keyword_metrics[query_text]["passes"] + int(row.get("passes", 0)),
-                    "prototype_candidates": keyword_metrics[query_text]["prototype_candidates"] + int(row.get("prototype_candidates", 0)),
-                    "build_briefs": keyword_metrics[query_text]["build_briefs"] + int(row.get("build_briefs", 0)),
-                    "screened_out": keyword_metrics[query_text]["screened_out"] + int(row.get("screened_out", 0)),
-                    "low_yield": keyword_metrics[query_text]["low_yield"],
-                    "noisy": keyword_metrics[query_text]["noisy"],
-                    "thin_validation": keyword_metrics[query_text]["thin_validation"],
-                }
-            elif source_name.startswith("github"):
-                keyword_metrics[query_text] = {
-                    "findings_emitted": keyword_metrics[query_text]["findings_emitted"] + int(row.get("findings_emitted", 0)),
-                    "validations": keyword_metrics[query_text]["validations"] + int(row.get("validations", 0)),
-                    "passes": keyword_metrics[query_text]["passes"] + int(row.get("passes", 0)),
-                    "prototype_candidates": keyword_metrics[query_text]["prototype_candidates"] + int(row.get("prototype_candidates", 0)),
-                    "build_briefs": keyword_metrics[query_text]["build_briefs"] + int(row.get("build_briefs", 0)),
-                    "screened_out": keyword_metrics[query_text]["screened_out"] + int(row.get("screened_out", 0)),
-                    "low_yield": keyword_metrics[query_text]["low_yield"],
-                    "noisy": keyword_metrics[query_text]["noisy"],
-                    "thin_validation": keyword_metrics[query_text]["thin_validation"],
-                }
+            if not source_name.startswith(("reddit", "web", "github", "market")):
+                continue
 
-        # Also look at discovery_search_terms to get low_yield, noisy, thin_validation counts
+            metrics = keyword_metrics[query_text]
+            findings_emitted = int(row.get("findings_emitted", 0) or 0)
+            validations = int(row.get("validations", 0) or 0)
+            screened_out = int(row.get("screened_out", 0) or 0)
+            metrics["runs"] += int(row.get("runs", 0) or 0)
+            metrics["findings_emitted"] += findings_emitted
+            metrics["validations"] += validations
+            metrics["passes"] += int(row.get("passes", 0) or 0)
+            metrics["prototype_candidates"] += int(row.get("prototype_candidates", 0) or 0)
+            metrics["build_briefs"] += int(row.get("build_briefs", 0) or 0)
+            metrics["screened_out"] += screened_out
+            metrics["validation_score_total"] += float(row.get("avg_validation_score", 0.0) or 0.0) * validations
+            metrics["screening_score_total"] += float(row.get("avg_screening_score", 0.0) or 0.0) * (
+                findings_emitted + screened_out
+            )
+            metrics["screening_weight"] += findings_emitted + screened_out
+
         existing_terms = self.db.list_search_terms(limit=500)
         term_state_map = {(t["term_type"], t["term_value"]): t for t in existing_terms}
 
-        # Update keywords
         transitions = {"keywords": [], "subreddits": []}
         for keyword, metrics in keyword_metrics.items():
-            if not keyword or keyword == "[source-skipped]":
-                continue
-
-            # Get existing state for quality flags
             existing = term_state_map.get(("keyword", keyword), {})
-            low_yield = existing.get("low_yield_count", 0)
-            noisy = existing.get("noisy_count", 0)
-            thin_val = existing.get("thin_validation_count", 0)
+            current_state = existing.get("state", "new") if existing else "new"
+            term_metrics = TermMetrics(
+                times_searched=int(metrics["runs"] or 0),
+                findings_emitted=int(metrics["findings_emitted"] or 0),
+                validations=int(metrics["validations"] or 0),
+                passes=int(metrics["passes"] or 0),
+                prototype_candidates=int(metrics["prototype_candidates"] or 0),
+                build_briefs=int(metrics["build_briefs"] or 0),
+                screened_out=int(metrics["screened_out"] or 0),
+                low_yield_count=int(existing.get("low_yield_count", 0) or 0),
+                noisy_count=int(existing.get("noisy_count", 0) or 0),
+                thin_validation_count=int(existing.get("thin_validation_count", 0) or 0),
+                avg_validation_score=(
+                    float(metrics["validation_score_total"]) / float(metrics["validations"])
+                    if metrics["validations"]
+                    else 0.0
+                ),
+                avg_screening_score=(
+                    float(metrics["screening_score_total"]) / float(metrics["screening_weight"])
+                    if metrics["screening_weight"]
+                    else 0.0
+                ),
+            )
+            term_metrics.quality_score = calculate_quality_score(term_metrics)
 
-            result = self.term_lifecycle.record_search_run(
+            specificity = calculate_specificity_score(keyword)
+            consequence = calculate_consequence_score(keyword)
+            platform_native = calculate_platform_native_score(keyword)
+            plugin_fit = calculate_plugin_fit_score(keyword)
+            wedge_quality = calculate_wedge_quality_score(
+                keyword,
+                specificity,
+                consequence,
+                platform_native,
+                plugin_fit,
+            )
+
+            self.term_lifecycle.ensure_term_exists("keyword", keyword)
+            new_state, reason = compute_next_state(current_state, term_metrics, self.term_lifecycle.config)
+            self.db.update_search_term_state("keyword", keyword, new_state, notes=reason)
+            self.db.update_search_term_metrics(
                 "keyword",
                 keyword,
-                findings_emitted=metrics["findings_emitted"],
-                validations=metrics["validations"],
-                passes=metrics["passes"],
-                prototype_candidates=metrics["prototype_candidates"],
-                build_briefs=metrics["build_briefs"],
-                screened_out=metrics["screened_out"],
-                low_yield=low_yield > 0,
-                noisy=noisy > 0,
-                thin_validation=thin_val > 0,
+                times_searched=term_metrics.times_searched,
+                findings_emitted=term_metrics.findings_emitted,
+                validations=term_metrics.validations,
+                passes=term_metrics.passes,
+                prototype_candidates=term_metrics.prototype_candidates,
+                build_briefs=term_metrics.build_briefs,
+                screened_out=term_metrics.screened_out,
+                low_yield_count=term_metrics.low_yield_count,
+                noisy_count=term_metrics.noisy_count,
+                thin_validation_count=term_metrics.thin_validation_count,
+                avg_validation_score=term_metrics.avg_validation_score,
+                avg_screening_score=term_metrics.avg_screening_score,
+                quality_score=term_metrics.quality_score,
+                specificity_score=specificity,
+                consequence_score=consequence,
+                platform_native_score=platform_native,
+                plugin_fit_score=plugin_fit,
+                wedge_quality_score=wedge_quality,
+                vague_bucket_count=int(existing.get("vague_bucket_count", 0) or 0),
+                abstraction_collapse_count=int(existing.get("abstraction_collapse_count", 0) or 0),
+                buildable_opportunity_count=int(existing.get("buildable_opportunity_count", 0) or 0),
+                platform_native_count=int(existing.get("platform_native_count", 0) or 0),
             )
-            if result["old_state"] != result["new_state"]:
-                transitions["keywords"].append(result)
+            if current_state != new_state:
+                transitions["keywords"].append(
+                    {
+                        "term_type": "keyword",
+                        "term_value": keyword,
+                        "old_state": current_state,
+                        "new_state": new_state,
+                        "reason": reason,
+                    }
+                )
 
         logger.info(f"Term lifecycle: {len(transitions['keywords'])} keyword state changes")
         return transitions
