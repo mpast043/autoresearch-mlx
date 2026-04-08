@@ -1011,6 +1011,82 @@ class TestDatabase(unittest.TestCase):
         mirror_conn.close()
         os.remove(legacy_path)
 
+    def test_batch_commit_defers_and_commits(self) -> None:
+        """Batch context manager defers commits and commits once on exit."""
+        finding1 = Finding(
+            source="batch_test", source_url="https://example.com/1",
+            entrepreneur="", tool_used="", product_built="Test 1",
+            monetization_method="", outcome_summary="Summary 1",
+            content_hash="hash_batch_1", status="new", finding_kind="pain_signal",
+        )
+        finding2 = Finding(
+            source="batch_test", source_url="https://example.com/2",
+            entrepreneur="", tool_used="", product_built="Test 2",
+            monetization_method="", outcome_summary="Summary 2",
+            content_hash="hash_batch_2", status="new", finding_kind="pain_signal",
+        )
+        with self.db.batch():
+            id1 = self.db.insert_finding(finding1)
+            id2 = self.db.insert_finding(finding2)
+            # Verify they exist in the current connection (uncommitted but visible)
+            result = self.db.get_finding(id1)
+            self.assertIsNotNone(result)
+
+        # After batch exit, both should be committed
+        result = self.db.get_finding(id1)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.product_built, "Test 1")
+        result = self.db.get_finding(id2)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.product_built, "Test 2")
+
+    def test_batch_rollback_on_exception(self) -> None:
+        """Batch context manager rolls back on exception."""
+        finding = Finding(
+            source="rollback_test", source_url="https://example.com/rb",
+            entrepreneur="", tool_used="", product_built="Rollback Test",
+            monetization_method="", outcome_summary="Rollback",
+            content_hash="hash_rollback", status="new", finding_kind="pain_signal",
+        )
+        try:
+            with self.db.batch():
+                self.db.insert_finding(finding)
+                raise RuntimeError("Simulated failure")
+        except RuntimeError:
+            pass
+
+        # Finding should not be persisted after rollback
+        result = self.db.get_finding_by_hash("hash_rollback")
+        self.assertIsNone(result)
+
+    def test_batch_active_flag_is_thread_local(self) -> None:
+        """batch_active flag is thread-local and doesn't leak across threads."""
+        finding = Finding(
+            source="thread_test", source_url="https://example.com/thr",
+            entrepreneur="", tool_used="", product_built="Thread Test",
+            monetization_method="", outcome_summary="Thread",
+            content_hash="hash_thread", status="new", finding_kind="pain_signal",
+        )
+        results = []
+
+        def insert_in_batch():
+            db2 = Database(self.db_path)
+            db2.init_schema()
+            with db2.batch():
+                db2.insert_finding(finding)
+                # Inside batch, batch_active should be True
+                results.append(getattr(db2._local, "batch_active", False))
+            db2.close()
+
+        t = threading.Thread(target=insert_in_batch)
+        t.start()
+        t.join()
+
+        # The other thread saw batch_active as True
+        self.assertTrue(results[0])
+        # Main thread should NOT have batch_active set
+        self.assertFalse(getattr(self.db._local, "batch_active", False))
+
 
 if __name__ == "__main__":
     unittest.main()

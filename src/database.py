@@ -530,6 +530,32 @@ class ResourceRecord:
     cached_at: Optional[str] = None
 
 
+class _BatchContext:
+    """Context manager that batches database commits.
+
+    When active, ``_batch_active`` is set on the thread-local storage so that
+    ``insert_finding``, ``insert_raw_signal``, etc. skip their per-row
+    ``commit()`` calls.  A single commit is issued on successful exit.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def __enter__(self) -> _BatchContext:
+        self._db._local.batch_active = True
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self._db._local.batch_active = False
+        conn = getattr(self._db._local, "conn", None)
+        if conn is None:
+            return
+        if exc_type is None:
+            self._db._commit(conn)
+        else:
+            conn.rollback()
+
+
 class Database:
     """SQLite database manager with thread-local connections."""
 
@@ -562,11 +588,33 @@ class Database:
             self._local.conn = conn
         return conn
 
+    def _commit(self, conn: sqlite3.Connection) -> None:
+        """Commit unless we're inside a batch block."""
+        if not getattr(self._local, "batch_active", False):
+            conn.commit()
+
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)
         if conn is not None:
             conn.close()
             self._local.conn = None
+
+    def batch(self):
+        """Context manager that defers commits until the block exits.
+
+        Inside a ``with db.batch():`` block, INSERT/UPDATE operations skip
+        their per-statement ``commit()`` calls.  A single commit is issued
+        when the block exits successfully.  On exception the transaction is
+        rolled back.
+
+        Usage::
+
+            with db.batch():
+                for finding in findings:
+                    db.insert_finding(finding)  # no commit yet
+            # single commit here
+        """
+        return _BatchContext(self)
 
     def init_schema(self) -> None:
         conn = self._get_connection()
@@ -1127,7 +1175,7 @@ class Database:
             ON products(idea_id, built_at DESC)
             """
         )
-        conn.commit()
+        self._commit(conn)
 
     def get_latest_run_id(self) -> str:
         conn = self._get_connection()
@@ -1314,7 +1362,8 @@ class Database:
                 finding.evidence_json,
             ),
         )
-        conn.commit()
+        if not getattr(self._local, "batch_active", False):
+            self._commit(conn)
         return int(cur.lastrowid)
 
     def get_finding_by_hash(self, content_hash: str) -> Optional[Finding]:
@@ -1336,7 +1385,8 @@ class Database:
     def update_finding_status(self, finding_id: int, status: str) -> None:
         conn = self._get_connection()
         conn.execute("UPDATE findings SET status = ? WHERE id = ?", (status, finding_id))
-        conn.commit()
+        if not getattr(self._local, "batch_active", False):
+            self._commit(conn)
 
     def insert_raw_signal(self, signal: RawSignal) -> int:
         signal.__post_init__()
@@ -1365,7 +1415,7 @@ class Database:
                 signal.metadata_json,
             ),
         )
-        conn.commit()
+        self._commit(conn)
         return int(cur.lastrowid)
 
     def get_raw_signal(self, signal_id: int) -> Optional[RawSignal]:
@@ -1461,7 +1511,7 @@ class Database:
             f"INSERT INTO problem_atoms ({', '.join(insert_columns)}) VALUES ({placeholders})",
             values,
         )
-        conn.commit()
+        self._commit(conn)
         return int(cur.lastrowid)
 
     def get_problem_atoms_by_finding(self, finding_id: int) -> list[ProblemAtom]:
@@ -1598,7 +1648,7 @@ class Database:
             """,
             mirror_insert_values,
         )
-        conn.commit()
+        self._commit(conn)
         self._backfill_cluster_members()
         return cluster_id
 
@@ -1628,7 +1678,7 @@ class Database:
                 f"INSERT INTO cluster_members (cluster_id, {atom_column}) VALUES (?, ?)",
                 (row["cluster_id"], row["atom_id"]),
             )
-        conn.commit()
+        self._commit(conn)
 
     def get_cluster_members(self, cluster_id: int) -> list[int]:
         conn = self._get_connection()
@@ -1750,7 +1800,7 @@ class Database:
                 ),
             )
             opportunity_id = int(cur.lastrowid)
-        conn.commit()
+        self._commit(conn)
         return opportunity_id
 
     def insert_experiment(self, experiment: ValidationExperiment) -> int:
@@ -1820,7 +1870,7 @@ class Database:
             """,
             mirror_insert_values,
         )
-        conn.commit()
+        self._commit(conn)
         return experiment_id
 
     def insert_validation(self, validation: Validation) -> int:
@@ -1854,7 +1904,7 @@ class Database:
             "SELECT id FROM validations WHERE run_id = ? AND finding_id = ?",
             (validation.run_id or self.get_active_run_id(), validation.finding_id),
         ).fetchone()
-        conn.commit()
+        self._commit(conn)
         return int(row["id"] if row else cur.lastrowid)
 
     def upsert_validation(self, validation: Validation) -> int:
@@ -1942,7 +1992,7 @@ class Database:
                 f"INSERT OR IGNORE INTO evidence_ledger ({', '.join(insert_columns)}) VALUES ({placeholders})",
                 insert_values,
             )
-            conn.commit()
+            self._commit(conn)
             row = conn.execute(
                 "SELECT id FROM evidence_ledger WHERE run_id = ? AND entity_type = ? AND entity_id = ? AND entry_kind = ?",
                 (run_id, entry.entity_type, entry.entity_id, entry.entry_kind),
@@ -1959,7 +2009,7 @@ class Database:
             """,
             insert_values,
         )
-        conn.commit()
+        self._commit(conn)
         row = conn.execute(
             "SELECT id FROM evidence_ledger WHERE run_id = ? AND entity_type = ? AND entity_id = ? AND entry_kind = ?",
             (run_id, entry.entity_type, entry.entity_id, entry.entry_kind),
@@ -2010,7 +2060,7 @@ class Database:
             "SELECT id FROM corroborations WHERE run_id = ? AND finding_id = ?",
             (run_id, record.finding_id),
         ).fetchone()
-        conn.commit()
+        self._commit(conn)
         return int(row["id"])
 
     def get_corroboration(self, finding_id: int, run_id: Optional[str] = None) -> Optional[CorroborationRecord]:
@@ -2058,7 +2108,7 @@ class Database:
             "SELECT id FROM market_enrichments WHERE run_id = ? AND finding_id = ?",
             (run_id, record.finding_id),
         ).fetchone()
-        conn.commit()
+        self._commit(conn)
         return int(row["id"])
 
     def get_market_enrichment(self, finding_id: int, run_id: Optional[str] = None) -> Optional[MarketEnrichment]:
@@ -2095,7 +2145,7 @@ class Database:
             """,
             (source_name, query_text, docs_seen, latency_ms, last_status),
         )
-        conn.commit()
+        self._commit(conn)
 
     def record_discovery_hit(self, source_name: str, query_text: str) -> None:
         conn = self._get_connection()
@@ -2109,7 +2159,7 @@ class Database:
             """,
             (source_name, query_text),
         )
-        conn.commit()
+        self._commit(conn)
 
     def record_discovery_screening(
         self,
@@ -2154,7 +2204,7 @@ class Database:
                 screening_score,
             ),
         )
-        conn.commit()
+        self._commit(conn)
 
     def record_validation_feedback(
         self,
@@ -2226,7 +2276,7 @@ class Database:
                 overall_score,
             ),
         )
-        conn.commit()
+        self._commit(conn)
 
     def set_discovery_query_cooldown(self, source_name: str, query_text: str, cooldown_until: str) -> None:
         conn = self._get_connection()
@@ -2240,7 +2290,7 @@ class Database:
             """,
             (source_name, query_text, cooldown_until),
         )
-        conn.commit()
+        self._commit(conn)
 
     def get_discovery_feedback(self, source_name: Optional[str] = None) -> list[dict[str, Any]]:
         conn = self._get_connection()
@@ -2274,7 +2324,7 @@ class Database:
             """,
             (term_type, term_value, state, now, now),
         )
-        conn.commit()
+        self._commit(conn)
         return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     def get_search_term(self, term_type: str, term_value: str) -> Optional[dict[str, Any]]:
@@ -2309,7 +2359,7 @@ class Database:
         sql += " WHERE term_type = ? AND term_value = ?"
         params.extend([term_type, term_value])
         conn.execute(sql, params)
-        conn.commit()
+        self._commit(conn)
 
     def update_search_term_metrics(
         self,
@@ -2384,7 +2434,7 @@ class Database:
             f"UPDATE discovery_search_terms SET {', '.join(updates)} WHERE term_type = ? AND term_value = ?",
             params,
         )
-        conn.commit()
+        self._commit(conn)
 
     def list_search_terms(
         self,
@@ -2547,7 +2597,7 @@ class Database:
                 """UPDATE discovery_search_terms SET updated_ts = ? WHERE term_type = ? AND term_value = ?""",
                 (now, term_type, term_value),
             )
-            conn.commit()
+            self._commit(conn)
             return existing[0]
 
         conn.execute(
@@ -2555,7 +2605,7 @@ class Database:
             VALUES (?, ?, ?, ?, ?)""",
             (term_type, term_value, state, now, now),
         )
-        conn.commit()
+        self._commit(conn)
         return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     def search_term_exists(self, term_type: str, term_value: str) -> bool:
@@ -2587,7 +2637,7 @@ class Database:
             )
             count += 1
 
-        conn.commit()
+        self._commit(conn)
         return count
 
     # === end discovery_search_terms ===
@@ -2631,7 +2681,7 @@ class Database:
             ),
         )
         row = conn.execute("SELECT id FROM discovery_themes WHERE theme_key = ?", (theme_key,)).fetchone()
-        conn.commit()
+        self._commit(conn)
         return int(row["id"]) if row else 0
 
     def list_active_discovery_themes(self, limit: int = 25) -> list[dict[str, Any]]:
@@ -2718,7 +2768,7 @@ class Database:
         if not ids:
             return 0
         conn.executemany("DELETE FROM findings WHERE id = ?", [(finding_id,) for finding_id in ids])
-        conn.commit()
+        self._commit(conn)
         return len(ids)
 
     def get_raw_signals(self, *, finding_id: Optional[int] = None, limit: Optional[int] = None) -> list[Any]:
@@ -2866,7 +2916,7 @@ class Database:
     def update_build_brief_status(self, build_brief_id: int, status: str) -> None:
         conn = self._get_connection()
         conn.execute("UPDATE build_briefs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, build_brief_id))
-        conn.commit()
+        self._commit(conn)
 
     def upsert_build_brief(self, brief: BuildBrief) -> int:
         conn = self._get_connection()
@@ -2899,7 +2949,7 @@ class Database:
             ),
         )
         row = conn.execute("SELECT id FROM build_briefs WHERE run_id = ? AND opportunity_id = ?", (brief.run_id, brief.opportunity_id)).fetchone()
-        conn.commit()
+        self._commit(conn)
         return int(row["id"])
 
     def list_build_prep_outputs(self, *, run_id: Optional[str] = None, build_brief_id: Optional[int] = None, opportunity_id: Optional[int] = None, limit: int = 50) -> list[BuildPrepOutput]:
@@ -2955,7 +3005,7 @@ class Database:
             "SELECT id FROM build_prep_outputs WHERE run_id = ? AND build_brief_id = ? AND agent_name = ?",
             (output.run_id, output.build_brief_id, output.agent_name),
         ).fetchone()
-        conn.commit()
+        self._commit(conn)
         return int(row["id"])
 
     def update_opportunity_selection(self, opportunity_id: int, *, selection_status: str, selection_reason: str) -> None:
@@ -2967,7 +3017,7 @@ class Database:
             "UPDATE opportunities SET selection_status = ?, selection_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (selection_status, selection_reason, opportunity_id),
         )
-        conn.commit()
+        self._commit(conn)
 
     def insert_review_feedback(self, feedback: ReviewFeedback) -> int:
         conn = self._get_connection()
@@ -2989,7 +3039,7 @@ class Database:
                 feedback.metadata_json,
             ),
         )
-        conn.commit()
+        self._commit(conn)
         return int(cur.lastrowid)
 
     def get_review_feedback_summary(
@@ -3396,7 +3446,7 @@ class Database:
     def update_idea_status(self, idea_id: int, status: str) -> None:
         conn = self._get_connection()
         conn.execute("UPDATE ideas SET status = ? WHERE id = ?", (status, idea_id))
-        conn.commit()
+        self._commit(conn)
 
     def insert_product(self, product: Product) -> int:
         product.__post_init__()
@@ -3419,7 +3469,7 @@ class Database:
                 product.metadata_json,
             ),
         )
-        conn.commit()
+        self._commit(conn)
         return int(cur.lastrowid)
 
     def get_product(self, product_id: int) -> Optional[dict[str, Any]]:
@@ -3455,7 +3505,7 @@ class Database:
                 "UPDATE products SET status = ?, metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (status, metadata_json, product_id),
             )
-        conn.commit()
+        self._commit(conn)
 
     def upsert_product_for_build(
         self,
@@ -3489,7 +3539,7 @@ class Database:
                     metadata_json,
                 ),
             )
-            conn.commit()
+            self._commit(conn)
             return int(cur.lastrowid)
 
         conn.execute(
@@ -3509,7 +3559,7 @@ class Database:
                 existing["id"],
             ),
         )
-        conn.commit()
+        self._commit(conn)
         return int(existing["id"])
 
     def upsert_product_for_idea(
@@ -3539,7 +3589,7 @@ class Database:
                     metadata_json,
                 ),
             )
-            conn.commit()
+            self._commit(conn)
             return int(cur.lastrowid)
 
         conn.execute(
@@ -3556,7 +3606,7 @@ class Database:
                 existing["id"],
             ),
         )
-        conn.commit()
+        self._commit(conn)
         return int(existing["id"])
 
     def get_products(self, limit: Optional[int] = None) -> list[dict[str, Any]]:
