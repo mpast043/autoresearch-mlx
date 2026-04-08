@@ -1,0 +1,155 @@
+"""Helper functions extracted from ValidationAgent for testability.
+
+These are pure data-construction functions that don't need access to the
+agent's database connection or message queue.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from src.database import OpportunityCluster
+
+
+def build_evidence_payload(
+    *,
+    finding_id: int,
+    finding_kind: str,
+    title: str,
+    summary: str,
+    evidence_scores: dict[str, Any],
+    corroboration: dict[str, Any],
+    market_enrichment: dict[str, Any],
+    review_feedback: dict[str, Any],
+    market_score: float,
+    technical_score: float,
+    distribution_score: float,
+    overall_score: float,
+    cluster_id: int,
+    cluster: OpportunityCluster,
+    market_gap: dict[str, Any],
+    scorecard: dict[str, Any],
+    opportunity_id: int,
+    experiment_id: int,
+    counterevidence: list[dict[str, Any]],
+    decision: dict[str, Any],
+    selection_status: str,
+    selection_reason: str,
+    selection_gate: dict[str, Any],
+    gate_threshold: float,
+    promotion_threshold: float,
+) -> dict[str, Any]:
+    """Build the full evidence payload dict for a validation result.
+
+    This was extracted from ValidationAgent._build_evidence_payload to make
+    the data construction testable in isolation.
+    """
+    stage_gates = {
+        "signal_gate": bool(cluster.evidence_quality >= 0.35 and cluster.atom_count >= 1),
+        "cluster_gate": bool(cluster.atom_count >= 1),
+        "opportunity_gate": bool(scorecard["composite_score"] >= promotion_threshold),
+    }
+    return {
+        "finding_id": finding_id,
+        "finding_kind": finding_kind,
+        "decision": decision["recommendation"],
+        "decision_reason": decision.get("decision_reason", decision.get("reason", "")),
+        "park_subreason": decision.get("park_subreason", ""),
+        "recurrence_timeout": evidence_scores["evidence"].get("recurrence_timeout", False),
+        "competitor_timeout": evidence_scores["evidence"].get("competitor_timeout", False),
+        "recurrence_state": evidence_scores["evidence"].get("recurrence_state"),
+        "recurrence_gap_reason": evidence_scores["evidence"].get("recurrence_gap_reason", ""),
+        "recurrence_failure_class": evidence_scores["evidence"].get("recurrence_failure_class", ""),
+        "queries_considered": evidence_scores["evidence"].get("queries_considered", []),
+        "queries_executed": evidence_scores["evidence"].get("queries_executed", []),
+        "recurrence_budget_profile": evidence_scores["evidence"].get("recurrence_budget_profile", {}),
+        "candidate_meaningful": evidence_scores["evidence"].get("candidate_meaningful", {}),
+        "recurrence_probe_summary": evidence_scores["evidence"].get("recurrence_probe_summary", {}),
+        "recurrence_source_branch": evidence_scores["evidence"].get("recurrence_source_branch", {}),
+        "last_action": evidence_scores["evidence"].get("last_action", ""),
+        "last_transition_reason": evidence_scores["evidence"].get("last_transition_reason", ""),
+        "chosen_family": evidence_scores["evidence"].get("chosen_family", ""),
+        "expected_gain_class": evidence_scores["evidence"].get("expected_gain_class", ""),
+        "source_attempts_snapshot": evidence_scores["evidence"].get("source_attempts_snapshot", {}),
+        "skipped_families": evidence_scores["evidence"].get("skipped_families", {}),
+        "controller_actions": evidence_scores["evidence"].get("controller_actions", []),
+        "budget_snapshot": evidence_scores["evidence"].get("budget_snapshot", {}),
+        "fallback_strategy_used": evidence_scores["evidence"].get("fallback_strategy_used", ""),
+        "decomposed_atom_queries": evidence_scores["evidence"].get("decomposed_atom_queries", []),
+        "routing_override_reason": evidence_scores["evidence"].get("routing_override_reason", ""),
+        "cohort_query_pack_used": evidence_scores["evidence"].get("cohort_query_pack_used", False),
+        "cohort_query_pack_name": evidence_scores["evidence"].get("cohort_query_pack_name", ""),
+        "web_query_strategy_path": evidence_scores["evidence"].get("web_query_strategy_path", []),
+        "specialized_surface_targeting_used": evidence_scores["evidence"].get("specialized_surface_targeting_used", False),
+        "promotion_gap_class": evidence_scores["evidence"].get("promotion_gap_class", ""),
+        "near_miss_enrichment_action": evidence_scores["evidence"].get("near_miss_enrichment_action", ""),
+        "sufficiency_priority_reason": evidence_scores["evidence"].get("sufficiency_priority_reason", ""),
+        "value_enrichment_used": evidence_scores["evidence"].get("value_enrichment_used", False),
+        "value_enrichment_queries": evidence_scores["evidence"].get("value_enrichment_queries", []),
+        "value_enrichment_docs": evidence_scores["evidence"].get("value_enrichment_docs", []),
+        "matched_results_by_source": evidence_scores["evidence"].get("matched_results_by_source", {}),
+        "partial_results_by_source": evidence_scores["evidence"].get("partial_results_by_source", {}),
+        "matched_docs_by_source": evidence_scores["evidence"].get("matched_docs_by_source", {}),
+        "partial_docs_by_source": evidence_scores["evidence"].get("partial_docs_by_source", {}),
+        "family_confirmation_count": evidence_scores["evidence"].get("family_confirmation_count", 0),
+        "source_yield": evidence_scores["evidence"].get("source_yield", {}),
+        "reshaped_query_history": evidence_scores["evidence"].get("reshaped_query_history", []),
+        "scores": {
+            "problem_score": evidence_scores["problem_score"],
+            "solution_gap_score": evidence_scores["solution_gap_score"],
+            "saturation_score": evidence_scores["saturation_score"],
+            "feasibility_score": evidence_scores["feasibility_score"],
+            "value_score": evidence_scores["value_score"],
+            "market_score": market_score,
+            "technical_score": technical_score,
+            "distribution_score": distribution_score,
+            "overall_score": overall_score,
+        },
+        "gates": {
+            "recurring_problem": evidence_scores["problem_score"] >= gate_threshold,
+            "solution_gap": evidence_scores["solution_gap_score"] >= 0.4,
+            "saturation": evidence_scores["saturation_score"] >= 0.35,
+            "feasibility": evidence_scores["feasibility_score"] >= gate_threshold,
+            "value": evidence_scores["value_score"] >= 0.45,
+            **stage_gates,
+        },
+        "summary": {
+            "problem_statement": title,
+            "value_signal": summary[:300],
+        },
+        "cluster": {
+            "cluster_id": cluster_id,
+            "cluster_key": cluster.cluster_key,
+            "label": cluster.label,
+            "summary": cluster.summary,
+            "atom_count": cluster.atom_count,
+            "signal_count": cluster.signal_count,
+            "evidence_quality": cluster.evidence_quality,
+        },
+        "market_gap_state": market_gap["market_gap"],
+        "market_gap": market_gap,
+        "opportunity_scorecard": scorecard,
+        "evidence_assessment": {
+            "problem_plausibility": scorecard.get("problem_plausibility", 0.0),
+            "evidence_sufficiency": scorecard.get("evidence_sufficiency", 0.0),
+            "value_support": scorecard.get("value_support", 0.0),
+            "composite_score": scorecard.get("composite_score", 0.0),
+        },
+        "corroboration": corroboration,
+        "market_enrichment": market_enrichment,
+        "review_feedback": {
+            "review_feedback_count": review_feedback.get("count", 0),
+            "review_feedback_labels": review_feedback.get("labels", []),
+            "review_feedback_strongest_label": review_feedback.get("strongest_label", ""),
+            "review_feedback_strongest_count": review_feedback.get("strongest_count", 0),
+            "review_feedback_consistency": review_feedback.get("consistency", 0.0),
+            "review_feedback_park_bias": review_feedback.get("park_bias", 0.0),
+            "review_feedback_kill_bias": review_feedback.get("kill_bias", 0.0),
+        },
+        "counterevidence": counterevidence,
+        "opportunity_id": opportunity_id,
+        "experiment_id": experiment_id,
+        "selection_status": selection_status,
+        "selection_reason": selection_reason,
+        "selection_gate": selection_gate,
+    }

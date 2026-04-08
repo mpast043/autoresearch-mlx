@@ -36,6 +36,7 @@ from src.opportunity_engine import (
 )
 from src.research_tools import ResearchToolkit
 from src.source_policy import atom_generation_allowed
+from src.agents.validation_helpers import build_evidence_payload
 from src.validation_thresholds import resolve_promotion_park_thresholds
 
 
@@ -155,6 +156,61 @@ class ValidationAgent(BaseAgent):
             park_threshold=self.park_threshold,
             review_feedback=review_feedback,
         )
+        experiment_plan = plan_validation_experiment(anchor_atom, cluster_context, scorecard, market_gap)
+
+        result = await self._persist_validation_results(
+            finding=finding,
+            finding_id=finding_id,
+            title=title,
+            summary=summary,
+            cluster_id=cluster_id,
+            cluster=cluster,
+            cluster_atoms=cluster_atoms,
+            anchor_atom=anchor_atom,
+            market_gap=market_gap,
+            scorecard=scorecard,
+            counterevidence=counterevidence,
+            decision=decision,
+            validation_payload=validation_payload,
+            evidence_scores=evidence_scores,
+            market_score=market_score,
+            technical_score=technical_score,
+            distribution_score=distribution_score,
+            review_feedback=review_feedback,
+            experiment_plan=experiment_plan,
+        )
+        return result
+
+    async def _persist_validation_results(
+        self,
+        *,
+        finding: Finding,
+        finding_id: int,
+        title: str,
+        summary: str,
+        cluster_id: int,
+        cluster: OpportunityCluster,
+        cluster_atoms: list[ProblemAtom],
+        anchor_atom: ProblemAtom,
+        market_gap: dict[str, Any],
+        scorecard: dict[str, Any],
+        counterevidence: list[dict[str, Any]],
+        decision: dict[str, Any],
+        validation_payload: dict[str, Any],
+        evidence_scores: Dict[str, Any],
+        market_score: float,
+        technical_score: float,
+        distribution_score: float,
+        review_feedback: dict[str, Any],
+        experiment_plan: dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Persist validation results: opportunity, validation, build brief, ledger, and message dispatch."""
+        selection_status, selection_reason, selection_gate = determine_selection_state(
+            decision=decision["recommendation"],
+            scorecard=scorecard,
+            corroboration=validation_payload.get("corroboration", {}),
+            market_enrichment=validation_payload.get("market_enrichment", {}),
+        )
 
         opportunity = Opportunity(
             cluster_id=cluster_id,
@@ -190,8 +246,8 @@ class ValidationAgent(BaseAgent):
             willingness_to_pay_proxy=scorecard.get("willingness_to_pay_proxy", 0.0),
             formula_version=scorecard.get("formula_version", CURRENT_FORMULA_VERSION),
             threshold_version=scorecard.get("threshold_version", CURRENT_THRESHOLD_VERSION),
-            selection_status="research_more",
-            selection_reason="pending_selection",
+            selection_status=selection_status,
+            selection_reason=selection_reason,
             notes={
                 "scorecard": scorecard,
                 "market_gap": market_gap,
@@ -199,18 +255,10 @@ class ValidationAgent(BaseAgent):
                 "cluster_summary": cluster.summary,
             },
         )
-
-        selection_status, selection_reason, selection_gate = determine_selection_state(
-            decision=decision["recommendation"],
-            scorecard=scorecard,
-            corroboration=validation_payload.get("corroboration", {}),
-            market_enrichment=validation_payload.get("market_enrichment", {}),
-        )
         opportunity.selection_status = selection_status
         opportunity.selection_reason = selection_reason
         opportunity_id = self.db.upsert_opportunity(opportunity)
 
-        experiment_plan = plan_validation_experiment(anchor_atom, cluster_context, scorecard, market_gap)
         experiment = ValidationExperiment(
             opportunity_id=opportunity_id,
             cluster_id=cluster_id,
@@ -228,7 +276,7 @@ class ValidationAgent(BaseAgent):
 
         passed = decision["recommendation"] == "promote"
         overall_score = scorecard["composite_score"]
-        evidence = self._build_evidence_payload(
+        evidence = build_evidence_payload(
             finding_id=finding_id,
             finding_kind=finding.finding_kind,
             title=title,
@@ -252,6 +300,8 @@ class ValidationAgent(BaseAgent):
             selection_status=selection_status,
             selection_reason=selection_reason,
             selection_gate=selection_gate,
+            gate_threshold=self.gate_threshold,
+            promotion_threshold=self.promotion_threshold,
         )
 
         validation = Validation(
@@ -494,143 +544,6 @@ class ValidationAgent(BaseAgent):
             "sample_pains": summary.get("sample_pains", []),
             "sample_failures": summary.get("sample_failures", []),
             "sample_workarounds": summary.get("sample_workarounds", []),
-        }
-
-    def _build_evidence_payload(
-        self,
-        *,
-        finding_id: int,
-        finding_kind: str,
-        title: str,
-        summary: str,
-        evidence_scores: Dict[str, Any],
-        corroboration: dict[str, Any],
-        market_enrichment: dict[str, Any],
-        review_feedback: dict[str, Any],
-        market_score: float,
-        technical_score: float,
-        distribution_score: float,
-        overall_score: float,
-        cluster_id: int,
-        cluster: OpportunityCluster,
-        market_gap: dict[str, Any],
-        scorecard: dict[str, Any],
-        opportunity_id: int,
-        experiment_id: int,
-        counterevidence: list[dict[str, Any]],
-        decision: dict[str, Any],
-        selection_status: str,
-        selection_reason: str,
-        selection_gate: dict[str, Any],
-    ) -> dict[str, Any]:
-        stage_gates = {
-            "signal_gate": bool(cluster.evidence_quality >= 0.35 and cluster.atom_count >= 1),
-            "cluster_gate": bool(cluster.atom_count >= 1),
-            "opportunity_gate": bool(scorecard["composite_score"] >= self.promotion_threshold),
-        }
-        return {
-            "finding_id": finding_id,
-            "finding_kind": finding_kind,
-            "decision": decision["recommendation"],
-            "decision_reason": decision.get("decision_reason", decision.get("reason", "")),
-            "park_subreason": decision.get("park_subreason", ""),
-            "recurrence_timeout": evidence_scores["evidence"].get("recurrence_timeout", False),
-            "competitor_timeout": evidence_scores["evidence"].get("competitor_timeout", False),
-            "recurrence_state": evidence_scores["evidence"].get("recurrence_state"),
-            "recurrence_gap_reason": evidence_scores["evidence"].get("recurrence_gap_reason", ""),
-            "recurrence_failure_class": evidence_scores["evidence"].get("recurrence_failure_class", ""),
-            "queries_considered": evidence_scores["evidence"].get("queries_considered", []),
-            "queries_executed": evidence_scores["evidence"].get("queries_executed", []),
-            "recurrence_budget_profile": evidence_scores["evidence"].get("recurrence_budget_profile", {}),
-            "candidate_meaningful": evidence_scores["evidence"].get("candidate_meaningful", {}),
-            "recurrence_probe_summary": evidence_scores["evidence"].get("recurrence_probe_summary", {}),
-            "recurrence_source_branch": evidence_scores["evidence"].get("recurrence_source_branch", {}),
-            "last_action": evidence_scores["evidence"].get("last_action", ""),
-            "last_transition_reason": evidence_scores["evidence"].get("last_transition_reason", ""),
-            "chosen_family": evidence_scores["evidence"].get("chosen_family", ""),
-            "expected_gain_class": evidence_scores["evidence"].get("expected_gain_class", ""),
-            "source_attempts_snapshot": evidence_scores["evidence"].get("source_attempts_snapshot", {}),
-            "skipped_families": evidence_scores["evidence"].get("skipped_families", {}),
-            "controller_actions": evidence_scores["evidence"].get("controller_actions", []),
-            "budget_snapshot": evidence_scores["evidence"].get("budget_snapshot", {}),
-            "fallback_strategy_used": evidence_scores["evidence"].get("fallback_strategy_used", ""),
-            "decomposed_atom_queries": evidence_scores["evidence"].get("decomposed_atom_queries", []),
-            "routing_override_reason": evidence_scores["evidence"].get("routing_override_reason", ""),
-            "cohort_query_pack_used": evidence_scores["evidence"].get("cohort_query_pack_used", False),
-            "cohort_query_pack_name": evidence_scores["evidence"].get("cohort_query_pack_name", ""),
-            "web_query_strategy_path": evidence_scores["evidence"].get("web_query_strategy_path", []),
-            "specialized_surface_targeting_used": evidence_scores["evidence"].get("specialized_surface_targeting_used", False),
-            "promotion_gap_class": evidence_scores["evidence"].get("promotion_gap_class", ""),
-            "near_miss_enrichment_action": evidence_scores["evidence"].get("near_miss_enrichment_action", ""),
-            "sufficiency_priority_reason": evidence_scores["evidence"].get("sufficiency_priority_reason", ""),
-            "value_enrichment_used": evidence_scores["evidence"].get("value_enrichment_used", False),
-            "value_enrichment_queries": evidence_scores["evidence"].get("value_enrichment_queries", []),
-            "value_enrichment_docs": evidence_scores["evidence"].get("value_enrichment_docs", []),
-            "matched_results_by_source": evidence_scores["evidence"].get("matched_results_by_source", {}),
-            "partial_results_by_source": evidence_scores["evidence"].get("partial_results_by_source", {}),
-            "matched_docs_by_source": evidence_scores["evidence"].get("matched_docs_by_source", {}),
-            "partial_docs_by_source": evidence_scores["evidence"].get("partial_docs_by_source", {}),
-            "family_confirmation_count": evidence_scores["evidence"].get("family_confirmation_count", 0),
-            "source_yield": evidence_scores["evidence"].get("source_yield", {}),
-            "reshaped_query_history": evidence_scores["evidence"].get("reshaped_query_history", []),
-            "scores": {
-                "problem_score": evidence_scores["problem_score"],
-                "solution_gap_score": evidence_scores["solution_gap_score"],
-                "saturation_score": evidence_scores["saturation_score"],
-                "feasibility_score": evidence_scores["feasibility_score"],
-                "value_score": evidence_scores["value_score"],
-                "market_score": market_score,
-                "technical_score": technical_score,
-                "distribution_score": distribution_score,
-                "overall_score": overall_score,
-            },
-            "gates": {
-                "recurring_problem": evidence_scores["problem_score"] >= self.gate_threshold,
-                "solution_gap": evidence_scores["solution_gap_score"] >= 0.4,
-                "saturation": evidence_scores["saturation_score"] >= 0.35,
-                "feasibility": evidence_scores["feasibility_score"] >= self.gate_threshold,
-                "value": evidence_scores["value_score"] >= 0.45,
-                **stage_gates,
-            },
-            "summary": {
-                "problem_statement": title,
-                "value_signal": summary[:300],
-            },
-            "cluster": {
-                "cluster_id": cluster_id,
-                "cluster_key": cluster.cluster_key,
-                "label": cluster.label,
-                "summary": cluster.summary,
-                "atom_count": cluster.atom_count,
-                "signal_count": cluster.signal_count,
-                "evidence_quality": cluster.evidence_quality,
-            },
-            "market_gap_state": market_gap["market_gap"],
-            "market_gap": market_gap,
-            "opportunity_scorecard": scorecard,
-            "evidence_assessment": {
-                "problem_plausibility": scorecard.get("problem_plausibility", 0.0),
-                "evidence_sufficiency": scorecard.get("evidence_sufficiency", 0.0),
-                "value_support": scorecard.get("value_support", 0.0),
-                "composite_score": scorecard.get("composite_score", 0.0),
-            },
-            "corroboration": corroboration,
-            "market_enrichment": market_enrichment,
-            "review_feedback": {
-                "review_feedback_count": review_feedback.get("count", 0),
-                "review_feedback_labels": review_feedback.get("labels", []),
-                "review_feedback_strongest_label": review_feedback.get("strongest_label", ""),
-                "review_feedback_strongest_count": review_feedback.get("strongest_count", 0),
-                "review_feedback_consistency": review_feedback.get("consistency", 0.0),
-                "review_feedback_park_bias": review_feedback.get("park_bias", 0.0),
-                "review_feedback_kill_bias": review_feedback.get("kill_bias", 0.0),
-            },
-            "counterevidence": counterevidence,
-            "opportunity_id": opportunity_id,
-            "experiment_id": experiment_id,
-            "selection_status": selection_status,
-            "selection_reason": selection_reason,
-            "selection_gate": selection_gate,
         }
 
     def _record_ledger_entries(
