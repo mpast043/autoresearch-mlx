@@ -17,6 +17,7 @@ import yaml
 
 from src.runtime.env import load_local_env  # noqa: E402
 from src.runtime.paths import DEFAULT_CONFIG_PATH, build_runtime_paths, resolve_project_path  # noqa: E402
+from src.utils.logging_utils import set_run_id, StructuredJsonFormatter, StructuredTextFormatter
 from src.database import Database  # noqa: E402
 from src.orchestrator import Orchestrator  # noqa: E402
 from src.messaging import MessageType  # noqa: E402
@@ -92,16 +93,18 @@ class AutoResearcher:
             encoding="utf-8",
         )
         rotating_handler.setLevel(logging.INFO)
-        rotating_handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-        )
+        use_json = self.config.get("logging", {}).get("json_format", False)
+        formatter = StructuredJsonFormatter() if use_json else StructuredTextFormatter()
+        rotating_handler.setFormatter(formatter)
+
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
 
         logging.basicConfig(
             level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(name)s %(message)s",
             handlers=[
                 rotating_handler,
-                logging.StreamHandler(),
+                stream_handler,
             ],
             force=True,
         )
@@ -127,6 +130,7 @@ class AutoResearcher:
         else:
             self.current_run_id = self.db.get_latest_run_id()
         self.db.set_active_run_id(self.current_run_id)
+        set_run_id(self.current_run_id)
 
         builder_config = self.config.get("builder", {})
         orchestration_config = self.config.get("orchestration", {})
