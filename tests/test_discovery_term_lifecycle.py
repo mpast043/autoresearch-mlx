@@ -18,6 +18,7 @@ from src.discovery_term_lifecycle import (
     calculate_platform_native_score,
     calculate_plugin_fit_score,
     calculate_wedge_quality_score,
+    recompute_wedge_quality_score,
     is_vague_bucket,
     get_platform_from_term,
     compute_next_state,
@@ -474,3 +475,194 @@ class TestNicheQualityScoring:
         shop_idx = next(i for i, t in enumerate(wedge_terms) if "shopify" in t["term_value"])
         manual_idx = next(i for i, t in enumerate(wedge_terms) if "manual" in t["term_value"])
         assert shop_idx < manual_idx
+
+
+class TestRecomputeWedgeQualityScore:
+    """Tests for the Bayesian-adjacent wedge quality score blending."""
+
+    def test_no_outcomes_returns_heuristic(self):
+        """With zero total outcomes, return heuristic unchanged."""
+        h = 0.7
+        assert recompute_wedge_quality_score(h) == h
+
+    def test_below_min_samples_returns_heuristic(self):
+        """With total_opportunities < min_samples, return heuristic unchanged."""
+        h = 0.7
+        assert recompute_wedge_quality_score(h, buildable_opportunity_count=1, total_opportunities=1, min_samples=2) == h
+
+    def test_with_buildable_boosts_score(self):
+        """At min_samples=2 with 2 buildable, score should increase."""
+        h = 0.5
+        result = recompute_wedge_quality_score(
+            h,
+            buildable_opportunity_count=2,
+            total_opportunities=2,
+            min_samples=2,
+        )
+        # Weight = min(2/6, 0.5) ≈ 0.33
+        # outcome_rate = 2/2 = 1.0
+        # blended = 0.67 * 0.5 + 0.33 * 1.0 ≈ 0.67
+        assert result > h
+        assert result <= 1.0
+
+    def test_with_vague_penalizes_score(self):
+        """Vague outcomes should pull the score down."""
+        h = 0.6
+        result_no_vague = recompute_wedge_quality_score(
+            h,
+            buildable_opportunity_count=3,
+            vague_bucket_count=0,
+            total_opportunities=3,
+            min_samples=2,
+        )
+        result_with_vague = recompute_wedge_quality_score(
+            h,
+            buildable_opportunity_count=3,
+            vague_bucket_count=2,
+            total_opportunities=5,
+            min_samples=2,
+        )
+        assert result_with_vague < result_no_vague
+
+    def test_large_sample_weight_caps_at_half(self):
+        """At 6+ outcomes, weight approaches 0.5 but never exceeds it."""
+        result = recompute_wedge_quality_score(
+            heuristic_score=0.3,
+            buildable_opportunity_count=5,
+            vague_bucket_count=1,
+            total_opportunities=6,
+            min_samples=2,
+        )
+        # Weight = min(6/6, 0.5) = 0.5
+        # outcome_rate = 5/6 * (1 - 0.3 * 1/6) ≈ 0.792
+        # blended = 0.5 * 0.3 + 0.5 * 0.792 ≈ 0.546
+        assert result > 0.3  # Better than heuristic
+        assert result < 0.8  # But not overly optimistic
+
+    def test_all_vague_reduces_score(self):
+        """If all outcomes are vague, score should drop below heuristic."""
+        h = 0.6
+        result = recompute_wedge_quality_score(
+            h,
+            buildable_opportunity_count=0,
+            vague_bucket_count=3,
+            total_opportunities=3,
+            min_samples=2,
+        )
+        # outcome_rate = 0/3 = 0, vague_penalty still applied
+        assert result < h
+
+    def test_clamped_to_zero_one(self):
+        """Result is always clamped to [0, 1]."""
+        result = recompute_wedge_quality_score(
+            heuristic_score=1.0,
+            buildable_opportunity_count=100,
+            total_opportunities=100,
+            min_samples=2,
+        )
+        assert 0.0 <= result <= 1.0
+
+
+class TestRecordWedgeFeedback:
+    """Tests for TermLifecycleManager.record_wedge_feedback()."""
+
+    def test_buildable_increments_count(self, temp_db):
+        """Recording buildable feedback increments buildable_opportunity_count."""
+        manager = TermLifecycleManager(temp_db)
+        manager.ensure_term_exists("keyword", "shopify inventory sync")
+        temp_db.update_search_term_metrics("keyword", "shopify inventory sync", wedge_quality_score=0.5)
+
+        manager.record_wedge_feedback(
+            "shopify inventory sync",
+            is_buildable_wedge=True,
+            verdict="build_now",
+        )
+
+        term = temp_db.get_search_term("keyword", "shopify inventory sync")
+        assert term["buildable_opportunity_count"] == 1
+
+    def test_too_broad_increments_vague(self, temp_db):
+        """Recording too_broad feedback increments vague_bucket_count."""
+        manager = TermLifecycleManager(temp_db)
+        manager.ensure_term_exists("keyword", "spreadsheet workflow")
+        temp_db.update_search_term_metrics("keyword", "spreadsheet workflow", wedge_quality_score=0.5)
+
+        manager.record_wedge_feedback(
+            "spreadsheet workflow",
+            is_too_broad=True,
+            verdict="reject",
+        )
+
+        term = temp_db.get_search_term("keyword", "spreadsheet workflow")
+        assert term["vague_bucket_count"] == 1
+
+    def test_unknown_term_logs_warning(self, temp_db):
+        """Unknown term should not crash, just log a warning."""
+        manager = TermLifecycleManager(temp_db)
+        # Should not raise
+        manager.record_wedge_feedback(
+            "nonexistent query term",
+            is_buildable_wedge=True,
+            verdict="build_now",
+        )
+
+    def test_recalculated_score(self, temp_db):
+        """Wedge quality score is recalculated after feedback."""
+        manager = TermLifecycleManager(temp_db)
+        manager.ensure_term_exists("keyword", "shopify inventory sync")
+        temp_db.update_search_term_metrics(
+            "keyword", "shopify inventory sync",
+            wedge_quality_score=0.3,
+            buildable_opportunity_count=0,
+            vague_bucket_count=0,
+        )
+
+        # Record enough feedback to exceed min_samples
+        manager.record_wedge_feedback("shopify inventory sync", is_buildable_wedge=True, verdict="build_now")
+        manager.record_wedge_feedback("shopify inventory sync", is_buildable_wedge=True, verdict="build_now")
+
+        term = temp_db.get_search_term("keyword", "shopify inventory sync")
+        # Score should be updated (not necessarily higher since we're blending with 0.3 heuristic)
+        assert term["buildable_opportunity_count"] == 2
+        # The exact value depends on the formula, but it should have changed
+        assert term["wedge_quality_score"] is not None
+
+
+class TestBuildableOpportunityCountTransitions:
+    """Tests for state transitions influenced by buildable_opportunity_count."""
+
+    def test_should_promote_with_buildable_count(self):
+        """buildable_opportunity_count >= 1 should promote to high_performing."""
+        metrics = TermMetrics(
+            times_searched=1,
+            buildable_opportunity_count=1,
+        )
+        from src.discovery_term_lifecycle import should_promote_to_high_performing
+        assert should_promote_to_high_performing(metrics) is True
+
+    def test_should_mark_completed_unchanged(self):
+        """buildable_opportunity_count should NOT trigger completed."""
+        metrics = TermMetrics(
+            times_searched=3,
+            buildable_opportunity_count=1,
+            build_briefs=0,
+        )
+        from src.discovery_term_lifecycle import should_mark_completed
+        assert should_mark_completed(metrics) is False
+
+    def test_completed_still_requires_build_briefs(self):
+        """Completion still requires build_briefs, not just buildable count."""
+        metrics = TermMetrics(
+            times_searched=3,
+            buildable_opportunity_count=5,
+            build_briefs=0,
+        )
+        from src.discovery_term_lifecycle import should_mark_completed
+        assert should_mark_completed(metrics) is False
+
+        metrics2 = TermMetrics(
+            times_searched=3,
+            buildable_opportunity_count=0,
+            build_briefs=1,
+        )
+        assert should_mark_completed(metrics2) is True

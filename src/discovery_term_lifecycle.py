@@ -123,6 +123,7 @@ class TermMetrics:
     passes: int = 0
     prototype_candidates: int = 0
     build_briefs: int = 0
+    buildable_opportunity_count: int = 0
     screened_out: int = 0
     low_yield_count: int = 0
     noisy_count: int = 0
@@ -182,6 +183,9 @@ DEFAULT_CONFIG = LifecycleConfig()
 
 def should_promote_to_high_performing(metrics: TermMetrics, config: LifecycleConfig = DEFAULT_CONFIG) -> bool:
     """Determine if a term should be promoted to high_performing state."""
+    # Wedge-validated: produced at least one buildable opportunity
+    if metrics.buildable_opportunity_count >= 1:
+        return True
     # Has produced prototype candidates or passes
     if metrics.prototype_candidates >= config.min_prototype_candidates_for_promotion:
         return True
@@ -410,6 +414,48 @@ def calculate_wedge_quality_score(
     return max(0.0, min(1.0, score))
 
 
+def recompute_wedge_quality_score(
+    heuristic_score: float,
+    buildable_opportunity_count: int = 0,
+    vague_bucket_count: int = 0,
+    total_opportunities: int = 0,
+    min_samples: int = 2,
+) -> float:
+    """Blend heuristic wedge quality score with actual downstream outcomes.
+
+    Uses a Bayesian-adjacent approach: the heuristic is the prior, outcomes are
+    evidence. The weight of outcomes ramps up with sample size so that small
+    sample counts don't displace a reasonable heuristic too aggressively.
+
+    Args:
+        heuristic_score: Text-based wedge quality score from calculate_wedge_quality_score().
+        buildable_opportunity_count: Number of times this term produced a wedge-gate pass.
+        vague_bucket_count: Number of times this term produced a too_broad rejection.
+        total_opportunities: Total traced opportunities for this term.
+        min_samples: Minimum outcome count before blending begins (default 2).
+
+    Returns:
+        Blended score clamped to [0, 1].
+    """
+    if total_opportunities < min_samples:
+        # Not enough data to trust outcomes — return heuristic unchanged
+        return heuristic_score
+
+    # Outcome rate: what fraction of traced opportunities passed the wedge gate
+    rate = buildable_opportunity_count / max(total_opportunities, 1)
+
+    # Vague penalty: reduce rate proportionally to too_broad rejections
+    vague_penalty = 0.3 * (vague_bucket_count / max(total_opportunities, 1))
+    adjusted_rate = rate * max(0.0, 1.0 - vague_penalty)
+
+    # Outcome weight ramps from 0 to 0.5 based on sample size
+    # At min_samples*3 (=6 by default), weight reaches 0.5
+    weight = min(total_opportunities / (min_samples * 3), 0.5)
+
+    blended = (1 - weight) * heuristic_score + weight * adjusted_rate
+    return max(0.0, min(1.0, blended))
+
+
 def is_vague_bucket(term_value: str) -> bool:
     """Check if a term is a vague bucket pattern."""
     term = term_value.lower()
@@ -578,7 +624,21 @@ class TermLifecycleManager:
         consequence = calculate_consequence_score(term_value)
         platform_native = calculate_platform_native_score(term_value)
         plugin_fit = calculate_plugin_fit_score(term_value)
-        wedge_quality = calculate_wedge_quality_score(term_value, specificity, consequence, platform_native, plugin_fit)
+        heuristic_wedge = calculate_wedge_quality_score(term_value, specificity, consequence, platform_native, plugin_fit)
+
+        # Blend heuristic score with actual outcome data
+        buildable_count = int(current.get("buildable_opportunity_count", 0) or 0) if current else 0
+        vague_count = int(current.get("vague_bucket_count", 0) or 0) if current else 0
+        buildable_increment = 1 if is_buildable_wedge else 0
+        vague_increment = 1 if is_vague else 0
+        total_outcomes = (buildable_count + buildable_increment) + (vague_count + vague_increment) + int(current.get("screened_out", 0) or 0 if current else 0)
+
+        wedge_quality = recompute_wedge_quality_score(
+            heuristic_score=heuristic_wedge,
+            buildable_opportunity_count=buildable_count + buildable_increment,
+            vague_bucket_count=vague_count + vague_increment,
+            total_opportunities=total_outcomes,
+        )
 
         # Determine next state
         new_state, reason = compute_next_state(current_state, metrics, self.config)
@@ -632,6 +692,88 @@ class TermLifecycleManager:
                 "platform_native_score": platform_native,
             },
         }
+
+    def record_wedge_feedback(
+        self,
+        term_value: str,
+        *,
+        is_buildable_wedge: bool = False,
+        is_too_broad: bool = False,
+        verdict: str = "",
+    ) -> None:
+        """Record wedge evaluation feedback for a search term.
+
+        Propagates downstream wedge gate outcomes back to the source term,
+        updating buildable_opportunity_count or vague_bucket_count and
+        recomputing the blended wedge_quality_score. May trigger state
+        transitions (e.g. promotion to high_performing).
+
+        Args:
+            term_value: The search query string to update.
+            is_buildable_wedge: True if the wedge gate passed for this term's opportunity.
+            is_too_broad: True if the opportunity was rejected for being too broad.
+            verdict: The wedge evaluation verdict (build_now, reject, etc.).
+        """
+        term_type = "keyword"  # discovery_query values are always keyword-type terms
+
+        existing = self.db.get_search_term(term_type, term_value)
+        if not existing:
+            logger.warning(f"Wedge feedback: term '{term_value}' not found in discovery_search_terms, skipping")
+            return
+
+        buildable_count = int(existing.get("buildable_opportunity_count", 0) or 0)
+        vague_count = int(existing.get("vague_bucket_count", 0) or 0)
+        current_score = float(existing.get("wedge_quality_score", 0) or 0)
+
+        # Increment the appropriate counter
+        if is_buildable_wedge:
+            buildable_count += 1
+        if is_too_broad:
+            vague_count += 1
+
+        total = buildable_count + vague_count + int(existing.get("screened_out", 0) or 0)
+
+        # Recompute blended score
+        new_score = recompute_wedge_quality_score(
+            heuristic_score=current_score if total > 0 else 0.0,
+            buildable_opportunity_count=buildable_count,
+            vague_bucket_count=vague_count,
+            total_opportunities=total,
+        )
+
+        # Update metrics
+        self.db.update_search_term_metrics(
+            term_type,
+            term_value,
+            buildable_opportunity_count=buildable_count,
+            vague_bucket_count=vague_count,
+            wedge_quality_score=new_score,
+        )
+
+        # Re-evaluate state transition
+        metrics = TermMetrics(
+            times_searched=int(existing.get("times_searched", 0) or 0),
+            findings_emitted=int(existing.get("findings_emitted", 0) or 0),
+            validations=int(existing.get("validations", 0) or 0),
+            passes=int(existing.get("passes", 0) or 0),
+            prototype_candidates=int(existing.get("prototype_candidates", 0) or 0),
+            build_briefs=int(existing.get("build_briefs", 0) or 0),
+            buildable_opportunity_count=buildable_count,
+            screened_out=int(existing.get("screened_out", 0) or 0),
+            low_yield_count=int(existing.get("low_yield_count", 0) or 0),
+            noisy_count=int(existing.get("noisy_count", 0) or 0),
+            thin_validation_count=int(existing.get("thin_validation_count", 0) or 0),
+            avg_validation_score=float(existing.get("avg_validation_score", 0) or 0),
+            avg_screening_score=float(existing.get("avg_screening_score", 0) or 0),
+            quality_score=float(existing.get("quality_score", 0) or 0),
+        )
+
+        current_state = existing.get("state", "new")
+        new_state, reason = compute_next_state(current_state, metrics, self.config)
+
+        if new_state != current_state:
+            self.db.update_search_term_state(term_type, term_value, new_state, notes=reason)
+            logger.info(f"Wedge feedback: {term_type}:{term_value} state {current_state} -> {new_state} ({reason})")
 
     def get_available_terms(self, term_type: str, limit: int = 100) -> list[dict[str, Any]]:
         """Get terms available for discovery (not exhausted/banned/paused)."""

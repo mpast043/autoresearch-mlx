@@ -472,6 +472,7 @@ async def cmd_suggest_discovery(args: argparse.Namespace, _app: AutoResearcher) 
 async def cmd_term_lifecycle(args: argparse.Namespace, _app: AutoResearcher) -> None:
     async with app_context(args) as app:
         from src.discovery_term_lifecycle import TermLifecycleManager
+        from src.database import get_traceability_stats
 
         _ = TermLifecycleManager(app.db)
 
@@ -480,12 +481,16 @@ async def cmd_term_lifecycle(args: argparse.Namespace, _app: AutoResearcher) -> 
         else:
             terms = app.db.list_search_terms(limit=args.limit or 100)
 
+        # Include traceability stats so the user can see if the feedback loop is working
+        trace_stats = get_traceability_stats()
+
         print_json({
             "terms": terms,
             "counts": {
                 "total": len(terms),
                 "by_state": collections.Counter(t.get("state") for t in terms),
             },
+            "traceability": trace_stats,
         })
 
 

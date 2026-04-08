@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+# Traceability feedback loop counters — track how often opportunities
+# can/cannot be mapped back to their source search terms.
+_traceability_hit_count: int = 0
+_traceability_miss_count: int = 0
+
+
+def get_traceability_stats() -> dict[str, int]:
+    """Return traceability hit/miss counts for the wedge feedback loop."""
+    return {"hits": _traceability_hit_count, "misses": _traceability_miss_count}
 
 from src.build_prep import is_allowed_selection_transition
 from src.database_views import (
@@ -3265,6 +3278,76 @@ class Database:
             (notes_json, opportunity_id),
         )
         self._commit(conn)
+
+    def get_search_terms_for_opportunity(self, opportunity_id: int) -> list[str]:
+        """Resolve discovery queries that produced findings for an opportunity.
+
+        Traces: opportunity -> cluster_members -> problem_atoms -> findings -> evidence_json.discovery_query
+        Returns deduplicated list of non-empty query strings.
+        Logs warnings and increments miss counter when traceability chain breaks.
+        """
+        global _traceability_hit_count, _traceability_miss_count
+
+        opportunity = self.get_opportunity(opportunity_id)
+        if not opportunity:
+            logger.warning(f"Traceability miss: opportunity {opportunity_id} not found")
+            _traceability_miss_count += 1
+            return []
+
+        cluster_id = getattr(opportunity, "cluster_id", None)
+        if not cluster_id:
+            logger.warning(f"Traceability miss: opportunity {opportunity_id} has no cluster_id")
+            _traceability_miss_count += 1
+            return []
+
+        conn = self._get_connection()
+
+        # Determine the correct atom column name (schema migration compatibility)
+        member_columns = {row["name"] for row in conn.execute("PRAGMA table_info(cluster_members)").fetchall()}
+        atom_column = "problem_atom_id" if "problem_atom_id" in member_columns else "atom_id"
+
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT f.evidence_json
+            FROM cluster_members cm
+            JOIN problem_atoms pa ON pa.id = cm.{atom_column}
+            JOIN findings f ON f.id = pa.finding_id
+            WHERE cm.cluster_id = ?
+            """,
+            (cluster_id,),
+        ).fetchall()
+
+        if not rows:
+            logger.warning(f"Traceability miss: no findings for opportunity {opportunity_id} cluster {cluster_id}")
+            _traceability_miss_count += 1
+            return []
+
+        queries = []
+        for row in rows:
+            try:
+                evidence = json.loads(row[0]) if row[0] else {}
+            except (json.JSONDecodeError, TypeError):
+                continue
+            q = evidence.get("discovery_query", "").strip()
+            if q:
+                queries.append(q)
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique = []
+        for q in queries:
+            if q not in seen:
+                seen.add(q)
+                unique.append(q)
+
+        if not unique:
+            logger.warning(f"Traceability miss: opportunity {opportunity_id} has {len(rows)} findings but none with discovery_query")
+            _traceability_miss_count += 1
+        else:
+            _traceability_hit_count += 1
+            logger.debug(f"Traceability hit: opportunity {opportunity_id} mapped to {len(unique)} queries: {unique}")
+
+        return unique
 
     def insert_review_feedback(self, feedback: ReviewFeedback) -> int:
         conn = self._get_connection()

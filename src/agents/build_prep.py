@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 from typing import Any, Dict, Optional
 
 from src.agents.base import BaseAgent
 from src.build_prep import is_allowed_selection_transition
 from src.database import BuildPrepOutput, Database
 from src.messaging import MessageQueue, MessageType
+
+logger = logging.getLogger(__name__)
 
 
 class _BuildPrepAgent(BaseAgent):
@@ -277,6 +281,9 @@ class SpecGenerationAgent(_BuildPrepAgent):
                     f"Opp #{brief.opportunity_id} failed wedge gate: {failure_reasons}"
                 )
 
+            # Propagate wedge evaluation results back to source search terms
+            self._feedback_wedge_result(brief.opportunity_id, wedge_eval, notes)
+
         await self.send_message(
             to_agent="orchestrator",
             msg_type=MessageType.BUILD_PREP,
@@ -292,4 +299,68 @@ class SpecGenerationAgent(_BuildPrepAgent):
             priority=2,
         )
         return {"success": True, "output_id": output_id}
+
+    def _feedback_wedge_result(
+        self,
+        opportunity_id: int,
+        wedge_eval: Any,
+        notes: dict[str, Any],
+    ) -> None:
+        """Propagate wedge evaluation results back to the source search terms.
+
+        Maps gate outcomes to term lifecycle counters:
+        - passes_wedge_gate -> buildable_opportunity_count++
+        - not is_narrow -> vague_bucket_count++
+
+        Uses a hash-based dedup guard to avoid double-counting on re-runs
+        while allowing re-evaluation when the model or prompt changes.
+        """
+        try:
+            from src.discovery_term_lifecycle import TermLifecycleManager
+        except ImportError:
+            logger.debug("TermLifecycleManager not available, skipping wedge feedback")
+            return
+
+        # Dedup guard: hash of opportunity_id + verdict + evaluated_by
+        # This allows re-evaluation when model/prompt changes (different hash)
+        dedup_id = hashlib.md5(
+            f"{opportunity_id}:{wedge_eval.verdict}:{wedge_eval.evaluated_by}".encode()
+        ).hexdigest()
+        if notes.get("wedge_feedback_id") == dedup_id:
+            logger.debug(f"Wedge feedback already sent for opp #{opportunity_id}, skipping")
+            return
+
+        try:
+            queries = self.db.get_search_terms_for_opportunity(opportunity_id)
+        except Exception:
+            logger.warning(f"Wedge feedback: could not resolve search terms for opp #{opportunity_id}")
+            return
+
+        if not queries:
+            logger.debug(f"Wedge feedback: no source queries found for opp #{opportunity_id}")
+            return
+
+        lifecycle = TermLifecycleManager(self.db)
+
+        is_buildable = wedge_eval.passes_wedge_gate
+        is_too_broad = not wedge_eval.is_narrow
+
+        for query in queries:
+            try:
+                lifecycle.record_wedge_feedback(
+                    query,
+                    is_buildable_wedge=is_buildable,
+                    is_too_broad=is_too_broad,
+                    verdict=wedge_eval.verdict,
+                )
+            except Exception as e:
+                logger.debug(f"Wedge feedback failed for term '{query}': {e}")
+
+        # Mark feedback as sent
+        notes["wedge_feedback_id"] = dedup_id
+        self.db.update_opportunity_notes(opportunity_id, json.dumps(notes))
+        logger.info(
+            f"Wedge feedback sent for opp #{opportunity_id}: "
+            f"{len(queries)} queries, buildable={is_buildable}, too_broad={is_too_broad}"
+        )
 

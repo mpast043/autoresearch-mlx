@@ -37,6 +37,7 @@ from src.discovery_term_lifecycle import (
     calculate_specificity_score,
     calculate_wedge_quality_score,
     compute_next_state,
+    recompute_wedge_quality_score,
 )
 from src.llm_discovery_expander import LLMDiscoveryExpander
 from src.problem_space import EXPLORING, VALIDATED
@@ -1520,12 +1521,23 @@ class DiscoveryAgent(BaseAgent):
             consequence = calculate_consequence_score(keyword)
             platform_native = calculate_platform_native_score(keyword)
             plugin_fit = calculate_plugin_fit_score(keyword)
-            wedge_quality = calculate_wedge_quality_score(
+            heuristic_wedge = calculate_wedge_quality_score(
                 keyword,
                 specificity,
                 consequence,
                 platform_native,
                 plugin_fit,
+            )
+
+            # Blend heuristic with actual outcome data
+            buildable_count = int(existing.get("buildable_opportunity_count", 0) or 0)
+            vague_count = int(existing.get("vague_bucket_count", 0) or 0)
+            total_outcomes = buildable_count + vague_count + int(existing.get("screened_out", 0) or 0)
+            wedge_quality = recompute_wedge_quality_score(
+                heuristic_score=heuristic_wedge,
+                buildable_opportunity_count=buildable_count,
+                vague_bucket_count=vague_count,
+                total_opportunities=total_outcomes,
             )
 
             self.term_lifecycle.ensure_term_exists("keyword", keyword)
