@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections import Counter
 from typing import Any
@@ -17,6 +18,49 @@ from src.utils.opportunity_helpers import (
     clamp,
     json_dumps,
 )
+
+logger = logging.getLogger(__name__)
+
+# Module-level config set by run.py at startup for LLM atom extraction
+_RUNTIME_CONFIG: dict[str, Any] = {}
+
+
+def configure_opportunity_engine(config: dict[str, Any]) -> None:
+    """Set runtime config for LLM-enhanced atom extraction."""
+    global _RUNTIME_CONFIG
+    _RUNTIME_CONFIG = config
+
+
+def _get_llm_atom_config() -> dict[str, Any]:
+    """Return LLM config if atom extraction is enabled, else empty dict."""
+    if not _RUNTIME_CONFIG:
+        return {}
+    llm_expansion = _RUNTIME_CONFIG.get("discovery", {}).get("llm_expansion", {})
+    if not llm_expansion.get("enabled", False):
+        return {}
+    return _RUNTIME_CONFIG
+
+
+def _atom_needs_llm(failure_mode: str, pain_statement: str, trigger_event: str) -> bool:
+    """Check if the heuristic atom extraction produced poor enough results
+    that LLM enhancement is worthwhile."""
+    # If two or more key fields are empty, definitely need LLM
+    empty_count = sum(1 for f in [failure_mode, pain_statement, trigger_event] if not f or len(f) < 15)
+    if empty_count >= 2:
+        return True
+
+    # Also trigger if pain_statement or failure_mode looks like it's just
+    # copied raw text (no specific failure described)
+    generic_indicators = ["welcome to", "forum", "use this", "find customizable", "this is an", "here is"]
+    for field in [failure_mode, pain_statement]:
+        if field and any(ind in field.lower() for ind in generic_indicators):
+            return True
+
+    # Trigger if pain and failure are identical (heuristic couldn't differentiate)
+    if pain_statement and failure_mode and pain_statement == failure_mode:
+        return True
+
+    return False
 
 # =============================================================================
 # SCORING VERSION CONTROL
@@ -1687,6 +1731,43 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
         {"job_to_be_done": job_to_be_done, "failure_mode": failure_mode, "cost_consequence_clues": ", ".join(cost_clues)},
         text
     )
+
+    # LLM-enhanced atom extraction: if key fields are empty or poor,
+    # try the LLM to fill them in. This runs AFTER heuristics so the
+    # LLM has context from the heuristic attempt and only fills gaps.
+    _llm_atom_config = _get_llm_atom_config()
+    if _llm_atom_config and _atom_needs_llm(failure_mode, pain_statement, trigger_event):
+        try:
+            from src.llm_discovery_expander import LLMAtomExtractor
+            _extractor = LLMAtomExtractor(_llm_atom_config)
+            _heuristic_atom = {
+                "user_role": user_role,
+                "job_to_be_done": job_to_be_done,
+                "trigger_event": trigger_event,
+                "pain_statement": pain_statement,
+                "failure_mode": failure_mode,
+                "current_workaround": ", ".join(workarounds),
+                "cost_consequence_clues": ", ".join(cost_clues),
+            }
+            _enhanced = _extractor.extract(text, _heuristic_atom)
+            # Merge improved fields back
+            if _enhanced.get("user_role") and len(_enhanced["user_role"]) > len(user_role):
+                user_role = _enhanced["user_role"]
+            if _enhanced.get("job_to_be_done") and len(_enhanced["job_to_be_done"]) > len(job_to_be_done):
+                job_to_be_done = _enhanced["job_to_be_done"]
+            if _enhanced.get("trigger_event") and len(_enhanced["trigger_event"]) > len(trigger_event):
+                trigger_event = _enhanced["trigger_event"]
+            if _enhanced.get("pain_statement") and len(_enhanced["pain_statement"]) > len(pain_statement):
+                pain_statement = _enhanced["pain_statement"]
+            if _enhanced.get("failure_mode") and len(_enhanced["failure_mode"]) > len(failure_mode):
+                failure_mode = _enhanced["failure_mode"]
+            if _enhanced.get("current_workaround") and len(_enhanced["current_workaround"]) > len(", ".join(workarounds)):
+                workarounds = _enhanced["current_workaround"].split(", ")
+            if _enhanced.get("cost_consequence_clues") and len(_enhanced["cost_consequence_clues"]) > len(", ".join(cost_clues)):
+                cost_clues = _enhanced["cost_consequence_clues"].split(", ")
+            logger.info("LLM atom extraction enhanced fields for atom from: %s", title_text[:60])
+        except Exception as e:
+            logger.warning("LLM atom extraction failed, keeping heuristic: %s", e)
 
     return {
         "cluster_key": cluster_key,

@@ -12,9 +12,10 @@ from src.messaging import MessageQueue, MessageType
 
 
 class _BuildPrepAgent(BaseAgent):
-    def __init__(self, name: str, db: Database, message_queue: Optional[MessageQueue] = None):
+    def __init__(self, name: str, db: Database, message_queue: Optional[MessageQueue] = None, config: dict[str, Any] | None = None):
         super().__init__(name, message_queue)
         self.db = db
+        self.config = config or {}
 
     def _load_context(self, payload: Dict[str, Any]) -> tuple[Any, dict[str, Any], int]:
         build_brief_id = int(payload["build_brief_id"])
@@ -28,8 +29,8 @@ class _BuildPrepAgent(BaseAgent):
 class SolutionFramingAgent(_BuildPrepAgent):
     """Turn a selected build brief into a narrow solution frame."""
 
-    def __init__(self, db: Database, message_queue: Optional[MessageQueue] = None):
-        super().__init__("solution_framing", db, message_queue)
+    def __init__(self, db: Database, message_queue: Optional[MessageQueue] = None, config: dict[str, Any] | None = None):
+        super().__init__("solution_framing", db, message_queue, config)
 
     async def process(self, message) -> Dict[str, Any]:
         if message.msg_type != MessageType.BUILD_BRIEF:
@@ -111,8 +112,8 @@ class SolutionFramingAgent(_BuildPrepAgent):
 class ExperimentDesignAgent(_BuildPrepAgent):
     """Turn the framed opportunity into a concrete prototype experiment plan."""
 
-    def __init__(self, db: Database, message_queue: Optional[MessageQueue] = None):
-        super().__init__("experiment_design", db, message_queue)
+    def __init__(self, db: Database, message_queue: Optional[MessageQueue] = None, config: dict[str, Any] | None = None):
+        super().__init__("experiment_design", db, message_queue, config)
 
     async def process(self, message) -> Dict[str, Any]:
         if message.msg_type != MessageType.BUILD_PREP:
@@ -175,8 +176,8 @@ class ExperimentDesignAgent(_BuildPrepAgent):
 class SpecGenerationAgent(_BuildPrepAgent):
     """Convert the brief plus prep outputs into a build-ready spec slice."""
 
-    def __init__(self, db: Database, message_queue: Optional[MessageQueue] = None):
-        super().__init__("spec_generation", db, message_queue)
+    def __init__(self, db: Database, message_queue: Optional[MessageQueue] = None, config: dict[str, Any] | None = None):
+        super().__init__("spec_generation", db, message_queue, config)
 
     async def process(self, message) -> Dict[str, Any]:
         if message.msg_type != MessageType.BUILD_PREP:
@@ -229,15 +230,52 @@ class SpecGenerationAgent(_BuildPrepAgent):
             )
         )
 
-        if is_allowed_selection_transition(brief.status, "build_ready"):
-            self.db.update_build_brief_status(build_brief_id, "build_ready")
+        # Wedge evaluation gate — only mark build_ready if wedge criteria pass
+        from src.builder_output import WedgeEvaluator, WedgeEvaluation
+
         opportunity = self.db.get_opportunity(brief.opportunity_id)
-        if opportunity and is_allowed_selection_transition(opportunity.selection_status, "build_ready"):
-            self.db.update_opportunity_selection(
-                brief.opportunity_id,
-                selection_status="build_ready",
-                selection_reason="spec_generation_complete",
-            )
+        if opportunity:
+            wedge_evaluator = WedgeEvaluator(self.db, self.config if hasattr(self, 'config') else {})
+            wedge_eval = wedge_evaluator.evaluate_sync(brief.opportunity_id)
+
+            # Store evaluation on opportunity notes
+            notes = json.loads(opportunity.notes_json) if hasattr(opportunity, 'notes_json') and opportunity.notes_json else {}
+            notes["wedge_evaluation"] = {
+                "software_fit": wedge_eval.software_fit,
+                "monetization_fit": wedge_eval.monetization_fit,
+                "is_narrow": wedge_eval.is_narrow,
+                "trust_risk": wedge_eval.trust_risk,
+                "verdict": wedge_eval.verdict,
+                "narrowness_reason": wedge_eval.narrowness_reason,
+                "software_fit_reason": wedge_eval.software_fit_reason,
+                "monetization_reason": wedge_eval.monetization_reason,
+                "suggested_mvp": wedge_eval.suggested_mvp,
+                "first_paid_offer": wedge_eval.first_paid_offer,
+                "pricing_hypothesis": wedge_eval.pricing_hypothesis,
+                "first_customer": wedge_eval.first_customer,
+                "first_channel": wedge_eval.first_channel,
+                "evaluated_by": wedge_eval.evaluated_by,
+            }
+            self.db.update_opportunity_notes(brief.opportunity_id, json.dumps(notes))
+
+            if wedge_eval.passes_wedge_gate and is_allowed_selection_transition(opportunity.selection_status, "build_ready"):
+                self.db.update_opportunity_selection(
+                    brief.opportunity_id,
+                    selection_status="build_ready",
+                    selection_reason=f"wedge_gate_passed:{wedge_eval.verdict}",
+                )
+                if is_allowed_selection_transition(brief.status, "build_ready"):
+                    self.db.update_build_brief_status(build_brief_id, "build_ready")
+            elif is_allowed_selection_transition(opportunity.selection_status, "research_more"):
+                failure_reasons = ", ".join(wedge_eval.gate_failure_reasons())
+                self.db.update_opportunity_selection(
+                    brief.opportunity_id,
+                    selection_status="research_more",
+                    selection_reason=f"wedge_gate_failed:{failure_reasons}",
+                )
+                logger.info(
+                    f"Opp #{brief.opportunity_id} failed wedge gate: {failure_reasons}"
+                )
 
         await self.send_message(
             to_agent="orchestrator",

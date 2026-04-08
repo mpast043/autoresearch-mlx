@@ -1159,6 +1159,7 @@ async def main() -> None:
             "decision-surface",
             "operator-report",
             "builder-jobs",
+            "wedge-eval",
             "report",
             "gate-diagnostics",
             "pipeline-health",
@@ -1285,6 +1286,41 @@ async def main() -> None:
             print_json(build_operator_report(app, limit=min(max(args.limit, 5), 25)))
         elif args.command == "builder-jobs":
             print_json(build_builder_jobs_view(app.db, run_id=app.current_run_id, limit=100) if app.db else [])
+        elif args.command == "wedge-eval":
+            from src.builder_output import WedgeEvaluator
+
+            # Use heuristic-only for CLI batch evaluation (LLM is too slow for batch)
+            evaluator = WedgeEvaluator(app.db, {})
+            import sqlite3 as _sq
+            _conn = _sq.connect(str(resolve_database_path_from_config(args.config)))
+            statuses = ["build_ready", "prototype_candidate", "prototype_ready"]
+            placeholders = ",".join("?" * len(statuses))
+            _rows = _conn.execute(
+                f"SELECT id FROM opportunities WHERE selection_status IN ({placeholders}) ORDER BY composite_score DESC",
+                statuses,
+            ).fetchall()
+            _conn.close()
+            results = []
+            for r in _rows:
+                ev = evaluator.evaluate_sync(r[0])
+                results.append({
+                    "opportunity_id": ev.opportunity_id,
+                    "verdict": ev.verdict,
+                    "passes_gate": ev.passes_wedge_gate,
+                    "software_fit": round(ev.software_fit, 3),
+                    "monetization_fit": round(ev.monetization_fit, 3),
+                    "is_narrow": ev.is_narrow,
+                    "trust_risk": ev.trust_risk,
+                    "narrowness_reason": ev.narrowness_reason,
+                    "monetization_reason": ev.monetization_reason,
+                    "suggested_mvp": ev.suggested_mvp,
+                    "first_paid_offer": ev.first_paid_offer,
+                    "pricing_hypothesis": ev.pricing_hypothesis,
+                    "first_customer": ev.first_customer,
+                    "first_channel": ev.first_channel,
+                    "evaluated_by": ev.evaluated_by,
+                })
+            print_json(results)
         elif args.command == "report":
             print_json(build_verbose_report(app, app.snapshot()))
         elif args.command == "gate-diagnostics":

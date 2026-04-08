@@ -132,6 +132,10 @@ class AutoResearcher:
         self.db.set_active_run_id(self.current_run_id)
         set_run_id(self.current_run_id)
 
+        # Pass config to opportunity_engine for LLM atom extraction
+        from src.opportunity_engine import configure_opportunity_engine
+        configure_opportunity_engine(self.config)
+
         builder_config = self.config.get("builder", {})
         orchestration_config = self.config.get("orchestration", {})
         auto_build = builder_config.get("auto_build", False)
@@ -167,9 +171,9 @@ class AutoResearcher:
             ),
             "evidence": EvidenceAgent(self.db, message_queue=message_queue, config=self.config),
             "validation": ValidationAgent(self.db, message_queue=message_queue, config=self.config),
-            "solution_framing": SolutionFramingAgent(self.db, message_queue=message_queue),
-            "experiment_design": ExperimentDesignAgent(self.db, message_queue=message_queue),
-            "spec_generation": SpecGenerationAgent(self.db, message_queue=message_queue),
+            "solution_framing": SolutionFramingAgent(self.db, message_queue=message_queue, config=self.config),
+            "experiment_design": ExperimentDesignAgent(self.db, message_queue=message_queue, config=self.config),
+            "spec_generation": SpecGenerationAgent(self.db, message_queue=message_queue, config=self.config),
         }
 
         if self.config.get("orchestration", {}).get("auto_ideate_after_validation", False):

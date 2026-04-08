@@ -57,7 +57,7 @@ class TestLLMClient(unittest.TestCase):
         config = {"llm": {"provider": "ollama"}}
         client = LLMClient(config)
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({"response": "test output"}).encode()
+        mock_response.read.return_value = json.dumps({"message": {"content": "test output"}}).encode()
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 

@@ -3257,6 +3257,15 @@ class Database:
         )
         self._commit(conn)
 
+    def update_opportunity_notes(self, opportunity_id: int, notes_json: str) -> None:
+        """Update the notes_json field on an opportunity."""
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE opportunities SET notes_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (notes_json, opportunity_id),
+        )
+        self._commit(conn)
+
     def insert_review_feedback(self, feedback: ReviewFeedback) -> int:
         conn = self._get_connection()
         cur = conn.execute(

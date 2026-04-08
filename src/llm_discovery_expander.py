@@ -136,6 +136,7 @@ class LLMClient:
         self.api_key = llm_config.get("api_key", "") or ""
         self.max_tokens = llm_config.get("max_tokens", 2000)
         self.temperature = llm_config.get("temperature", 0.3)
+        self.timeout = llm_config.get("timeout", 120)
 
     def generate(self, system_prompt: str, user_prompt: str) -> str | None:
         """Synchronous generation. Returns raw text or None on failure."""
@@ -163,13 +164,16 @@ class LLMClient:
             return self._anthropic_generate(system_prompt, user_prompt)
 
     def _ollama_generate(self, system_prompt: str, user_prompt: str) -> str | None:
-        """Synchronous Ollama call via urllib (same pattern as build_prep.py)."""
+        """Synchronous Ollama call via /api/chat endpoint."""
         import urllib.request
         import urllib.error
 
         request_data = {
             "model": self.model,
-            "prompt": f"{system_prompt}\n\n{user_prompt}",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
             "stream": False,
             "options": {
                 "temperature": self.temperature,
@@ -179,24 +183,27 @@ class LLMClient:
 
         try:
             req = urllib.request.Request(
-                f"{self.base_url}/api/generate",
+                f"{self.base_url}/api/chat",
                 data=json.dumps(request_data).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
-                return result.get("response", "")
+                return result.get("message", {}).get("content", "")
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
             logger.warning(f"Ollama generation failed: {e}")
             return None
 
     async def _ollama_agenerate(self, system_prompt: str, user_prompt: str) -> str | None:
-        """Async Ollama call via aiohttp (same pattern as builder_v2.py)."""
+        """Async Ollama call via /api/chat endpoint."""
         import aiohttp
 
         payload = {
             "model": self.model,
-            "prompt": f"{system_prompt}\n\n{user_prompt}",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
             "stream": False,
             "options": {
                 "temperature": self.temperature,
@@ -207,16 +214,16 @@ class LLMClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{self.base_url}/api/generate",
+                    f"{self.base_url}/api/chat",
                     json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120),
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
                 ) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
                         logger.warning(f"Ollama async error {resp.status}: {error_text[:200]}")
                         return None
                     result = await resp.json()
-                    return result.get("response", "")
+                    return result.get("message", {}).get("content", "")
         except Exception as e:
             logger.warning(f"Ollama async generation failed: {e}")
             return None
@@ -479,6 +486,9 @@ class LLMDiscoveryExpander:
         user_prompt += f"\n\nLimits: max {max_kw} keywords, {max_sub} subreddits, {max_web} web queries, {max_gh} github queries."
 
         raw = await self.client.agenerate(QUERY_DERIVATION_SYSTEM, user_prompt)
+        if not raw:
+            logger.info("Async query derivation failed, falling back to sync")
+            raw = self.client.generate(QUERY_DERIVATION_SYSTEM, user_prompt)
         if raw:
             data = _extract_json(raw)
             if data:
@@ -583,6 +593,10 @@ class LLMDiscoveryExpander:
 
         raw = await self.client.agenerate(system_prompt, user_prompt)
         if not raw:
+            # Fallback to sync generation if async failed (e.g. event loop conflict)
+            logger.info("Async LLM call failed, falling back to sync")
+            raw = self.client.generate(system_prompt, user_prompt)
+        if not raw:
             logger.warning("LLM expansion failed, no response received")
             return []
 
@@ -613,3 +627,186 @@ class LLMDiscoveryExpander:
             )
 
         return new_spaces
+
+
+# ---------------------------------------------------------------------------
+# LLM-enhanced atom extraction
+# ---------------------------------------------------------------------------
+
+ATOM_EXTRACT_SYSTEM = """\
+You are a structured problem-atom extraction engine. Given raw text from a user
+complaint or discussion, extract the following fields as JSON:
+
+- user_role: WHO is experiencing this problem (e.g., "ad operations manager",
+  "small business owner", "bookkeeper"). Be specific, not generic like "user".
+- job_to_be_done: What they are TRYING to accomplish (e.g., "reconcile monthly
+  bank statements with QuickBooks"). Be specific about the workflow.
+- trigger_event: WHEN this problem occurs (e.g., "at month-end close",
+  "when importing CSV files"). Must be a moment or situation, not generic.
+- pain_statement: The core problem in their words, paraphrased to be clear
+  (e.g., "Spending 4+ hours manually adjusting bids across 40+ campaigns
+  after every budget overrun"). NOT the raw title.
+- failure_mode: What specifically breaks or goes wrong (e.g., "single bad CSV
+  row silently corrupts inventory counts"). Must be concrete, not "it doesn't work".
+- current_workaround: What they do instead (e.g., "manual copy-paste between
+  spreadsheets", "checking each row by hand"). Empty string if not mentioned.
+- consequence: The cost or impact (e.g., "3 hours lost per week",
+  "client-facing errors in invoices"). Empty string if not mentioned.
+
+Rules:
+- Extract ONLY what is clearly stated or strongly implied. Do NOT invent details.
+- If a field cannot be determined, use an empty string "".
+- Be SPECIFIC. "data sync issue" is bad. "QuickBooks invoices don't match
+  Stripe payouts during reconciliation" is good.
+- Output ONLY valid JSON. No markdown. No prose."""
+
+ATOM_EXTRACT_USER = """\
+Raw text:
+{raw_text}
+
+Current heuristic extraction (may have empty or poor fields):
+- user_role: {user_role}
+- job_to_be_done: {job_to_be_done}
+- trigger_event: {trigger_event}
+- pain_statement: {pain_statement}
+- failure_mode: {failure_mode}
+- current_workaround: {current_workaround}
+
+Extract the structured problem atom. Fill in empty fields and improve vague ones."""
+
+
+class LLMAtomExtractor:
+    """LLM-enhanced problem atom extraction.
+
+    Tries LLM first, falls back to heuristic extraction unchanged.
+    Only replaces fields that the LLM improves (non-empty and more specific).
+    """
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.client = LLMClient(config)
+
+    def extract(self, raw_text: str, heuristic_atom: dict[str, Any]) -> dict[str, Any]:
+        """Try LLM extraction, falling back to heuristic on failure.
+
+        Returns the atom dict with fields improved where the LLM provided
+        better values. Heuristic fields are preserved if the LLM fails
+        or provides empty/worse values.
+        """
+        # Truncate raw text to avoid excessive token usage
+        text = raw_text[:2000] if len(raw_text) > 2000 else raw_text
+
+        user_prompt = ATOM_EXTRACT_USER.format(
+            raw_text=text,
+            user_role=heuristic_atom.get("user_role", ""),
+            job_to_be_done=heuristic_atom.get("job_to_be_done", ""),
+            trigger_event=heuristic_atom.get("trigger_event", ""),
+            pain_statement=heuristic_atom.get("pain_statement", ""),
+            failure_mode=heuristic_atom.get("failure_mode", ""),
+            current_workaround=heuristic_atom.get("current_workaround", ""),
+        )
+
+        raw = self.client.generate(ATOM_EXTRACT_SYSTEM, user_prompt)
+        if not raw:
+            logger.info("LLM atom extraction failed, keeping heuristic values")
+            return heuristic_atom
+
+        data = _extract_json(raw)
+        if not data:
+            logger.info("LLM atom extraction returned unparseable JSON, keeping heuristic values")
+            return heuristic_atom
+
+        # Merge: only replace heuristic values with LLM values that are
+        # non-empty and more specific (longer or contains more detail)
+        result = dict(heuristic_atom)  # start with heuristic
+        field_map = {
+            "user_role": "user_role",
+            "job_to_be_done": "job_to_be_done",
+            "trigger_event": "trigger_event",
+            "pain_statement": "pain_statement",
+            "failure_mode": "failure_mode",
+            "current_workaround": "current_workaround",
+            "consequence": "cost_consequence_clues",  # maps to existing field
+        }
+
+        # Generic phrases that indicate heuristic extraction failed
+        _GENERIC_PHRASES = {"welcome to", "use this", "forum", "find customizable",
+                            "this is an", "here is", "this spreadsheet"}
+
+        for llm_key, atom_key in field_map.items():
+            llm_val = str(data.get(llm_key, "")).strip()
+            if not llm_val:
+                continue
+
+            heuristic_val = result.get(atom_key, "")
+            # Replace if heuristic is empty, generic, or LLM is more specific
+            heuristic_is_generic = any(
+                phrase in heuristic_val.lower() for phrase in _GENERIC_PHRASES
+            )
+            if not heuristic_val or heuristic_is_generic or len(llm_val) > len(heuristic_val) * 1.1:
+                result[atom_key] = llm_val
+
+        # Handle consequence separately (it maps to cost_consequence_clues)
+        consequence = str(data.get("consequence", "")).strip()
+        if consequence:
+            existing = result.get("cost_consequence_clues", "")
+            if not existing or existing == consequence:
+                result["cost_consequence_clues"] = consequence
+
+        result["atom_extraction_method"] = "llm_enhanced"
+        return result
+
+    async def aextract(self, raw_text: str, heuristic_atom: dict[str, Any]) -> dict[str, Any]:
+        """Async version of extract."""
+        text = raw_text[:2000] if len(raw_text) > 2000 else raw_text
+
+        user_prompt = ATOM_EXTRACT_USER.format(
+            raw_text=text,
+            user_role=heuristic_atom.get("user_role", ""),
+            job_to_be_done=heuristic_atom.get("job_to_be_done", ""),
+            trigger_event=heuristic_atom.get("trigger_event", ""),
+            pain_statement=heuristic_atom.get("pain_statement", ""),
+            failure_mode=heuristic_atom.get("failure_mode", ""),
+            current_workaround=heuristic_atom.get("current_workaround", ""),
+        )
+
+        raw = await self.client.agenerate(ATOM_EXTRACT_SYSTEM, user_prompt)
+        if not raw:
+            logger.info("LLM async atom extraction failed, trying sync")
+            return self.extract(raw_text, heuristic_atom)
+
+        data = _extract_json(raw)
+        if not data:
+            logger.info("LLM atom extraction returned unparseable JSON, keeping heuristic values")
+            return heuristic_atom
+
+        # Same merge logic as sync version
+        result = dict(heuristic_atom)
+        field_map = {
+            "user_role": "user_role",
+            "job_to_be_done": "job_to_be_done",
+            "trigger_event": "trigger_event",
+            "pain_statement": "pain_statement",
+            "failure_mode": "failure_mode",
+            "current_workaround": "current_workaround",
+        }
+
+        _GENERIC_PHRASES = {"welcome to", "use this", "forum", "find customizable",
+                            "this is an", "here is", "this spreadsheet"}
+
+        for llm_key, atom_key in field_map.items():
+            llm_val = str(data.get(llm_key, "")).strip()
+            if not llm_val:
+                continue
+            heuristic_val = result.get(atom_key, "")
+            heuristic_is_generic = any(
+                phrase in heuristic_val.lower() for phrase in _GENERIC_PHRASES
+            )
+            if not heuristic_val or heuristic_is_generic or len(llm_val) > len(heuristic_val) * 1.1:
+                result[atom_key] = llm_val
+
+        consequence = str(data.get("consequence", "")).strip()
+        if consequence:
+            result["cost_consequence_clues"] = consequence
+
+        result["atom_extraction_method"] = "llm_enhanced"
+        return result

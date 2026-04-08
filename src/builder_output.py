@@ -352,8 +352,15 @@ def _is_narrow_wedge(user: str, workflow: str, failure: str, product_shape: str)
     if any(w in workflow.lower() for w in broad_words):
         return False
 
-    # Must have specific platform or workflow
-    if not any(p in workflow.lower() for p in ["shopify", "quickbooks", "inventory", "product", "vendor"]):
+    # Must have specific platform, workflow, or failure mode
+    specific_indicators = [
+        "shopify", "quickbooks", "woocommerce", "wordpress",
+        "inventory", "product", "vendor", "invoice", "payment",
+        "reconciliation", "import", "csv", "spreadsheet", "excel",
+        "google sheets", "formula", "budget", "commission", "handoff",
+        "bid", "campaign", "billing", "accounting",
+    ]
+    if not any(p in (workflow + " " + failure).lower() for p in specific_indicators):
         return False
 
     return True
@@ -528,18 +535,19 @@ def _get_opportunity_evidence(db, opportunity_id: int) -> list[dict[str, Any]]:
     ).fetchall()
 
     if not rows:
+        # Fallback: get evidence directly from the cluster's atoms
         cluster = db.get_cluster(opportunity.cluster_id)
-        cluster_key = cluster.cluster_key if cluster else ""
-        if cluster_key:
+        if cluster:
             rows = conn.execute(
                 """
                 SELECT DISTINCT f.source, f.outcome_summary, f.source_url, f.entrepreneur
                 FROM problem_atoms pa
+                JOIN cluster_members cm ON cm.problem_atom_id = pa.id
                 JOIN findings f ON f.id = pa.finding_id
-                WHERE pa.cluster_key = ?
+                WHERE cm.cluster_id = ?
                 ORDER BY pa.id ASC
                 """,
-                (cluster_key,),
+                (cluster.id,),
             ).fetchall()
 
     return [
@@ -587,6 +595,369 @@ def save_builder_cards(cards: list[BuilderCard], output_dir: Path) -> None:
         json.dump(index, f, indent=2)
 
     logger.info(f"Saved {len(cards)} builder cards to {output_dir}")
+
+
+# ---------------------------------------------------------------------------
+# WedgeEvaluator — LLM-enhanced wedge evaluation gate
+# ---------------------------------------------------------------------------
+
+WEDGE_EVAL_SYSTEM = """\
+You are a wedge evaluation engine for a product research pipeline.
+Given an opportunity's evidence, evaluate whether it constitutes a
+MONETIZABLE NARROW SOFTWARE WEDGE — not a broad problem area.
+
+A monetizable wedge MUST satisfy ALL of:
+1. NARROW: One specific user, one specific workflow, one specific failure mode.
+   NOT "spreadsheet errors" — rather "Shopify store owners importing vendor
+   CSVs where a single bad row silently corrupts inventory counts".
+2. SOFTWARE-FIRST: The solution is naturally a plugin, add-in, or microSaaS
+   — not a service, consultancy, or training program.
+3. RECURRING TRIGGER: The user hits this problem weekly or monthly, creating
+   subscription logic ($9-99/month).
+4. ERROR COST: The cost of the failure (time, money, trust) justifies paying
+   for prevention.
+5. TRUST-RIGHT: The solution is a detector/validator (low trust) rather than
+   an auto-corrector (high trust), unless the user explicitly delegates.
+
+Output ONLY valid JSON with this structure:
+{
+  "software_fit": 0.0-1.0,
+  "monetization_fit": 0.0-1.0,
+  "is_narrow": true/false,
+  "trust_risk": "low"/"medium"/"high",
+  "verdict": "build_now"/"backup_candidate"/"research_more"/"reject",
+  "narrowness_reason": "Why this IS or IS NOT narrow enough",
+  "software_fit_reason": "Why software is or isn't the natural solution",
+  "monetization_reason": "Why this will or won't make money",
+  "suggested_mvp": ["Feature 1", "Feature 2"],
+  "first_paid_offer": "Description of first paid version",
+  "pricing_hypothesis": "$X/month because...",
+  "first_customer": "Who would pay first",
+  "first_channel": "Where to find them"
+}"""
+
+WEDGE_EVAL_USER = """\
+## Opportunity: {title}
+Selection Status: {selection_status}
+Composite Score: {composite_score}
+Problem Plausibility: {problem_plausibility}
+Revenue Readiness: {revenue_readiness}
+Cost of Inaction: {cost_of_inaction}
+Workaround Density: {workaround_density}
+Buildability: {buildability}
+
+## Evidence
+{evidence_text}
+
+## Current Builder Card (heuristic evaluation)
+Software Fit: {heuristic_software_fit}
+Monetization Fit: {heuristic_monetization_fit}
+Trust Risk: {heuristic_trust_risk}
+Product Shape: {heuristic_product_shape}
+
+Evaluate this opportunity as a monetizable narrow software wedge."""
+
+
+@dataclass
+class WedgeEvaluation:
+    """Result of wedge evaluation — LLM-enhanced or heuristic fallback."""
+    opportunity_id: int
+    software_fit: float
+    monetization_fit: float
+    is_narrow: bool
+    trust_risk: str
+    verdict: str  # build_now, backup_candidate, research_more, reject
+    # Reasons
+    narrowness_reason: str = ""
+    software_fit_reason: str = ""
+    monetization_reason: str = ""
+    # Builder details
+    suggested_mvp: list[str] = field(default_factory=list)
+    first_paid_offer: str = ""
+    pricing_hypothesis: str = ""
+    first_customer: str = ""
+    first_channel: str = ""
+    # Meta
+    evaluated_by: str = "heuristic"  # heuristic | llm | llm_fallback
+    raw_llm_response: str = ""
+
+    # Gate thresholds
+    SOFTWARE_FIT_FLOOR = 0.5
+    MONETIZATION_FIT_FLOOR = 0.3
+    TRUST_RISK_BLOCK = "high"
+
+    @property
+    def passes_wedge_gate(self) -> bool:
+        """Whether this evaluation passes the wedge gate criteria."""
+        if self.trust_risk == self.TRUST_RISK_BLOCK:
+            return False
+        if self.software_fit < self.SOFTWARE_FIT_FLOOR:
+            return False
+        if self.monetization_fit < self.MONETIZATION_FIT_FLOOR:
+            return False
+        if not self.is_narrow:
+            return False
+        return True
+
+    def gate_failure_reasons(self) -> list[str]:
+        """Return human-readable reasons the wedge gate failed."""
+        reasons = []
+        if self.trust_risk == self.TRUST_RISK_BLOCK:
+            reasons.append(f"trust_risk={self.trust_risk} (requires low/medium)")
+        if self.software_fit < self.SOFTWARE_FIT_FLOOR:
+            reasons.append(f"software_fit={self.software_fit:.2f} < {self.SOFTWARE_FIT_FLOOR}")
+        if self.monetization_fit < self.MONETIZATION_FIT_FLOOR:
+            reasons.append(f"monetization_fit={self.monetization_fit:.2f} < {self.MONETIZATION_FIT_FLOOR}")
+        if not self.is_narrow:
+            reasons.append(f"not narrow enough: {self.narrowness_reason}")
+        return reasons
+
+
+class WedgeEvaluator:
+    """Evaluates opportunities as monetizable narrow software wedges.
+
+    Uses LLM for deeper analysis when available, falls back to
+    heuristic evaluation from builder_output.py.
+    """
+
+    def __init__(self, db: Any, config: dict[str, Any]) -> None:
+        self.db = db
+        self.config = config
+        self.llm_client: LLMClient | None = None
+        llm_config = config.get("llm", {})
+        if llm_config.get("provider") or llm_config.get("model"):
+            try:
+                from src.llm_discovery_expander import LLMClient
+                self.llm_client = LLMClient(config)
+            except Exception as e:
+                logger.warning(f"Could not create LLMClient for wedge eval: {e}")
+
+    async def evaluate(self, opportunity_id: int) -> WedgeEvaluation:
+        """Evaluate an opportunity as a wedge. Tries LLM first, falls back to heuristic."""
+        # Always run heuristic first as baseline
+        heuristic_eval = self._heuristic_evaluate(opportunity_id)
+
+        # Try LLM evaluation
+        if self.llm_client:
+            llm_eval = await self._llm_evaluate(opportunity_id, heuristic_eval)
+            if llm_eval is not None:
+                return llm_eval
+
+        return heuristic_eval
+
+    def evaluate_sync(self, opportunity_id: int) -> WedgeEvaluation:
+        """Synchronous evaluation. Tries LLM sync, falls back to heuristic."""
+        heuristic_eval = self._heuristic_evaluate(opportunity_id)
+
+        if self.llm_client:
+            llm_eval = self._llm_evaluate_sync(opportunity_id, heuristic_eval)
+            if llm_eval is not None:
+                return llm_eval
+
+        return heuristic_eval
+
+    def _heuristic_evaluate(self, opportunity_id: int) -> WedgeEvaluation:
+        """Run the existing heuristic evaluation from builder_output.py."""
+        opportunity = self.db.get_opportunity(opportunity_id)
+        if opportunity is None:
+            return WedgeEvaluation(
+                opportunity_id=opportunity_id,
+                software_fit=0.0,
+                monetization_fit=0.0,
+                is_narrow=False,
+                trust_risk="high",
+                verdict="reject",
+                narrowness_reason="Opportunity not found",
+            )
+
+        # Generate builder card using existing heuristics
+        evidence = _get_opportunity_evidence(self.db, opportunity_id)
+        wedge_data = {
+            "title": opportunity.title or "",
+            "cluster_label": "",
+            "problem_truth": getattr(opportunity, "problem_truth_score", 0) or 0,
+            "revenue_readiness": getattr(opportunity, "revenue_readiness_score", 0) or 0,
+            "selection_status": getattr(opportunity, "selection_status", "") or "",
+        }
+        card = generate_builder_card(opportunity_id, wedge_data, evidence)
+
+        # Enhance heuristic scores with opportunity-level metrics
+        software_fit = card.software_fit_score
+        monetization_fit = card.monetization_fit_score
+
+        # Boost monetization_fit from opportunity-level signals
+        cost_of_inaction = getattr(opportunity, "cost_of_inaction", 0) or 0
+        frequency = getattr(opportunity, "frequency_score", 0) or 0
+        workaround_density = getattr(opportunity, "workaround_density", 0) or 0
+        revenue_readiness = getattr(opportunity, "revenue_readiness_score", 0) or 0
+
+        # If opportunity has high cost_of_inaction and frequency, it has monetization potential
+        if monetization_fit < 0.3:
+            opportunity_monetization = (cost_of_inaction * 0.3 + frequency * 0.3 + workaround_density * 0.2 + revenue_readiness * 0.2)
+            monetization_fit = max(monetization_fit, opportunity_monetization)
+
+        # Boost software_fit from buildability
+        buildability = getattr(opportunity, "buildability", 0) or 0
+        if software_fit < 0.5 and buildability >= 0.6:
+            software_fit = max(software_fit, buildability * 0.7)
+
+        return WedgeEvaluation(
+            opportunity_id=opportunity_id,
+            software_fit=software_fit,
+            monetization_fit=monetization_fit,
+            is_narrow=_is_narrow_wedge(card.exact_user, card.exact_workflow, card.exact_failure, card.product_shape),
+            trust_risk=card.trust_risk,
+            verdict=card.builder_verdict,
+            narrowness_reason=_why_narrow(card.exact_user, card.exact_failure),
+            software_fit_reason=card.why_this_shape_fits,
+            monetization_reason=_why_money(monetization_fit, card.exact_consequence),
+            suggested_mvp=card.mvp_in_scope,
+            first_paid_offer=card.first_paid_offer,
+            pricing_hypothesis=card.pricing_hypothesis,
+            first_customer=card.first_customer,
+            first_channel=card.first_channel,
+            evaluated_by="heuristic",
+        )
+
+    def _build_evidence_text(self, opportunity_id: int) -> str:
+        """Build evidence text for the LLM prompt."""
+        evidence = _get_opportunity_evidence(self.db, opportunity_id)
+        if not evidence:
+            return "No evidence available."
+
+        lines = []
+        for i, e in enumerate(evidence[:5], 1):
+            source = e.get("source", "unknown")
+            summary = e.get("outcome_summary", "")[:200]
+            lines.append(f"  {i}. [{source}] {summary}")
+        return "\n".join(lines)
+
+    async def _llm_evaluate(
+        self, opportunity_id: int, heuristic: WedgeEvaluation,
+    ) -> WedgeEvaluation | None:
+        """Run LLM-based wedge evaluation (async)."""
+        opportunity = self.db.get_opportunity(opportunity_id)
+        if opportunity is None:
+            return None
+
+        system_prompt = WEDGE_EVAL_SYSTEM
+        user_prompt = WEDGE_EVAL_USER.format(
+            title=(opportunity.title or "")[:200],
+            selection_status=getattr(opportunity, "selection_status", ""),
+            composite_score=f"{getattr(opportunity, 'composite_score', 0):.3f}",
+            problem_plausibility=f"{getattr(opportunity, 'problem_plausibility', 0):.3f}",
+            revenue_readiness=f"{getattr(opportunity, 'revenue_readiness_score', 0):.3f}",
+            cost_of_inaction=f"{getattr(opportunity, 'cost_of_inaction', 0):.3f}",
+            workaround_density=f"{getattr(opportunity, 'workaround_density', 0):.3f}",
+            buildability=f"{getattr(opportunity, 'buildability', 0):.3f}",
+            evidence_text=self._build_evidence_text(opportunity_id),
+            heuristic_software_fit=f"{heuristic.software_fit:.2f}",
+            heuristic_monetization_fit=f"{heuristic.monetization_fit:.2f}",
+            heuristic_trust_risk=heuristic.trust_risk,
+            heuristic_product_shape="",
+        )
+
+        raw = await self.llm_client.agenerate(system_prompt, user_prompt)
+        if not raw:
+            logger.info("LLM async wedge eval failed, trying sync")
+            raw = self.llm_client.generate(system_prompt, user_prompt)
+
+        if not raw:
+            return None
+
+        return self._parse_llm_evaluation(opportunity_id, raw, "llm")
+
+    def _llm_evaluate_sync(
+        self, opportunity_id: int, heuristic: WedgeEvaluation,
+    ) -> WedgeEvaluation | None:
+        """Run LLM-based wedge evaluation (sync)."""
+        opportunity = self.db.get_opportunity(opportunity_id)
+        if opportunity is None:
+            return None
+
+        system_prompt = WEDGE_EVAL_SYSTEM
+        user_prompt = WEDGE_EVAL_USER.format(
+            title=(opportunity.title or "")[:200],
+            selection_status=getattr(opportunity, "selection_status", ""),
+            composite_score=f"{getattr(opportunity, 'composite_score', 0):.3f}",
+            problem_plausibility=f"{getattr(opportunity, 'problem_plausibility', 0):.3f}",
+            revenue_readiness=f"{getattr(opportunity, 'revenue_readiness_score', 0):.3f}",
+            cost_of_inaction=f"{getattr(opportunity, 'cost_of_inaction', 0):.3f}",
+            workaround_density=f"{getattr(opportunity, 'workaround_density', 0):.3f}",
+            buildability=f"{getattr(opportunity, 'buildability', 0):.3f}",
+            evidence_text=self._build_evidence_text(opportunity_id),
+            heuristic_software_fit=f"{heuristic.software_fit:.2f}",
+            heuristic_monetization_fit=f"{heuristic.monetization_fit:.2f}",
+            heuristic_trust_risk=heuristic.trust_risk,
+            heuristic_product_shape="",
+        )
+
+        raw = self.llm_client.generate(system_prompt, user_prompt)
+        if not raw:
+            return None
+
+        return self._parse_llm_evaluation(opportunity_id, raw, "llm")
+
+    def _parse_llm_evaluation(
+        self, opportunity_id: int, raw: str, evaluated_by: str,
+    ) -> WedgeEvaluation | None:
+        """Parse LLM response into a WedgeEvaluation."""
+        data = _extract_json(raw)
+        if not data:
+            logger.warning(f"Could not parse LLM wedge evaluation for opp {opportunity_id}")
+            return None
+
+        # Validate and clamp scores
+        software_fit = max(0.0, min(1.0, float(data.get("software_fit", 0))))
+        monetization_fit = max(0.0, min(1.0, float(data.get("monetization_fit", 0))))
+        is_narrow = bool(data.get("is_narrow", False))
+        trust_risk = data.get("trust_risk", "medium")
+        if trust_risk not in ("low", "medium", "high"):
+            trust_risk = "medium"
+
+        verdict = data.get("verdict", "research_more")
+        if verdict not in ("build_now", "backup_candidate", "research_more", "reject"):
+            verdict = "research_more"
+
+        # Override verdict based on gate criteria (LLM verdict is advisory)
+        eval_obj = WedgeEvaluation(
+            opportunity_id=opportunity_id,
+            software_fit=software_fit,
+            monetization_fit=monetization_fit,
+            is_narrow=is_narrow,
+            trust_risk=trust_risk,
+            verdict=verdict,
+            narrowness_reason=str(data.get("narrowness_reason", "")),
+            software_fit_reason=str(data.get("software_fit_reason", "")),
+            monetization_reason=str(data.get("monetization_reason", "")),
+            suggested_mvp=data.get("suggested_mvp", []),
+            first_paid_offer=str(data.get("first_paid_offer", "")),
+            pricing_hypothesis=str(data.get("pricing_hypothesis", "")),
+            first_customer=str(data.get("first_customer", "")),
+            first_channel=str(data.get("first_channel", "")),
+            evaluated_by=evaluated_by,
+            raw_llm_response=raw[:500],
+        )
+
+        # Recalculate verdict from gate criteria
+        if eval_obj.passes_wedge_gate:
+            if software_fit >= 0.7 and monetization_fit >= 0.5:
+                eval_obj.verdict = "build_now"
+            else:
+                eval_obj.verdict = "backup_candidate"
+        elif not is_narrow or trust_risk == "high":
+            eval_obj.verdict = "reject"
+        else:
+            eval_obj.verdict = "research_more"
+
+        return eval_obj
+
+
+def _extract_json(raw: str) -> dict[str, Any] | None:
+    """Extract JSON from an LLM response — shared with llm_discovery_expander."""
+    # Import from the expander module to avoid duplication
+    from src.llm_discovery_expander import _extract_json as _expander_extract
+    return _expander_extract(raw)
 
 
 def get_primary_wedge(cards: list[BuilderCard]) -> BuilderCard | None:

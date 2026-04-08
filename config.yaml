@@ -27,9 +27,9 @@ discovery:
 
   # LLM-driven discovery expansion: propose new problem spaces from validated opportunities
   llm_expansion:
-    enabled: false  # Set true to enable LLM-driven space expansion
-    trigger_after_cycles: 2      # Minimum discovery cycles before first expansion
-    trigger_interval_cycles: 3   # How often to re-run expansion
+    enabled: true  # Set true to enable LLM-driven space expansion
+    trigger_after_cycles: 1      # Minimum discovery cycles before first expansion
+    trigger_interval_cycles: 1   # How often to re-run expansion
     max_proposed_spaces: 4       # Max new spaces per expansion call
     min_validated_for_promoted: 1
     min_prototype_candidates: 1
@@ -209,9 +209,10 @@ sre:
 # LLM config for builder_v2 code generation
 llm:
   provider: ollama
-  model: llama3.1:8b
+  model: gemma4:latest
   base_url: http://localhost:11434
-  max_tokens: 12000
+  max_tokens: 2000
+  timeout: 180
 
 validation:
   promotion_threshold: 0.18  # v4: Calibrated to P90 of decision_score distribution
