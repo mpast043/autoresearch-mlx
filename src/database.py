@@ -999,6 +999,40 @@ class Database:
                 run_id TEXT DEFAULT '',
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS discovery_problem_spaces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                space_key TEXT UNIQUE NOT NULL,
+                label TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                parent_space_key TEXT,
+                status TEXT DEFAULT 'exploring',
+                semantic_summary TEXT DEFAULT '',
+                adjacent_spaces_json TEXT DEFAULT '[]',
+                keywords_json TEXT DEFAULT '[]',
+                subreddits_json TEXT DEFAULT '[]',
+                web_queries_json TEXT DEFAULT '[]',
+                github_queries_json TEXT DEFAULT '[]',
+                source TEXT DEFAULT 'llm',
+                llm_provider TEXT DEFAULT '',
+                llm_model TEXT DEFAULT '',
+                generation_prompt_hash TEXT DEFAULT '',
+                total_findings INTEGER DEFAULT 0,
+                total_validations INTEGER DEFAULT 0,
+                total_prototype_candidates INTEGER DEFAULT 0,
+                total_build_briefs INTEGER DEFAULT 0,
+                yield_score REAL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS discovery_problem_space_terms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                space_key TEXT NOT NULL,
+                term_type TEXT NOT NULL,
+                term_value TEXT NOT NULL,
+                source TEXT DEFAULT 'derived',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(space_key, term_type, term_value)
+            );
             CREATE TABLE IF NOT EXISTS experiments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT DEFAULT '',
@@ -2706,6 +2740,205 @@ class Database:
             item["source_signals"] = _json_loads(item.get("source_signals_json"), [])
             results.append(item)
         return results
+
+    # ------------------------------------------------------------------
+    # Problem space methods
+    # ------------------------------------------------------------------
+
+    def upsert_problem_space(self, space: ProblemSpace) -> int:
+        """Insert or update a problem space. Returns the row id."""
+        conn = self._get_connection()
+        cur = conn.execute(
+            """
+            INSERT INTO discovery_problem_spaces
+                (space_key, label, description, parent_space_key, status,
+                 semantic_summary, adjacent_spaces_json,
+                 keywords_json, subreddits_json, web_queries_json, github_queries_json,
+                 source, llm_provider, llm_model, generation_prompt_hash,
+                 total_findings, total_validations, total_prototype_candidates,
+                 total_build_briefs, yield_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(space_key) DO UPDATE SET
+                label=excluded.label,
+                description=excluded.description,
+                parent_space_key=excluded.parent_space_key,
+                status=excluded.status,
+                semantic_summary=excluded.semantic_summary,
+                adjacent_spaces_json=excluded.adjacent_spaces_json,
+                keywords_json=excluded.keywords_json,
+                subreddits_json=excluded.subreddits_json,
+                web_queries_json=excluded.web_queries_json,
+                github_queries_json=excluded.github_queries_json,
+                source=excluded.source,
+                llm_provider=excluded.llm_provider,
+                llm_model=excluded.llm_model,
+                generation_prompt_hash=excluded.generation_prompt_hash,
+                total_findings=excluded.total_findings,
+                total_validations=excluded.total_validations,
+                total_prototype_candidates=excluded.total_prototype_candidates,
+                total_build_briefs=excluded.total_build_briefs,
+                yield_score=excluded.yield_score,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                space.space_key, space.label, space.description,
+                space.parent_space_key, space.status,
+                space.semantic_summary, space.adjacent_spaces_json,
+                space.keywords_json, space.subreddits_json,
+                space.web_queries_json, space.github_queries_json,
+                space.source, space.llm_provider, space.llm_model,
+                space.generation_prompt_hash,
+                space.total_findings, space.total_validations,
+                space.total_prototype_candidates, space.total_build_briefs,
+                space.yield_score,
+            ),
+        )
+        if not getattr(self._local, "batch_depth", 0):
+            self._commit(conn)
+        return cur.lastrowid
+
+    def get_problem_space(self, space_key: str) -> Optional[ProblemSpace]:
+        """Get a problem space by its key."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM discovery_problem_spaces WHERE space_key = ?",
+            (space_key,),
+        ).fetchone()
+        return self._row_to_problem_space(row) if row else None
+
+    def list_problem_spaces(
+        self,
+        status: Optional[str] = None,
+        limit: int = 25,
+    ) -> list[ProblemSpace]:
+        """List problem spaces, optionally filtered by status."""
+        conn = self._get_connection()
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM discovery_problem_spaces WHERE status = ? ORDER BY yield_score DESC, updated_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM discovery_problem_spaces ORDER BY yield_score DESC, updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [self._row_to_problem_space(row) for row in rows]
+
+    def update_problem_space_status(self, space_key: str, status: str) -> None:
+        """Update the status of a problem space."""
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE discovery_problem_spaces SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE space_key = ?",
+            (status, space_key),
+        )
+        if not getattr(self._local, "batch_depth", 0):
+            self._commit(conn)
+
+    def update_problem_space_metrics(
+        self,
+        space_key: str,
+        total_findings: int = 0,
+        total_validations: int = 0,
+        total_prototype_candidates: int = 0,
+        total_build_briefs: int = 0,
+        yield_score: float = 0.0,
+    ) -> None:
+        """Update yield metrics for a problem space."""
+        conn = self._get_connection()
+        conn.execute(
+            """
+            UPDATE discovery_problem_spaces SET
+                total_findings = ?, total_validations = ?,
+                total_prototype_candidates = ?, total_build_briefs = ?,
+                yield_score = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE space_key = ?
+            """,
+            (total_findings, total_validations, total_prototype_candidates,
+             total_build_briefs, yield_score, space_key),
+        )
+        if not getattr(self._local, "batch_depth", 0):
+            self._commit(conn)
+
+    def add_problem_space_term(
+        self,
+        space_key: str,
+        term_type: str,
+        term_value: str,
+        source: str = "derived",
+    ) -> int:
+        """Add a derived search term linked to a problem space."""
+        conn = self._get_connection()
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO discovery_problem_space_terms
+                (space_key, term_type, term_value, source)
+            VALUES (?, ?, ?, ?)
+            """,
+            (space_key, term_type, term_value, source),
+        )
+        if not getattr(self._local, "batch_depth", 0):
+            self._commit(conn)
+        return cur.lastrowid
+
+    def get_problem_space_terms(
+        self,
+        space_key: str,
+        term_type: Optional[str] = None,
+    ) -> list[ProblemSpaceTerm]:
+        """Get derived terms for a problem space."""
+        from src.problem_space import ProblemSpaceTerm
+        conn = self._get_connection()
+        if term_type:
+            rows = conn.execute(
+                "SELECT * FROM discovery_problem_space_terms WHERE space_key = ? AND term_type = ?",
+                (space_key, term_type),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM discovery_problem_space_terms WHERE space_key = ?",
+                (space_key,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            results.append(ProblemSpaceTerm(
+                id=row["id"],
+                space_key=row["space_key"],
+                term_type=row["term_type"],
+                term_value=row["term_value"],
+                source=row["source"],
+                created_at=row["created_at"],
+            ))
+        return results
+
+    def _row_to_problem_space(self, row: sqlite3.Row) -> ProblemSpace:
+        """Convert a database row to a ProblemSpace dataclass."""
+        from src.problem_space import ProblemSpace
+        return ProblemSpace(
+            id=row["id"],
+            space_key=row["space_key"],
+            label=row["label"],
+            description=row["description"] or "",
+            parent_space_key=row["parent_space_key"],
+            status=row["status"] or "exploring",
+            semantic_summary=row["semantic_summary"] or "",
+            adjacent_spaces_json=row["adjacent_spaces_json"] or "[]",
+            keywords_json=row["keywords_json"] or "[]",
+            subreddits_json=row["subreddits_json"] or "[]",
+            web_queries_json=row["web_queries_json"] or "[]",
+            github_queries_json=row["github_queries_json"] or "[]",
+            source=row["source"] or "llm",
+            llm_provider=row["llm_provider"] or "",
+            llm_model=row["llm_model"] or "",
+            generation_prompt_hash=row["generation_prompt_hash"] or "",
+            total_findings=row["total_findings"] or 0,
+            total_validations=row["total_validations"] or 0,
+            total_prototype_candidates=row["total_prototype_candidates"] or 0,
+            total_build_briefs=row["total_build_briefs"] or 0,
+            yield_score=row["yield_score"] or 0.0,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     def get_findings(self, status: Optional[str] = None, finding_kind: Optional[str] = None, limit: Optional[int] = None) -> list[Finding]:
         conn = self._get_connection()
