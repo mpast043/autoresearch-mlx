@@ -38,6 +38,9 @@ from src.discovery_term_lifecycle import (
     calculate_wedge_quality_score,
     compute_next_state,
 )
+from src.llm_discovery_expander import LLMDiscoveryExpander
+from src.problem_space import EXPLORING, VALIDATED
+from src.problem_space_lifecycle import ProblemSpaceLifecycleManager
 
 
 # =============================================================================
@@ -256,6 +259,14 @@ class DiscoveryAgent(BaseAgent):
         self.bypass_cache = bypass_cache
         # Term lifecycle manager for forward+reverse search space control
         self.term_lifecycle = TermLifecycleManager(db)
+        # LLM-driven discovery expansion
+        self._llm_expansion_cycle = 0
+        self._llm_expander: LLMDiscoveryExpander | None = None
+        self._space_lifecycle: ProblemSpaceLifecycleManager | None = None
+        llm_config = self.config.get("discovery", {}).get("llm_expansion", {})
+        if llm_config.get("enabled", False):
+            self._llm_expander = LLMDiscoveryExpander(db, self.config)
+            self._space_lifecycle = ProblemSpaceLifecycleManager(db, self.config)
         # Rate-limiting semaphore: caps concurrent outbound HTTP calls
         _sem_limit = int(self.config.get("discovery", {}).get("api_concurrency", 6))
         self._api_semaphore = asyncio.Semaphore(max(1, _sem_limit))
@@ -352,6 +363,8 @@ class DiscoveryAgent(BaseAgent):
         # Update term lifecycle states based on this wave's results
         self._update_term_lifecycle()
         self._enforce_screened_out_retention()
+        # LLM-driven problem space expansion (after validation cycle)
+        await self._run_llm_expansion()
         return finding_ids
 
     def _feedback_source_names(self, normalized_source: str) -> list[str]:
@@ -1557,6 +1570,145 @@ class DiscoveryAgent(BaseAgent):
 
         logger.info(f"Term lifecycle: {len(transitions['keywords'])} keyword state changes")
         return transitions
+
+    # =========================================================================
+    # LLM-DRIVEN DISCOVERY EXPANSION
+    # =========================================================================
+
+    async def _run_llm_expansion(self) -> list:
+        """Run LLM-driven problem space expansion if conditions are met.
+
+        Called at the end of each discovery cycle. Tracks cycle count to
+        respect trigger_after_cycles and trigger_interval_cycles.
+        Returns the list of newly created ProblemSpace objects (empty if skipped).
+        """
+        self._llm_expansion_cycle += 1
+        if not self._llm_expander:
+            return []
+
+        expansion_config = self.config.get("discovery", {}).get("llm_expansion", {})
+        trigger_after = int(expansion_config.get("trigger_after_cycles", 2))
+        trigger_interval = int(expansion_config.get("trigger_interval_cycles", 3))
+
+        if self._llm_expansion_cycle < trigger_after:
+            return []
+
+        # Check if it's time for another expansion
+        cycles_since_trigger = self._llm_expansion_cycle - trigger_after
+        if cycles_since_trigger % trigger_interval != 0:
+            return []
+
+        try:
+            new_spaces = await self._llm_expander.expand_after_validation()
+            if new_spaces:
+                logger.info(
+                    "LLM expansion created %d new problem spaces: %s",
+                    len(new_spaces),
+                    ", ".join(s.space_key for s in new_spaces),
+                )
+                # Merge derived queries into discovery config for next cycle
+                self._merge_problem_space_queries(new_spaces)
+                # Update space lifecycle metrics
+                self._update_problem_space_lifecycle()
+            return new_spaces
+        except Exception as exc:
+            logger.warning("LLM expansion failed: %s", exc)
+            return []
+
+    def _merge_problem_space_queries(self, spaces: list) -> None:
+        """Merge problem space derived queries into the discovery config.
+
+        This makes the LLM-derived keywords, subreddits, and queries available
+        to the next discovery wave through the existing expansion mechanism.
+        """
+        if not spaces:
+            return
+
+        discovery_cfg = self.config.get("discovery", {})
+        reddit_cfg = discovery_cfg.get("reddit", {})
+
+        # Collect all derived terms from new spaces
+        new_keywords: list[str] = []
+        new_subreddits: list[str] = []
+        new_web_queries: list[str] = []
+        new_github_queries: list[str] = []
+
+        for space in spaces:
+            if space.keywords:
+                new_keywords.extend(space.keywords)
+            if space.subreddits:
+                new_subreddits.extend(space.subreddits)
+            if space.web_queries:
+                new_web_queries.extend(space.web_queries)
+            if space.github_queries:
+                new_github_queries.extend(space.github_queries)
+
+        # Merge into config (dedup)
+        existing_keywords = reddit_cfg.get("problem_keywords", []) or []
+        existing_subreddits = reddit_cfg.get("problem_subreddits", []) or []
+
+        merged_keywords = list(dict.fromkeys(existing_keywords + new_keywords))
+        merged_subreddits = list(dict.fromkeys(existing_subreddits + new_subreddits))
+
+        # Update config in-place so get_expanded_config picks them up
+        reddit_cfg["problem_keywords"] = merged_keywords
+        reddit_cfg["problem_subreddits"] = merged_subreddits
+
+        # Also add web and github queries to their respective config sections
+        web_cfg = discovery_cfg.get("web", {})
+        existing_web_keywords = web_cfg.get("keywords", []) or []
+        merged_web = list(dict.fromkeys(existing_web_keywords + new_web_queries))
+        web_cfg["keywords"] = merged_web
+
+        github_cfg = discovery_cfg.get("github", {})
+        existing_gh_keywords = github_cfg.get("problem_keywords", []) or []
+        merged_gh = list(dict.fromkeys(existing_gh_keywords + new_github_queries))
+        github_cfg["problem_keywords"] = merged_gh
+
+        logger.info(
+            "Merged problem space queries: +%d keywords, +%d subreddits, +%d web, +%d github",
+            len(new_keywords), len(new_subreddits),
+            len(new_web_queries), len(new_github_queries),
+        )
+
+        # Refresh toolkit with updated config
+        self.config = get_expanded_config(self.base_config)
+        self.toolkit = ResearchToolkit(self.config)
+
+    def _update_problem_space_lifecycle(self) -> None:
+        """Update problem space lifecycle states and metrics.
+
+        Runs after each expansion cycle. Updates metrics for all active
+        spaces and transitions their lifecycle state as needed.
+        """
+        if not self._space_lifecycle:
+            return
+
+        try:
+            spaces = self._space_lifecycle.get_active_spaces(limit=100)
+            for space in spaces:
+                self._space_lifecycle.update_space_metrics(space.space_key)
+
+                # Count idle cycles based on findings in recent runs
+                space = self.db.get_problem_space(space.space_key)
+                if not space:
+                    continue
+
+                # Determine idle cycles from metrics
+                recent_findings = space.total_findings
+                previous = getattr(space, "_prev_findings", recent_findings)
+                idle_cycles = 0 if recent_findings > previous else getattr(space, "_idle_cycles", 0) + 1
+
+                new_state = self._space_lifecycle.compute_next_state(space, idle_cycles=idle_cycles)
+                if new_state != space.status:
+                    self._space_lifecycle.transition_space(space, new_state)
+                    self.db.update_problem_space_status(space.space_key, new_state)
+                    logger.info(
+                        "Problem space '%s' transitioned: %s → %s",
+                        space.space_key, space.status, new_state,
+                    )
+        except Exception as exc:
+            logger.warning("Problem space lifecycle update failed: %s", exc)
 
     def _generate_content_hash(self, finding_data: Dict[str, Any]) -> str:
         normalized = json.dumps(

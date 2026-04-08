@@ -375,3 +375,35 @@ def get_expanded_config(config: dict[str, Any]) -> dict[str, Any]:
                 f"{len(all_subreddits)} subreddits ({len(expanded_subreddits)} expanded)")
 
     return merged
+
+
+def get_winning_patterns_from_problem_spaces(db: Any) -> list[dict[str, Any]]:
+    """Read problem space metrics as an alternative source for expansion patterns.
+
+    Returns a list of dicts with 'keywords' and 'subreddits' from validated
+    and exploring problem spaces, weighted by yield_score.
+    """
+    from src.problem_space import VALIDATED
+    from src.problem_space_lifecycle import ProblemSpaceLifecycleManager
+
+    try:
+        spaces = db.list_problem_spaces(limit=50)
+    except Exception:
+        return []
+
+    patterns: list[dict[str, Any]] = []
+    for space in spaces:
+        if space.status not in (VALIDATED, "exploring"):
+            continue
+        if space.yield_score < 0.1:
+            continue
+        patterns.append({
+            "space_key": space.space_key,
+            "label": space.label,
+            "keywords": space.keywords or [],
+            "subreddits": space.subreddits or [],
+            "yield_score": space.yield_score,
+        })
+
+    patterns.sort(key=lambda p: p["yield_score"], reverse=True)
+    return patterns

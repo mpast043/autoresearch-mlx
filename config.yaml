@@ -25,6 +25,22 @@ discovery:
     min_validation_score: 0.25  # Lowered to enable auto-expansion
     cooldown_hours: 1  # Reduced for faster iteration
 
+  # LLM-driven discovery expansion: propose new problem spaces from validated opportunities
+  llm_expansion:
+    enabled: false  # Set true to enable LLM-driven space expansion
+    trigger_after_cycles: 2      # Minimum discovery cycles before first expansion
+    trigger_interval_cycles: 3   # How often to re-run expansion
+    max_proposed_spaces: 4       # Max new spaces per expansion call
+    min_validated_for_promoted: 1
+    min_prototype_candidates: 1
+    max_idle_cycles_for_exhausted: 3
+    max_idle_cycles_for_archived: 10
+    fallback_to_keywords: true    # Fall back to keyword expansion when LLM unavailable
+    max_keywords_per_space: 10
+    max_subreddits_per_space: 5
+    max_web_queries_per_space: 5
+    max_github_queries_per_space: 3
+
   # Web discovery options
   web:
     # Use Jina Reader for content extraction (free, no API key)
