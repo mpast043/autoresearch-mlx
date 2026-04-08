@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
 
 import aiohttp
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def _compact(text: str, limit: int = 2000) -> str:
     return " ".join((text or "").split())[:limit]
 
 
-def _parse_float(value: Any) -> float:
+def _parse_float(value: str | int | float | None) -> float:
     if value in (None, ""):
         return 0.0
     try:
@@ -45,7 +45,7 @@ def _parse_float(value: Any) -> float:
         return 0.0
 
 
-def _parse_int(value: Any) -> int:
+def _parse_int(value: str | int | float | None) -> int:
     if value in (None, ""):
         return 0
     try:
@@ -682,7 +682,7 @@ class ShopifyAppReviewAdapter:
 
     def _parse_review_node(
         self,
-        node: Any,
+        node: Tag,
         *,
         app_handle: str,
         listing_metadata: dict[str, Any],

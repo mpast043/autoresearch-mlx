@@ -409,7 +409,7 @@ def process_wedges_for_queue(
     """
 
     from src.builder_output import generate_builder_outputs
-    from src.wedge_queue import WedgeQueue, BuilderStatus, WedgeClassification
+    from src.wedge_queue import WedgeClassification
 
     # Generate builder cards from current wedges
     builder_cards = generate_builder_outputs(db)

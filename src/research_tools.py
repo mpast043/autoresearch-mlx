@@ -14,7 +14,6 @@ import sys
 import tempfile
 import time
 from collections import Counter
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -33,9 +32,9 @@ except Exception:  # pragma: no cover - supports package and direct module usage
         MCPFetcher = None
 
 try:
-    from reddit_bridge import BridgeError, RedditBridgeClient
+    from reddit_bridge import RedditBridgeClient
 except Exception:  # pragma: no cover - supports package and direct module usage
-    from src.reddit_bridge import BridgeError, RedditBridgeClient
+    from src.reddit_bridge import RedditBridgeClient
 
 try:
     from reddit_transport import RedditTransport
@@ -51,14 +50,12 @@ try:
     from discovery_queries import (
         reddit_discovery_subreddits,
         reddit_problem_keywords,
-        reddit_problem_subreddits,
         reddit_success_keywords,
     )
 except Exception:  # pragma: no cover - supports package and direct module usage
     from src.discovery_queries import (
         reddit_discovery_subreddits,
         reddit_problem_keywords,
-        reddit_problem_subreddits,
         reddit_success_keywords,
     )
 
@@ -83,7 +80,6 @@ except Exception:  # pragma: no cover - supports package and direct module usage
 
 # Re-export utilities for backward compatibility
 from src.utils.search_plan import CorroborationPlan, CorroborationAction, DiscoveryQueryPlan, SkillAudit
-from src.utils.tooling import ToolingManager
 from src.utils.text import (
     compact_text,
     contains_keyword,

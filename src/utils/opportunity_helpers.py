@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
+import sqlite3
 from typing import Any
-from urllib.parse import urlparse
 
 # Re-export compact_text for internal use
-from src.research_tools import compact_text, infer_recurrence_key
+from src.research_tools import compact_text
 
 from src.database import ProblemAtom
 
@@ -22,7 +21,7 @@ def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip()).lower()
 
 
-def _value(obj: Any, name: str, default: Any = "") -> Any:
+def _value(obj: sqlite3.Row | dict, name: str, default: str | int | float = "") -> str | int | float:
     if isinstance(obj, dict):
         return obj.get(name, default)
     # Handle sqlite3.Row which supports key access but not attribute access
@@ -34,7 +33,7 @@ def _value(obj: Any, name: str, default: Any = "") -> Any:
     return getattr(obj, name, default)
 
 
-def json_dumps(value: Any) -> str:
+def json_dumps(value: dict | list | str | int | float | None) -> str:
     return json.dumps(value)
 
 

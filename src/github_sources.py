@@ -6,6 +6,8 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
+
+from src.search_models import SearchDocument
 from urllib.parse import urlparse
 
 import aiohttp
@@ -346,7 +348,7 @@ class GitHubIssueAdapter:
 
     def _build_record_from_doc(
         self,
-        doc: Any,
+        doc: SearchDocument,
         content: dict[str, Any],
         query: str,
         repo: str,

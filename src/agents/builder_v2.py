@@ -364,7 +364,6 @@ class BuilderV2Agent(BaseAgent):
 
     def _fix_common_issues(self, output_dir: Path, written: list[str]) -> None:
         """Fix common issues in generated code after writing files."""
-        import re
 
         # Fix 1: Add flask-sqlalchemy to requirements.txt if needed
         app_py = output_dir / "app.py"

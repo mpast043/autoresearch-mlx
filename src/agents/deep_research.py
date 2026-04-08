@@ -15,16 +15,15 @@ seeded crawling. It is invoked:
 from __future__ import annotations
 
 import asyncio
-import json
 import hashlib
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.agents.base import BaseAgent
-from src.database import Database, Finding, RawSignal
+from src.database import Database, Finding
 from src.messaging import MessageQueue, MessageType
 
 logger = logging.getLogger(__name__)

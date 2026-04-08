@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from src.database import Database
 
-def compute_pipeline_health(db: Any) -> dict[str, Any]:
+
+def compute_pipeline_health(db: Database) -> dict[str, Any]:
     """Summarize finding lifecycle + whether ``run_once`` has work to do."""
     findings = db.get_findings(limit=5000)
     by_status = Counter((f.status or "") for f in findings)

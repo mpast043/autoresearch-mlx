@@ -62,7 +62,7 @@ META_REDDIT_SUBREDDITS = [
 ]
 
 
-def _string_list(value: Any) -> list[str]:
+def _string_list(value: list) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections import Counter
 from typing import Any
@@ -12,7 +11,6 @@ from urllib.parse import urlparse
 from src.database import OpportunityCluster, ProblemAtom, RawSignal, ValidationExperiment
 from src.research_tools import compact_text, infer_recurrence_key
 from src.utils.opportunity_helpers import (
-    _clean_fragment,
     _normalized,
     _pick_first_sentence,
     _value,
@@ -1024,7 +1022,7 @@ def _summarize_context(text: str) -> str:
     return _normalize_problem_fragment(text, fallback="", limit=72)
 
 
-def _fallback_context_from_atom(atom: Any) -> str:
+def _fallback_context_from_atom(atom: ProblemAtom) -> str:
     for value in [
         _value(atom, "failure_mode", ""),
         _value(atom, "pain_statement", ""),
@@ -1996,7 +1994,7 @@ def qualify_problem_signal(
     }
 
 
-def build_cluster_summary(atoms: list[Any], signals: list[Any]) -> dict[str, Any]:
+def build_cluster_summary(atoms: list[ProblemAtom], signals: list[RawSignal]) -> dict[str, Any]:
     if not atoms:
         return {
             "label": "Empty cluster",
@@ -2319,8 +2317,8 @@ def compute_decision_score(pts: float, rrs: float) -> float:
 
 
 def score_opportunity(
-    atom: Any,
-    signal: Any,
+    atom: ProblemAtom,
+    signal: RawSignal,
     cluster_summary: dict[str, Any],
     validation_evidence: dict[str, Any],
     market_gap: dict[str, Any],
@@ -2655,7 +2653,7 @@ def build_counterevidence(opportunity_scores: dict[str, Any], market_gap: dict[s
 
 
 def plan_validation_experiment(
-    atom: Any,
+    atom: ProblemAtom,
     cluster_summary: dict[str, Any],
     opportunity_scores: dict[str, Any],
     market_gap: dict[str, Any],

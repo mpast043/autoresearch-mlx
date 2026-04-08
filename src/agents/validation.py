@@ -12,6 +12,7 @@ from src.database import (
     BuildBrief,
     Database,
     EvidenceLedgerEntry,
+    Finding,
     Opportunity,
     OpportunityCluster,
     ProblemAtom,
@@ -19,7 +20,7 @@ from src.database import (
     Validation,
     ValidationExperiment,
 )
-from src.messaging import MessageQueue, MessageType
+from src.messaging import Message, MessageQueue, MessageType
 from src.opportunity_engine import (
     assess_market_gap,
     build_cluster_summary,
@@ -64,7 +65,7 @@ class ValidationAgent(BaseAgent):
 
         self.promotion_threshold, self.park_threshold = resolve_promotion_park_thresholds(self.config)
 
-    async def process(self, message) -> Dict[str, Any]:
+    async def process(self, message: Message) -> Dict[str, Any]:
         if message.msg_type in (MessageType.FINDING, MessageType.EVIDENCE, MessageType.VALIDATION):
             return await self._validate_finding(message.payload)
 
@@ -691,7 +692,7 @@ class ValidationAgent(BaseAgent):
     async def _check_distribution(self, evidence_scores: Dict[str, Any]) -> float:
         return (float(evidence_scores.get("solution_gap_score", 0.0)) + float(evidence_scores.get("saturation_score", 0.0))) / 2.0
 
-    async def _run_legacy_validation(self, finding: Any, finding_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _run_legacy_validation(self, finding: Finding, finding_data: Dict[str, Any]) -> Dict[str, Any]:
         title = finding.product_built or "Untitled"
         summary = finding.outcome_summary or ""
         evidence_scores = await self.toolkit.validate_problem(

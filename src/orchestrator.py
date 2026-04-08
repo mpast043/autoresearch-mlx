@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from src.agents.base import BaseAgent
-from src.messaging import Message, MessageBus, MessageQueue, MessageType, create_message
+from src.messaging import MessageBus, MessageType, create_message
 
 logger = logging.getLogger(__name__)
 

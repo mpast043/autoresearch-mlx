@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +20,6 @@ from src.database import Database
 from src.discovery_next_wave import (
     LOCKED_KEYWORDS,
     LOCKED_SUBREDDITS,
-    REGRESSION_BLOCKLIST,
-    calculate_hybrid_score,
-    generate_next_wave,
 )
 
 logger = logging.getLogger(__name__)

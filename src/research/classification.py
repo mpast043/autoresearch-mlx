@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Iterable
 
 
 # Classification constants moved from research_tools.py

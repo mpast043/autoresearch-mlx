@@ -7,13 +7,13 @@ No API key required.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
 
+from src.utils.circuit_breaker import CircuitOpenError, get_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,32 @@ async def read_url(url: str, timeout: float = 30.0) -> JinaReadResult:
     except (socket.gaierror, ValueError):
         pass  # Hostname may not resolve; let the request proceed and fail naturally
 
+    breaker = get_breaker("jina_reader", failure_threshold=5, recovery_timeout=60.0)
+    try:
+        return await breaker.call(_do_read_url, url, timeout)
+    except CircuitOpenError:
+        return JinaReadResult(
+            url=url, title="", markdown="", success=False,
+            error="Circuit breaker open — too many recent Jina failures",
+        )
+    except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+        error_msg = "Timeout" if isinstance(e, httpx.TimeoutException) else f"HTTP {e.response.status_code}"
+        return JinaReadResult(
+            url=url, title="", markdown="", success=False, error=error_msg,
+        )
+    except Exception as e:
+        return JinaReadResult(
+            url=url, title="", markdown="", success=False, error=str(e),
+        )
+
+
+async def _do_read_url(url: str, timeout: float = 30.0) -> JinaReadResult:
+    """Actual HTTP call to Jina — called through the circuit breaker.
+
+    Transient errors (timeouts, 5xx) are re-raised so the circuit breaker
+    can track failures. Client errors (4xx) are returned as failures without
+    tripping the breaker.
+    """
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(f"{JINA_READER_URL}/{url}")
@@ -108,14 +134,11 @@ async def read_url(url: str, timeout: float = 30.0) -> JinaReadResult:
             )
     except httpx.TimeoutException:
         logger.warning("Jina Reader timeout for %s", url)
-        return JinaReadResult(
-            url=url,
-            title="",
-            markdown="",
-            success=False,
-            error="Timeout",
-        )
+        raise  # Let circuit breaker track this failure
     except httpx.HTTPStatusError as e:
+        if e.response.status_code >= 500:
+            logger.warning("Jina Reader server error for %s: %s", url, e)
+            raise  # Server error — trip the breaker
         logger.warning("Jina Reader HTTP error for %s: %s", url, e)
         return JinaReadResult(
             url=url,
@@ -126,13 +149,7 @@ async def read_url(url: str, timeout: float = 30.0) -> JinaReadResult:
         )
     except Exception as e:
         logger.warning("Jina Reader error for %s: %s", url, e)
-        return JinaReadResult(
-            url=url,
-            title="",
-            markdown="",
-            success=False,
-            error=str(e),
-        )
+        raise  # Connection errors — trip the breaker
 
 
 def read_url_sync(url: str, timeout: float = 30.0) -> JinaReadResult:

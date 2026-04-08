@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +65,6 @@ async def fetch_g2_reviews(product_name: str, limit: int = 20) -> list[Competito
         return []
 
     try:
-        import json
         from apify_client import ApifyClient
 
         client = ApifyClient(api_key)

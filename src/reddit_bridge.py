@@ -10,6 +10,8 @@ from typing import Any
 
 import aiohttp
 
+from src.utils.circuit_breaker import CircuitOpenError, get_breaker
+
 
 def _resolve_env(value: str | None) -> str:
     raw = (value or "").strip()
@@ -104,6 +106,14 @@ class RedditBridgeClient:
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.enabled:
             raise BridgeError("bridge_disabled", "reddit bridge is disabled")
+        breaker = get_breaker("reddit_bridge", failure_threshold=3, recovery_timeout=30.0)
+        try:
+            return await breaker.call(self._do_post, path, payload)
+        except CircuitOpenError:
+            raise BridgeError("circuit_open", "reddit bridge circuit breaker is open — too many recent failures")
+
+    async def _do_post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Actual HTTP POST — called through the circuit breaker."""
         try:
             session = await self._get_session()
             async with session.post(

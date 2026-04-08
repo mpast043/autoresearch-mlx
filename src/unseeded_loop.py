@@ -14,7 +14,6 @@ import argparse
 import asyncio
 import json
 import logging
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,16 +23,6 @@ import yaml
 
 from src.database import Database
 from src.agents.validation import ValidationAgent
-from src.build_prep import determine_selection_state
-from src.opportunity_engine import (
-    build_problem_atom,
-    score_opportunity,
-    stage_decision,
-    build_cluster_summary,
-    build_counterevidence,
-    assess_market_gap,
-)
-from src.research_tools import ResearchToolkit
 
 logger = logging.getLogger(__name__)
 

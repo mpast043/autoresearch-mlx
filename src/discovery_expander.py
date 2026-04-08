@@ -10,7 +10,7 @@ from typing import Any
 
 from src.discovery_suggestions import build_discovery_suggestions
 from src.discovery_term_lifecycle import TermLifecycleManager
-from src.discovery_next_wave import generate_next_wave, get_next_wave
+from src.discovery_next_wave import generate_next_wave
 from src.runtime.paths import resolve_project_path
 
 logger = logging.getLogger(__name__)

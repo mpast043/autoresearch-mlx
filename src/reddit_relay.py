@@ -377,7 +377,7 @@ AUTH_TOKEN_KEY = web.AppKey("auth_token", str)
 ALLOW_NO_AUTH_KEY = web.AppKey("allow_no_auth", bool)
 
 
-def _json_error(status: int, code: str, message: str, **extra: Any) -> web.Response:
+def _json_error(status: int, code: str, message: str, **extra: str) -> web.Response:
     payload = {"ok": False, "error_code": code, "error": message}
     payload.update(extra)
     return web.json_response(payload, status=status)
@@ -409,7 +409,7 @@ def _normalize_items(items: list[dict[str, Any]], *, expected_kind: str | None =
     return [normalize_reddit_item(item, expected_kind=expected_kind) for item in items]
 
 
-def _repair_reddit_item(item: Any, *, expected_kind: str) -> dict[str, Any]:
+def _repair_reddit_item(item: dict[str, Any], *, expected_kind: str) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise ValueError("cached reddit item is not a dict")
     repaired = dict(item)
@@ -444,7 +444,7 @@ def _normalize_cached_thread_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {"post": normalized_post, "comments": normalized_comments}
 
 
-def _normalize_cached_search_items(items: list[Any]) -> list[dict[str, Any]]:
+def _normalize_cached_search_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     normalized_items: list[dict[str, Any]] = []
     for item in items if isinstance(items, list) else []:
         try:

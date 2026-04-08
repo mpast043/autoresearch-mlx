@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.database import Finding, ProblemAtom
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +176,7 @@ def _classify_via_ollama(
     cluster_summary: str,
 ) -> PlatformFit | None:
     """Classify platform fit using Ollama (local-first)."""
-    import os
     import json
-    import aiohttp
 
     config = get_platform_classification_config()
     base_url = config["ollama_base_url"]
@@ -242,8 +243,6 @@ def _classify_via_anthropic(
     cluster_summary: str,
 ) -> PlatformFit | None:
     """Classify platform fit using Anthropic (cloud fallback)."""
-    import os
-    import json
 
     config = get_platform_classification_config()
     api_key = config["anthropic_api_key"]
@@ -881,9 +880,9 @@ def build_brief_payload(
     validation_id: int,
     cluster_id: int,
     linked_finding_ids: list[int],
-    finding: Any,
+    finding: Finding,
     cluster: dict[str, Any],
-    anchor_atom: Any,
+    anchor_atom: ProblemAtom,
     corroboration: dict[str, Any],
     market_enrichment: dict[str, Any],
     evidence_payload: dict[str, Any],

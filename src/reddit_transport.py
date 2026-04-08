@@ -73,7 +73,7 @@ class RedditTransport:
     # TTL-aware cache helpers
     # ------------------------------------------------------------------
 
-    def _cache_key_str(self, key: Any) -> str:
+    def _cache_key_str(self, key: str) -> str:
         """Return a string representation usable as a timestamp-dict key."""
         if isinstance(key, str):
             return key
@@ -91,7 +91,7 @@ class RedditTransport:
             self.search_cache.pop(k, None)  # type: ignore[arg-type]
             self.thread_cache.pop(k, None)
 
-    def _cache_get(self, cache: dict, key: Any) -> Any:
+    def _cache_get(self, cache: dict, key: str) -> dict[str, Any] | None:
         """Get a value from *cache*, returning ``None`` if expired."""
         self._evict_expired_caches()
         key_str = self._cache_key_str(key)
@@ -104,7 +104,7 @@ class RedditTransport:
             return None
         return cache.get(key)
 
-    def _cache_set(self, cache: dict, key: Any, value: Any) -> None:
+    def _cache_set(self, cache: dict, key: str, value: dict[str, Any]) -> None:
         """Store *value* in *cache* under *key* and record the timestamp."""
         key_str = self._cache_key_str(key)
         self._cache_timestamps[key_str] = time.time()
