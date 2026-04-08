@@ -1060,7 +1060,7 @@ class TestDatabase(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_batch_active_flag_is_thread_local(self) -> None:
-        """batch_active flag is thread-local and doesn't leak across threads."""
+        """batch_depth counter is thread-local and doesn't leak across threads."""
         finding = Finding(
             source="thread_test", source_url="https://example.com/thr",
             entrepreneur="", tool_used="", product_built="Thread Test",
@@ -1074,18 +1074,83 @@ class TestDatabase(unittest.TestCase):
             db2.init_schema()
             with db2.batch():
                 db2.insert_finding(finding)
-                # Inside batch, batch_active should be True
-                results.append(getattr(db2._local, "batch_active", False))
+                # Inside batch, batch_depth should be >= 1
+                results.append(getattr(db2._local, "batch_depth", 0))
             db2.close()
 
         t = threading.Thread(target=insert_in_batch)
         t.start()
         t.join()
 
-        # The other thread saw batch_active as True
-        self.assertTrue(results[0])
-        # Main thread should NOT have batch_active set
-        self.assertFalse(getattr(self.db._local, "batch_active", False))
+        # The other thread saw batch_depth >= 1
+        self.assertGreater(results[0], 0)
+        # Main thread should NOT have batch_depth set (or it should be 0)
+        self.assertEqual(getattr(self.db._local, "batch_depth", 0), 0)
+
+    def test_batch_nested_success_commits_on_outer_exit(self) -> None:
+        """Nested batch blocks only commit when the outermost block exits."""
+        finding1 = Finding(
+            source="nest_ok", source_url="https://example.com/n1",
+            entrepreneur="", tool_used="", product_built="Nested OK 1",
+            monetization_method="", outcome_summary="Nested",
+            content_hash="hash_nest_ok_1", status="new", finding_kind="pain_signal",
+        )
+        finding2 = Finding(
+            source="nest_ok", source_url="https://example.com/n2",
+            entrepreneur="", tool_used="", product_built="Nested OK 2",
+            monetization_method="", outcome_summary="Nested",
+            content_hash="hash_nest_ok_2", status="new", finding_kind="pain_signal",
+        )
+        with self.db.batch():
+            id1 = self.db.insert_finding(finding1)
+            with self.db.batch():
+                id2 = self.db.insert_finding(finding2)
+                # Depth should be 2 inside the inner block
+                self.assertEqual(getattr(self.db._local, "batch_depth", 0), 2)
+            # After inner exit, depth should be 1, no commit yet
+            self.assertEqual(getattr(self.db._local, "batch_depth", 0), 1)
+
+        # After outer exit, both should be committed
+        self.assertIsNotNone(self.db.get_finding(id1))
+        self.assertIsNotNone(self.db.get_finding(id2))
+
+    def test_batch_nested_outer_failure_rolls_back_all(self) -> None:
+        """If the outer batch block fails, inner writes are also rolled back."""
+        finding = Finding(
+            source="nest_fail", source_url="https://example.com/nf",
+            entrepreneur="", tool_used="", product_built="Nested Fail",
+            monetization_method="", outcome_summary="Nested Fail",
+            content_hash="hash_nest_fail", status="new", finding_kind="pain_signal",
+        )
+        try:
+            with self.db.batch():
+                with self.db.batch():
+                    self.db.insert_finding(finding)
+                raise RuntimeError("Outer failure")
+        except RuntimeError:
+            pass
+
+        # Inner writes should be rolled back because the outer block failed
+        self.assertIsNone(self.db.get_finding_by_hash("hash_nest_fail"))
+
+    def test_batch_nested_inner_failure_does_not_commit(self) -> None:
+        """Inner batch failure propagates; outer rollback undoes everything."""
+        finding = Finding(
+            source="nest_inner_fail", source_url="https://example.com/nif",
+            entrepreneur="", tool_used="", product_built="Inner Fail",
+            monetization_method="", outcome_summary="Inner Fail",
+            content_hash="hash_nest_inner_fail", status="new", finding_kind="pain_signal",
+        )
+        try:
+            with self.db.batch():
+                with self.db.batch():
+                    self.db.insert_finding(finding)
+                    raise RuntimeError("Inner failure")
+        except RuntimeError:
+            pass
+
+        # Both inner and outer roll back, nothing is committed
+        self.assertIsNone(self.db.get_finding_by_hash("hash_nest_inner_fail"))
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ import asyncio
 import collections
 import json
 import sys
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from src.runtime.paths import DEFAULT_CONFIG_PATH, DEFAULT_EVAL_PATH, resolve_project_path  # noqa: E402
@@ -397,6 +399,742 @@ async def watch_status(interval: float = 1.0, config_path: str | Path = DEFAULT_
         await app.shutdown()
 
 
+# ---------------------------------------------------------------------------
+# Async context manager for app lifecycle
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def app_context(args: argparse.Namespace, *, start_new_run: bool = False):
+    """Yield an initialised AutoResearcher, shutting it down on exit."""
+    app = AutoResearcher(config_path=args.config)
+    await app.initialize(start_new_run=start_new_run)
+    try:
+        yield app
+    finally:
+        await app.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Command handlers — each receives (args, app) where app is already
+# initialised, unless the command manages its own lifecycle.
+# ---------------------------------------------------------------------------
+
+async def cmd_watch(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    await watch_status(interval=args.interval, config_path=args.config)
+
+
+async def cmd_eval(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    print_json(run_behavior_eval(str(resolve_project_path(args.eval_path))))
+
+
+async def cmd_reddit_relay(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    app = AutoResearcher(config_path=args.config)
+    host = args.host or app.config.get("reddit_relay", {}).get("host", "127.0.0.1")
+    port = args.port or int(app.config.get("reddit_relay", {}).get("port", 8787))
+    await run_relay_server(app.config, host=host, port=port)
+
+
+async def cmd_reddit_seed(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args) as app:
+        seeder = RedditSeeder(config=app.config)
+        summary = await seeder.seed()
+        print_json(summary.__dict__ if hasattr(summary, "__dict__") else summary)
+
+
+async def cmd_check_bridge(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    print_json(await run_check_bridge(args.config))
+
+
+async def cmd_backup_db(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    print_json(run_backup_db(args.config))
+
+
+async def cmd_suggest_discovery(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args) as app:
+        from src.discovery_suggestions import build_discovery_suggestions
+
+        print_json(
+            build_discovery_suggestions(
+                app.db,
+                min_atoms=args.min_atoms,
+                limit_clusters=args.limit,
+                limit_atoms=max(args.limit * 4, 40),
+                limit_findings=max(args.limit * 16, 200),
+                max_keywords=min(28, max(args.limit, 12)),
+                theme_keywords=((app.config.get("discovery", {}) or {}).get("reddit", {}) or {}).get(
+                    "theme_keywords", {}
+                ),
+                money_claim_min_confidence=args.money_claims_min_confidence,
+            )
+        )
+
+
+async def cmd_term_lifecycle(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args) as app:
+        from src.discovery_term_lifecycle import TermLifecycleManager
+
+        _ = TermLifecycleManager(app.db)
+
+        if args.term_type:
+            terms = app.db.list_search_terms(term_type=args.term_type, limit=args.limit or 100)
+        else:
+            terms = app.db.list_search_terms(limit=args.limit or 100)
+
+        print_json({
+            "terms": terms,
+            "counts": {
+                "total": len(terms),
+                "by_state": collections.Counter(t.get("state") for t in terms),
+            },
+        })
+
+
+async def cmd_term_state(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args) as app:
+        from src.discovery_term_lifecycle import TermLifecycleManager
+
+        lifecycle = TermLifecycleManager(app.db)
+        action = args.action or "list"
+
+        if action == "list":
+            terms = app.db.list_search_terms(
+                term_type=args.term_type if args.term_type else None,
+                state=args.state if args.state else None,
+                limit=args.limit or 100,
+            )
+            print_json({"terms": terms})
+        elif action == "ban":
+            if not args.term_value:
+                print("term-state ban requires --term-value", file=sys.stderr)
+                sys.exit(1)
+            lifecycle.ban_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual ban")
+            print_json({"ok": True, "action": "ban", "term_type": args.term_type, "term_value": args.term_value})
+        elif action == "reactivate":
+            if not args.term_value:
+                print("term-state reactivate requires --term-value", file=sys.stderr)
+                sys.exit(1)
+            lifecycle.reactivate_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual reactivation")
+            print_json({"ok": True, "action": "reactivate", "term_type": args.term_type, "term_value": args.term_value})
+        elif action == "complete":
+            if not args.term_value:
+                print("term-state complete requires --term-value", file=sys.stderr)
+                sys.exit(1)
+            lifecycle.complete_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual completion")
+            print_json({"ok": True, "action": "complete", "term_type": args.term_type, "term_value": args.term_value})
+        elif action == "reset":
+            if not args.term_value:
+                print("term-state reset requires --term-value", file=sys.stderr)
+                sys.exit(1)
+            lifecycle.reset_term(args.term_type or "keyword", args.term_value)
+            print_json({"ok": True, "action": "reset", "term_type": args.term_type, "term_value": args.term_value})
+        elif action == "high-performers":
+            high_kw = lifecycle.get_terms_for_expansion("keyword", limit=args.limit or 20)
+            high_sub = lifecycle.get_terms_for_expansion("subreddit", limit=args.limit or 20)
+            print_json({
+                "high_performing_keywords": high_kw,
+                "high_performing_subreddits": high_sub,
+            })
+        elif action == "exhausted":
+            exh_kw = app.db.get_exhausted_terms("keyword", limit=args.limit or 50)
+            exh_sub = app.db.get_exhausted_terms("subreddit", limit=args.limit or 50)
+            print_json({
+                "exhausted_keywords": exh_kw,
+                "exhausted_subreddits": exh_sub,
+            })
+        elif action == "wedge-quality":
+            wedge_kw = lifecycle.get_terms_for_expansion_by_wedge_quality("keyword", limit=args.limit or 20)
+            wedge_sub = lifecycle.get_terms_for_expansion_by_wedge_quality("subreddit", limit=args.limit or 20)
+            print_json({
+                "wedge_quality_keywords": wedge_kw,
+                "wedge_quality_subreddits": wedge_sub,
+            })
+        elif action == "specificity":
+            spec_kw = lifecycle.get_terms_by_specificity("keyword", limit=args.limit or 20)
+            spec_sub = lifecycle.get_terms_by_specificity("subreddit", limit=args.limit or 20)
+            print_json({
+                "specificity_keywords": spec_kw,
+                "specificity_subreddits": spec_sub,
+            })
+        elif action == "platform-native":
+            plat_kw = lifecycle.get_terms_by_platform_native("keyword", limit=args.limit or 20)
+            plat_sub = lifecycle.get_terms_by_platform_native("subreddit", limit=args.limit or 20)
+            print_json({
+                "platform_native_keywords": plat_kw,
+                "platform_native_subreddits": plat_sub,
+            })
+        elif action == "abstraction-collapse":
+            collapse_kw = lifecycle.get_abstraction_collapse_terms("keyword", limit=args.limit or 20)
+            collapse_sub = lifecycle.get_abstraction_collapse_terms("subreddit", limit=args.limit or 20)
+            print_json({
+                "abstraction_collapse_keywords": collapse_kw,
+                "abstraction_collapse_subreddits": collapse_sub,
+            })
+        elif action == "buildable":
+            build_kw = lifecycle.get_buildable_terms("keyword", limit=args.limit or 20)
+            build_sub = lifecycle.get_buildable_terms("subreddit", limit=args.limit or 20)
+            print_json({
+                "buildable_keywords": build_kw,
+                "buildable_subreddits": build_sub,
+            })
+        else:
+            print(f"Unknown action: {action}", file=sys.stderr)
+            sys.exit(1)
+
+
+async def cmd_security_scan(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args) as app:
+        from src.agents.security import SecurityAgent
+        config = app.config.get("security", {})
+        security = SecurityAgent(config)
+
+        wedge_id = args.wedge_id if hasattr(args, "wedge_id") else None
+        code = args.code if hasattr(args, "code") else None
+
+        if code:
+            report = security.scan_code(code, file_name=args.file_name if hasattr(args, "file_name") else "stdin")
+            print(security.format_report(report))
+        elif wedge_id:
+            opp = app.db.get_opportunity(wedge_id)
+            if opp:
+                spec = {"id": str(opp.id), "cluster_id": opp.cluster_id, "title": opp.title}
+                report = security.scan_solution_spec(spec)
+                print(security.format_report(report))
+            else:
+                print(f"Opportunity {wedge_id} not found", file=sys.stderr)
+                sys.exit(1)
+        else:
+            opportunities = app.db.get_opportunities(status="build_ready", limit=10)
+            for opp in opportunities:
+                spec = {"id": str(opp.id), "cluster_id": opp.cluster_id, "title": opp.title}
+                report = security.scan_solution_spec(spec)
+                print(f"\n--- Opportunity {opp.id}: {opp.title} ---")
+                print(security.format_report(report))
+
+
+async def cmd_generate_docs(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args) as app:
+        from src.agents.technical_writer import TechnicalWriterAgent
+        from pathlib import Path
+
+        config = app.config.get("technical_writer", {})
+        writer = TechnicalWriterAgent(config)
+
+        output_dir = Path(config.get("output_dir", "output/docs"))
+
+        opportunities = app.db.get_opportunities(status="build_ready", limit=5)
+        for opp in opportunities:
+            spec = app.db.get_opportunity(opp.id)
+            if spec:
+                spec_dict = {"id": str(spec.id), "cluster_id": spec.cluster_id, "title": spec.title}
+                bundle = writer.generate_docs(spec_dict)
+                opp_dir = output_dir / f"opportunity_{spec.id}"
+                files = writer.save_docs(bundle, opp_dir)
+                print(f"Generated docs for opportunity {spec.id}: {list(files.keys())}")
+
+
+async def cmd_sre_health(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args) as app:
+        from src.agents.sre import SREAgent
+
+        config = app.config.get("sre", {})
+        sre = SREAgent(app.db, config)
+
+        opportunity_id = args.wedge_id if hasattr(args, "wedge_id") else None
+
+        if opportunity_id:
+            print(sre.format_opportunity_status(opportunity_id))
+        else:
+            report = sre.generate_report()
+            print(report.summary)
+
+
+async def cmd_patterns(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    from src.opportunity_engine import get_patterns_for_discovery
+
+    db_path = str(resolve_database_path_from_config(args.config))
+    patterns = get_patterns_for_discovery(db_path, min_atoms=1)
+
+    print("=== EMERGING PATTERNS ===")
+    print("Specific problems detected from signals:\n")
+    for p in patterns:
+        print(f"  {p['pattern']}")
+        print(f"    Signals: {p['signal_count']}, Urgency: {p['urgency']}")
+        if 'tools' in p:
+            print(f"    Tools: {p['tools']}")
+        print()
+
+    if not patterns:
+        print("  No specific patterns detected yet.")
+        print("  Run more discovery to identify specific integration problems.")
+
+
+async def cmd_scoring_report(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    import sqlite3
+
+    db_path = resolve_database_path_from_config(args.config)
+    if not db_path.exists():
+        print(f"No database found at {db_path}")
+        return
+
+    config, _ = load_runtime_config(args.config)
+    promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
+
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT scoring_version, COUNT(*) FROM opportunities GROUP BY scoring_version")
+    version_dist = cursor.fetchall()
+    print("=== SCORING VERSION DISTRIBUTION ===")
+    has_legacy = False
+    for ver, count in version_dist:
+        marker = ""
+        if ver in ('0', 'v1', 'v2', 'v3'):
+            marker = " (LEGACY - needs rescore)"
+            has_legacy = True
+        elif ver == 'v4':
+            marker = " <-- CURRENT"
+        print(f"  {ver}: {count}{marker}")
+    if has_legacy:
+        print("\n⚠️  WARNING: Legacy-scored rows detected. Run revalidation for accurate analysis.")
+    print()
+
+    cursor.execute("SELECT composite_score, frequency_score, evidence_quality, education_burden, adoption_friction FROM opportunities ORDER BY composite_score DESC")
+    rows = cursor.fetchall()
+    scores = [r[0] for r in rows]
+    total = len(scores)
+
+    if total == 0:
+        print("No opportunities in database")
+        conn.close()
+        return
+
+    sorted_scores = sorted(scores)
+    p99 = sorted_scores[int(total * 0.99)] if total > 0 else 0
+    p95 = sorted_scores[int(total * 0.95)] if total > 0 else 0
+    p90 = sorted_scores[int(total * 0.90)] if total > 0 else 0
+    median = sorted_scores[int(total * 0.50)] if total > 0 else 0
+
+    above_promote = sum(1 for s in scores if s >= promote_thresh)
+    above_park = sum(1 for s in scores if s >= park_thresh)
+
+    print("=== SCORING PERCENTILE MONITOR ===\n")
+    print(f"Total opportunities: {total}\n")
+    print("PERCENTILES:")
+    print(f"  Max:   {max(scores):.4f}")
+    print(f"  P99:   {p99:.4f}")
+    print(f"  P95:   {p95:.4f}")
+    print(f"  P90:   {p90:.4f}")
+    print(f"  Median:{median:.4f}")
+    print(f"\nDECISION BUCKETS (thresholds: promote={promote_thresh}, park={park_thresh}):")
+    print(f"  Promote (≥{promote_thresh}): {above_promote} ({above_promote/total*100:.1f}%)")
+    print(f"  Park ({park_thresh}-{promote_thresh}): {above_park-above_promote} ({(above_park-above_promote)/total*100:.1f}%)")
+    print(f"  Kill (<{park_thresh}): {total-above_park} ({(total-above_park)/total*100:.1f}%)")
+
+    cursor.execute("""
+        SELECT
+            AVG(frequency_score) as avg_freq,
+            AVG(evidence_quality) as avg_eq,
+            AVG(education_burden) as avg_edu,
+            AVG(adoption_friction) as avg_fric
+        FROM opportunities
+        WHERE composite_score >= ? AND composite_score < ?
+    """, (park_thresh, promote_thresh))
+    parked = cursor.fetchone()
+    park_count = above_park - above_promote
+    if parked and parked[0]:
+        print(f"\nPARKED OPPORTUNITY ANALYSIS (n={park_count}):")
+        print(f"  Avg frequency:        {parked[0]:.3f}")
+        print(f"  Avg evidence_quality: {parked[1]:.3f}")
+        print(f"  Avg education_burden: {parked[2]:.3f} ⚠️")
+        print(f"  Avg adoption_friction:{parked[3]:.3f} ⚠️")
+
+    conn.close()
+
+
+async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    import sqlite3
+
+    db_path = resolve_database_path_from_config(args.config)
+    if not db_path.exists():
+        print(f"No database found at {db_path}")
+        return
+
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT o.id, o.cluster_id
+        FROM opportunities o
+        WHERE o.scoring_version = '0'
+    """)
+    unvalidated_opps = cursor.fetchall()
+
+    if not unvalidated_opps:
+        print("No opportunities need revalidation.")
+        print("All have been scored with current formula.")
+        conn.close()
+        return
+
+    print(f"=== REVALIDATING {len(unvalidated_opps)} OPPORTUNITIES ===")
+    print("This will re-run validation with v2 formula (new weights/thresholds)")
+    print("Each opportunity will be marked with scoring_version='v2' after revalidation.\n")
+
+    for opp_id, cluster_id in unvalidated_opps[:5]:
+        print(f"  Would revalidate opportunity #{opp_id} (cluster={cluster_id})")
+
+    print(f"\n  ... and {len(unvalidated_opps) - 5} more")
+
+    cursor.execute("SELECT COUNT(*), COUNT(CASE WHEN scoring_version = '0' THEN 1 END), COUNT(CASE WHEN scoring_version = 'v2' THEN 1 END) FROM opportunities")
+    total, legacy, current = cursor.fetchone()
+
+    print(f"\n=== CURRENT STATUS ===")
+    print(f"  Total opportunities: {total}")
+    print(f"  Not validated (needs revalidate): {legacy}")
+    print(f"  v2 (current formula): {current}")
+
+    conn.close()
+
+
+async def cmd_rescore_v4(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    import sqlite3
+    from datetime import datetime
+    from src.opportunity_engine import (
+        score_opportunity,
+        stage_decision,
+        build_counterevidence,
+        assess_market_gap,
+        CURRENT_SCORING_VERSION,
+        CURRENT_FORMULA_VERSION,
+        CURRENT_THRESHOLD_VERSION,
+    )
+
+    config, _ = load_runtime_config(args.config)
+    db_path = resolve_database_path_from_config(args.config)
+    if not db_path.exists():
+        print(f"No database found at {db_path}")
+        return
+
+    print("=== V4 RESCORING ===")
+    print(f"Formula: {CURRENT_FORMULA_VERSION}")
+    print(f"Scoring: {CURRENT_SCORING_VERSION}")
+    print(f"Thresholds: {CURRENT_THRESHOLD_VERSION}")
+    print()
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    def _has_column(table: str, column: str) -> bool:
+        return any(row["name"] == column for row in cursor.execute(f"PRAGMA table_info({table})").fetchall())
+
+    atom_cluster_expr = "a.cluster_key" if _has_column("problem_atoms", "cluster_key") else "json_extract(a.metadata_json, '$.cluster_key')"
+    cluster_key_expr = "c.cluster_key" if _has_column("opportunity_clusters", "cluster_key") else "json_extract(c.metadata_json, '$.cluster_key')"
+
+    cursor.execute(f"""
+        SELECT c.id as cluster_id, c.label, c.summary_json,
+               GROUP_CONCAT(a.id) as atom_ids
+        FROM opportunity_clusters c
+        LEFT JOIN problem_atoms a ON {atom_cluster_expr} = {cluster_key_expr}
+        GROUP BY c.id
+        ORDER BY c.id
+    """)
+    clusters = cursor.fetchall()
+
+    if not clusters:
+        print("No clusters found")
+        conn.close()
+        return
+
+    print(f"Found {len(clusters)} clusters to rescore")
+    print()
+
+    promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
+    promote_count = 0
+    park_count = 0
+    kill_count = 0
+
+    for i, cluster in enumerate(clusters):
+        cluster_id = cluster["cluster_id"]
+
+        atom_ids = cluster["atom_ids"]
+        if not atom_ids:
+            print(f"  Skipping cluster {cluster_id}: no atoms")
+            continue
+
+        cursor.execute("SELECT * FROM problem_atoms WHERE id = ?", (int(atom_ids.split(",")[0]),))
+        atom_row = cursor.fetchone()
+        if not atom_row:
+            continue
+
+        atom = dict(atom_row)
+
+        signal_id = atom.get("raw_signal_id") or atom.get("signal_id")
+        signal = {}
+        if signal_id:
+            cursor.execute("SELECT * FROM raw_signals WHERE id = ?", (signal_id,))
+            signal_row = cursor.fetchone()
+            if signal_row:
+                signal = dict(signal_row)
+
+        import json
+        summary = json.loads(cluster["summary_json"]) if cluster["summary_json"] else {}
+
+        validation_evidence = {
+            "scores": {},
+            "evidence": {},
+            "corroboration": {},
+            "market_enrichment": {},
+        }
+
+        try:
+            scorecard = score_opportunity(
+                atom=atom,
+                signal=signal,
+                cluster_summary=summary,
+                validation_evidence=validation_evidence,
+                market_gap=assess_market_gap(summary, {}),
+            )
+        except Exception as e:
+            print(f"  Error scoring cluster {cluster_id}: {e}")
+            continue
+
+        market_gap = assess_market_gap(summary, {})
+        counterevidence = build_counterevidence(scorecard, market_gap)
+        decision = stage_decision(
+            scorecard,
+            market_gap,
+            counterevidence,
+            promotion_threshold=promote_thresh,
+            park_threshold=park_thresh,
+        )
+
+        now = datetime.now().isoformat()
+
+        cursor.execute("""
+            UPDATE opportunities
+            SET recommendation = ?, status = ?,
+                scoring_version = ?,
+                problem_truth_score = ?,
+                revenue_readiness_score = ?,
+                decision_score = ?,
+                problem_plausibility = ?,
+                value_support = ?,
+                corroboration_strength = ?,
+                evidence_sufficiency = ?,
+                willingness_to_pay_proxy = ?,
+                formula_version = ?,
+                threshold_version = ?,
+                evaluated_at = ?,
+                last_rescored_at = ?,
+                composite_score = ?,
+                pain_severity = ?,
+                frequency_score = ?,
+                evidence_quality = ?
+            WHERE cluster_id = ?
+        """, (
+            decision["recommendation"],
+            decision["status"],
+            CURRENT_SCORING_VERSION,
+            scorecard.get("problem_truth_score", 0.0),
+            scorecard.get("revenue_readiness_score", 0.0),
+            scorecard.get("decision_score", 0.0),
+            scorecard.get("problem_plausibility", 0.0),
+            scorecard.get("value_support", 0.0),
+            scorecard.get("corroboration_strength", 0.0),
+            scorecard.get("evidence_sufficiency", 0.0),
+            scorecard.get("willingness_to_pay_proxy", 0.0),
+            CURRENT_FORMULA_VERSION,
+            CURRENT_THRESHOLD_VERSION,
+            now,
+            now,
+            scorecard.get("composite_score", 0.0),
+            scorecard.get("pain_severity", 0.0),
+            scorecard.get("frequency_score", 0.0),
+            scorecard.get("evidence_quality", 0.0),
+            cluster_id,
+        ))
+
+        if decision["recommendation"] == "promote":
+            promote_count += 1
+        elif decision["recommendation"] == "park":
+            park_count += 1
+        else:
+            kill_count += 1
+
+        if (i + 1) % 10 == 0:
+            print(f"  Progress: {i+1}/{len(clusters)} processed...")
+
+    conn.commit()
+
+    cursor.execute("""
+        INSERT INTO scoring_runs (run_id, formula_version, threshold_version, scoring_version,
+            opportunity_count, promote_count, park_count, kill_count, computed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        f"rescore-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        CURRENT_FORMULA_VERSION,
+        CURRENT_THRESHOLD_VERSION,
+        CURRENT_SCORING_VERSION,
+        len(clusters),
+        promote_count,
+        park_count,
+        kill_count,
+        datetime.now().isoformat(),
+    ))
+    conn.commit()
+
+    print()
+    print("=== RESCORING COMPLETE ===")
+    print(f"  Total: {len(clusters)}")
+    print(f"  Promote: {promote_count}")
+    print(f"  Park: {park_count}")
+    print(f"  Kill: {kill_count}")
+    print(f"  Version: {CURRENT_SCORING_VERSION}")
+    print(f"  Formula: {CURRENT_FORMULA_VERSION}")
+
+    conn.close()
+
+
+async def cmd_run(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    app = AutoResearcher(config_path=args.config)
+    original_web: list[str] | None = None
+    original_reddit: list[str] | None = None
+
+    if args.pattern:
+        from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
+
+        if args.pattern not in PATTERN_TO_DISCOVERY_QUERIES:
+            print(f"Unknown pattern: {args.pattern}")
+            print(f"Available patterns: {list(PATTERN_TO_DISCOVERY_QUERIES.keys())}")
+            raise SystemExit(1)
+
+        queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
+        print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
+        print(f"Queries: {queries[:3]}...")
+
+        original_web = list(app.config.get("discovery", {}).get("web", {}).get("keywords", []))
+        original_reddit = list(app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", []))
+
+        if "web" in app.config.get("discovery", {}):
+            app.config["discovery"]["web"]["keywords"] = queries
+        if "reddit" in app.config.get("discovery", {}):
+            app.config["discovery"]["reddit"]["problem_keywords"] = queries
+
+        print(f"Running focused discovery with {len(queries)} queries...\n")
+
+    if args.fresh:
+        print("=== FRESH MODE: Bypassing signal cache ===")
+        app.discovery_bypass_cache = True
+
+    await app.run()
+
+
+async def cmd_run_once(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    app = AutoResearcher(config_path=args.config)
+    original_web: list[str] | None = None
+    original_reddit: list[str] | None = None
+
+    if args.pattern:
+        from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
+
+        if args.pattern not in PATTERN_TO_DISCOVERY_QUERIES:
+            print(f"Unknown pattern: {args.pattern}")
+            print(f"Available patterns: {list(PATTERN_TO_DISCOVERY_QUERIES.keys())}")
+            raise SystemExit(1)
+
+        queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
+        print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
+        print(f"Queries: {queries[:3]}...")
+
+        original_web = list(app.config.get("discovery", {}).get("web", {}).get("keywords", []))
+        original_reddit = list(app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", []))
+
+        if "web" in app.config.get("discovery", {}):
+            app.config["discovery"]["web"]["keywords"] = queries
+        if "reddit" in app.config.get("discovery", {}):
+            app.config["discovery"]["reddit"]["problem_keywords"] = queries
+
+        print(f"Running focused discovery with {len(queries)} queries...\n")
+
+    if args.fresh:
+        print("=== FRESH MODE: Bypassing signal cache ===")
+        app.discovery_bypass_cache = True
+
+    try:
+        summary = await app.run_once(skip_backlog=bool(args.skip_backlog))
+        if args.verbose:
+            print_json(build_verbose_report(app, summary))
+        else:
+            print_json(summary)
+    finally:
+        if args.pattern:
+            if original_web is not None and "web" in app.config.get("discovery", {}):
+                app.config["discovery"]["web"]["keywords"] = original_web
+            if original_reddit is not None and "reddit" in app.config.get("discovery", {}):
+                app.config["discovery"]["reddit"]["problem_keywords"] = original_reddit
+
+    if args.pattern:
+        print(f"\n=== Focused discovery complete ===")
+        print(f"Use 'python3 cli.py patterns' to see updated pattern counts")
+
+
+async def cmd_run_unseeded(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args, start_new_run=True) as app:
+        summary = await app.run_unseeded(
+            vertical=args.vertical,
+            max_findings=args.max_findings,
+        )
+        print_json(summary)
+
+
+async def cmd_deep_research(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    async with app_context(args, start_new_run=True) as app:
+        from src.agents.deep_research import DeepResearchAgent
+
+        agent = DeepResearchAgent(
+            name="deep_research",
+            db=app.db,
+            vertical=args.vertical,
+        )
+        summary = await agent.run_deep_research(
+            max_signals_per_source=args.max_findings,
+        )
+        print_json(summary)
+
+
+async def cmd_simple_list(args: argparse.Namespace, app: AutoResearcher, attr: str, method: str, limit: int = 100) -> None:
+    items = getattr(app.db, method)(limit=limit) if app.db else []
+    print_json([item.__dict__ for item in items])
+
+
+# ---------------------------------------------------------------------------
+# Command dispatch table
+# ---------------------------------------------------------------------------
+
+COMMANDS: dict[str, Callable[..., Awaitable[None]]] = {
+    "watch": cmd_watch,
+    "eval": cmd_eval,
+    "reddit-relay": cmd_reddit_relay,
+    "reddit-seed": cmd_reddit_seed,
+    "check-bridge": cmd_check_bridge,
+    "backup-db": cmd_backup_db,
+    "suggest-discovery": cmd_suggest_discovery,
+    "term-lifecycle": cmd_term_lifecycle,
+    "term-state": cmd_term_state,
+    "security-scan": cmd_security_scan,
+    "generate-docs": cmd_generate_docs,
+    "sre-health": cmd_sre_health,
+    "patterns": cmd_patterns,
+    "scoring-report": cmd_scoring_report,
+    "revalidate": cmd_revalidate,
+    "rescore-v4": cmd_rescore_v4,
+    "run": cmd_run,
+    "run-once": cmd_run_once,
+    "run-unseeded": cmd_run_unseeded,
+    "deep-research": cmd_deep_research,
+}
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser("AutoResearcher CLI")
     parser.add_argument(
@@ -482,7 +1220,7 @@ async def main() -> None:
         default="low",
         help="suggest-discovery: minimum confidence tier for money claims (default: low)",
     )
-    parser.add_argument("--wedge-id", type=int, help="Specific wedge ID for security-scan, sre-health")
+    parser.add_argument("--wedge-id", type=int, help="Specific opportunity ID for security-scan, sre-health")
     parser.add_argument("--code", type=str, help="Code to scan (for security-scan)")
     parser.add_argument("--file-name", type=str, default="stdin", help="File name for security-scan context")
     parser.add_argument(
@@ -508,741 +1246,14 @@ async def main() -> None:
     parser.add_argument("--state", default=None, help="Filter by state")
     args = parser.parse_args()
 
-    if args.command == "watch":
-        await watch_status(interval=args.interval, config_path=args.config)
+    # --- Dispatch to extracted command handlers ---
+    handler = COMMANDS.get(args.command)
+    if handler:
+        await handler(args, None)
         return
 
-    if args.command == "eval":
-        print_json(run_behavior_eval(str(resolve_project_path(args.eval_path))))
-        return
-
-    if args.command == "reddit-relay":
-        app = AutoResearcher(config_path=args.config)
-        host = args.host or app.config.get("reddit_relay", {}).get("host", "127.0.0.1")
-        port = args.port or int(app.config.get("reddit_relay", {}).get("port", 8787))
-        await run_relay_server(app.config, host=host, port=port)
-        return
-
-    if args.command == "reddit-seed":
-        app = AutoResearcher(config_path=args.config)
-        await app.initialize(start_new_run=False)
-        try:
-            seeder = RedditSeeder(config=app.config)
-            summary = await seeder.seed()
-            print_json(summary.__dict__ if hasattr(summary, "__dict__") else summary)
-        finally:
-            await app.shutdown()
-        return
-
-    if args.command == "check-bridge":
-        print_json(await run_check_bridge(args.config))
-        return
-
-    if args.command == "backup-db":
-        print_json(run_backup_db(args.config))
-        return
-
-    if args.command == "suggest-discovery":
-        app = AutoResearcher(config_path=args.config)
-        await app.initialize(start_new_run=False)
-        try:
-            from src.discovery_suggestions import build_discovery_suggestions
-
-            print_json(
-                build_discovery_suggestions(
-                    app.db,
-                    min_atoms=args.min_atoms,
-                    limit_clusters=args.limit,
-                    limit_atoms=max(args.limit * 4, 40),
-                    limit_findings=max(args.limit * 16, 200),
-                    max_keywords=min(28, max(args.limit, 12)),
-                    theme_keywords=((app.config.get("discovery", {}) or {}).get("reddit", {}) or {}).get(
-                        "theme_keywords", {}
-                    ),
-                    money_claim_min_confidence=args.money_claims_min_confidence,
-                )
-            )
-        finally:
-            await app.shutdown()
-        return
-
-    if args.command == "term-lifecycle":
-        app = AutoResearcher(config_path=args.config)
-        await app.initialize(start_new_run=False)
-        try:
-            from src.discovery_term_lifecycle import TermLifecycleManager
-
-            lifecycle = TermLifecycleManager(app.db)
-
-            # List terms by state
-            if args.term_type:
-                terms = app.db.list_search_terms(term_type=args.term_type, limit=args.limit or 100)
-            else:
-                terms = app.db.list_search_terms(limit=args.limit or 100)
-
-            print_json({
-                "terms": terms,
-                "counts": {
-                    "total": len(terms),
-                    "by_state": collections.Counter(t.get("state") for t in terms),
-                },
-            })
-        finally:
-            await app.shutdown()
-        return
-
-    if args.command == "term-state":
-        app = AutoResearcher(config_path=args.config)
-        await app.initialize(start_new_run=False)
-        try:
-            from src.discovery_term_lifecycle import TermLifecycleManager
-
-            lifecycle = TermLifecycleManager(app.db)
-            action = args.action or "list"
-
-            if action == "list":
-                # List all terms
-                terms = app.db.list_search_terms(
-                    term_type=args.term_type if args.term_type else None,
-                    state=args.state if args.state else None,
-                    limit=args.limit or 100,
-                )
-                print_json({"terms": terms})
-            elif action == "ban":
-                if not args.term_value:
-                    print("term-state ban requires --term-value", file=sys.stderr)
-                    sys.exit(1)
-                lifecycle.ban_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual ban")
-                print_json({"ok": True, "action": "ban", "term_type": args.term_type, "term_value": args.term_value})
-            elif action == "reactivate":
-                if not args.term_value:
-                    print("term-state reactivate requires --term-value", file=sys.stderr)
-                    sys.exit(1)
-                lifecycle.reactivate_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual reactivation")
-                print_json({"ok": True, "action": "reactivate", "term_type": args.term_type, "term_value": args.term_value})
-            elif action == "complete":
-                if not args.term_value:
-                    print("term-state complete requires --term-value", file=sys.stderr)
-                    sys.exit(1)
-                lifecycle.complete_term(args.term_type or "keyword", args.term_value, reason=args.note or "manual completion")
-                print_json({"ok": True, "action": "complete", "term_type": args.term_type, "term_value": args.term_value})
-            elif action == "reset":
-                if not args.term_value:
-                    print("term-state reset requires --term-value", file=sys.stderr)
-                    sys.exit(1)
-                lifecycle.reset_term(args.term_type or "keyword", args.term_value)
-                print_json({"ok": True, "action": "reset", "term_type": args.term_type, "term_value": args.term_value})
-            elif action == "high-performers":
-                high_kw = lifecycle.get_terms_for_expansion("keyword", limit=args.limit or 20)
-                high_sub = lifecycle.get_terms_for_expansion("subreddit", limit=args.limit or 20)
-                print_json({
-                    "high_performing_keywords": high_kw,
-                    "high_performing_subreddits": high_sub,
-                })
-            elif action == "exhausted":
-                exh_kw = app.db.get_exhausted_terms("keyword", limit=args.limit or 50)
-                exh_sub = app.db.get_exhausted_terms("subreddit", limit=args.limit or 50)
-                print_json({
-                    "exhausted_keywords": exh_kw,
-                    "exhausted_subreddits": exh_sub,
-                })
-            elif action == "wedge-quality":
-                # Top terms by wedge quality (best plugin/add-on fit)
-                wedge_kw = lifecycle.get_terms_for_expansion_by_wedge_quality("keyword", limit=args.limit or 20)
-                wedge_sub = lifecycle.get_terms_for_expansion_by_wedge_quality("subreddit", limit=args.limit or 20)
-                print_json({
-                    "wedge_quality_keywords": wedge_kw,
-                    "wedge_quality_subreddits": wedge_sub,
-                })
-            elif action == "specificity":
-                # Top terms by specificity (sharpest niches)
-                spec_kw = lifecycle.get_terms_by_specificity("keyword", limit=args.limit or 20)
-                spec_sub = lifecycle.get_terms_by_specificity("subreddit", limit=args.limit or 20)
-                print_json({
-                    "specificity_keywords": spec_kw,
-                    "specificity_subreddits": spec_sub,
-                })
-            elif action == "platform-native":
-                # Top terms by platform-native yield
-                plat_kw = lifecycle.get_terms_by_platform_native("keyword", limit=args.limit or 20)
-                plat_sub = lifecycle.get_terms_by_platform_native("subreddit", limit=args.limit or 20)
-                print_json({
-                    "platform_native_keywords": plat_kw,
-                    "platform_native_subreddits": plat_sub,
-                })
-            elif action == "abstraction-collapse":
-                # Terms most responsible for vague buckets
-                collapse_kw = lifecycle.get_abstraction_collapse_terms("keyword", limit=args.limit or 20)
-                collapse_sub = lifecycle.get_abstraction_collapse_terms("subreddit", limit=args.limit or 20)
-                print_json({
-                    "abstraction_collapse_keywords": collapse_kw,
-                    "abstraction_collapse_subreddits": collapse_sub,
-                })
-            elif action == "buildable":
-                # Terms most responsible for buildable plugin/add-on wedges
-                build_kw = lifecycle.get_buildable_terms("keyword", limit=args.limit or 20)
-                build_sub = lifecycle.get_buildable_terms("subreddit", limit=args.limit or 20)
-                print_json({
-                    "buildable_keywords": build_kw,
-                    "buildable_subreddits": build_sub,
-                })
-            else:
-                print(f"Unknown action: {action}", file=sys.stderr)
-                sys.exit(1)
-        finally:
-            await app.shutdown()
-        return
-
-    if args.command == "security-scan":
-        app = AutoResearcher(config_path=args.config)
-        await app.initialize(start_new_run=False)
-        try:
-            from src.agents.security import SecurityAgent
-            config = app.config.get("security", {})
-            security = SecurityAgent(config)
-
-            wedge_id = args.wedge_id if hasattr(args, "wedge_id") else None
-            code = args.code if hasattr(args, "code") else None
-
-            if code:
-                report = security.scan_code(code, file_name=args.file_name if hasattr(args, "file_name") else "stdin")
-                print(security.format_report(report))
-            elif wedge_id:
-                # Scan wedge solution
-                opportunities = app.db.get_opportunities(limit=100)
-                for opp in opportunities:
-                    if opp.id == wedge_id:
-                        spec = {"id": str(opp.id), "wedge_id": opp.wedge_id, "title": opp.title}
-                        report = security.scan_solution_spec(spec)
-                        print(security.format_report(report))
-                        break
-            else:
-                # Scan all build-ready opportunities
-                opportunities = app.db.get_opportunities_by_status("build_ready")
-                for opp in opportunities[:10]:
-                    spec = {"id": str(opp.id), "wedge_id": opp.wedge_id, "title": opp.title}
-                    report = security.scan_solution_spec(spec)
-                    print(f"\n--- Wedge {opp.wedge_id}: {opp.title} ---")
-                    print(security.format_report(report))
-        finally:
-            await app.shutdown()
-        return
-
-    if args.command == "generate-docs":
-        app = AutoResearcher(config_path=args.config)
-        await app.initialize(start_new_run=False)
-        try:
-            from src.agents.technical_writer import TechnicalWriterAgent
-            from pathlib import Path
-
-            config = app.config.get("technical_writer", {})
-            writer = TechnicalWriterAgent(config)
-
-            output_dir = Path(config.get("output_dir", "output/docs"))
-
-            # Generate docs for build-ready opportunities
-            opportunities = app.db.get_opportunities_by_status("build_ready")
-            for opp in opportunities[:5]:
-                spec = app.db.get_opportunity(opp.id)
-                if spec:
-                    spec_dict = {"id": str(spec.id), "wedge_id": spec.wedge_id, "title": spec.title}
-                    bundle = writer.generate_docs(spec_dict)
-                    wedge_dir = output_dir / f"wedge_{spec.wedge_id}"
-                    files = writer.save_docs(bundle, wedge_dir)
-                    print(f"Generated docs for wedge {spec.wedge_id}: {list(files.keys())}")
-        finally:
-            await app.shutdown()
-        return
-
-    if args.command == "sre-health":
-        app = AutoResearcher(config_path=args.config)
-        await app.initialize(start_new_run=False)
-        try:
-            from src.agents.sre import SREAgent
-
-            config = app.config.get("sre", {})
-            sre = SREAgent(app.db, config)
-
-            wedge_id = args.wedge_id if hasattr(args, "wedge_id") else None
-
-            if wedge_id:
-                print(sre.format_wedge_status(wedge_id))
-            else:
-                report = sre.generate_report()
-                print(report.summary)
-        finally:
-            await app.shutdown()
-        return
-
-    if args.command == "patterns":
-        # Show emerging specific patterns from signals
-        from src.opportunity_engine import get_patterns_for_discovery
-
-        db_path = str(resolve_database_path_from_config(args.config))
-        patterns = get_patterns_for_discovery(db_path, min_atoms=1)
-
-        print("=== EMERGING PATTERNS ===")
-        print("Specific problems detected from signals:\n")
-        for p in patterns:
-            print(f"  {p['pattern']}")
-            print(f"    Signals: {p['signal_count']}, Urgency: {p['urgency']}")
-            if 'tools' in p:
-                print(f"    Tools: {p['tools']}")
-            print()
-
-        if not patterns:
-            print("  No specific patterns detected yet.")
-            print("  Run more discovery to identify specific integration problems.")
-        return
-
-    if args.command == "scoring-report":
-        # Show scoring percentile monitor
-        import sqlite3
-
-        db_path = resolve_database_path_from_config(args.config)
-        if not db_path.exists():
-            print(f"No database found at {db_path}")
-            return
-
-        # Load config for thresholds
-        config, _ = load_runtime_config(args.config)
-        promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-
-        # Show version distribution
-        cursor.execute("SELECT scoring_version, COUNT(*) FROM opportunities GROUP BY scoring_version")
-        version_dist = cursor.fetchall()
-        print("=== SCORING VERSION DISTRIBUTION ===")
-        has_legacy = False
-        for ver, count in version_dist:
-            marker = ""
-            if ver in ('0', 'v1', 'v2', 'v3'):
-                marker = " (LEGACY - needs rescore)"
-                has_legacy = True
-            elif ver == 'v4':
-                marker = " <-- CURRENT"
-            print(f"  {ver}: {count}{marker}")
-        if has_legacy:
-            print("\n⚠️  WARNING: Legacy-scored rows detected. Run revalidation for accurate analysis.")
-        print()
-
-        # Get scores
-        cursor.execute("SELECT composite_score, frequency_score, evidence_quality, education_burden, adoption_friction FROM opportunities ORDER BY composite_score DESC")
-        rows = cursor.fetchall()
-        scores = [r[0] for r in rows]
-        total = len(scores)
-
-        if total == 0:
-            print("No opportunities in database")
-            return
-
-        sorted_scores = sorted(scores)
-        p99 = sorted_scores[int(total * 0.99)] if total > 0 else 0
-        p95 = sorted_scores[int(total * 0.95)] if total > 0 else 0
-        p90 = sorted_scores[int(total * 0.90)] if total > 0 else 0
-        median = sorted_scores[int(total * 0.50)] if total > 0 else 0
-
-        above_promote = sum(1 for s in scores if s >= promote_thresh)
-        above_park = sum(1 for s in scores if s >= park_thresh)
-
-        print("=== SCORING PERCENTILE MONITOR ===\n")
-        print(f"Total opportunities: {total}\n")
-        print("PERCENTILES:")
-        print(f"  Max:   {max(scores):.4f}")
-        print(f"  P99:   {p99:.4f}")
-        print(f"  P95:   {p95:.4f}")
-        print(f"  P90:   {p90:.4f}")
-        print(f"  Median:{median:.4f}")
-        print(f"\nDECISION BUCKETS (thresholds: promote={promote_thresh}, park={park_thresh}):")
-        print(f"  Promote (≥{promote_thresh}): {above_promote} ({above_promote/total*100:.1f}%)")
-        print(f"  Park ({park_thresh}-{promote_thresh}): {above_park-above_promote} ({(above_park-above_promote)/total*100:.1f}%)")
-        print(f"  Kill (<{park_thresh}): {total-above_park} ({(total-above_park)/total*100:.1f}%)")
-
-        # Get parked analysis
-        cursor.execute("""
-            SELECT
-                AVG(frequency_score) as avg_freq,
-                AVG(evidence_quality) as avg_eq,
-                AVG(education_burden) as avg_edu,
-                AVG(adoption_friction) as avg_fric
-            FROM opportunities
-            WHERE composite_score >= ? AND composite_score < ?
-        """, (park_thresh, promote_thresh))
-        parked = cursor.fetchone()
-        park_count = above_park - above_promote
-        if parked and parked[0]:
-            print(f"\nPARKED OPPORTUNITY ANALYSIS (n={park_count}):")
-            print(f"  Avg frequency:        {parked[0]:.3f}")
-            print(f"  Avg evidence_quality: {parked[1]:.3f}")
-            print(f"  Avg education_burden: {parked[2]:.3f} ⚠️")
-            print(f"  Avg adoption_friction:{parked[3]:.3f} ⚠️")
-
-        conn.close()
-        return
-
-    if args.command == "revalidate":
-        # Re-run validation for all opportunities with new formula (v2)
-        import sqlite3
-
-        db_path = resolve_database_path_from_config(args.config)
-        if not db_path.exists():
-            print(f"No database found at {db_path}")
-            return
-
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-
-        # Get unvalidated opportunities (scoring_version = '0')
-        cursor.execute("""
-            SELECT o.id, o.cluster_id
-            FROM opportunities o
-            WHERE o.scoring_version = '0'
-        """)
-        unvalidated_opps = cursor.fetchall()
-
-        if not unvalidated_opps:
-            print("No opportunities need revalidation.")
-            print("All have been scored with current formula.")
-            conn.close()
-            return
-
-        print(f"=== REVALIDATING {len(unvalidated_opps)} OPPORTUNITIES ===")
-        print("This will re-run validation with v2 formula (new weights/thresholds)")
-        print("Each opportunity will be marked with scoring_version='v2' after revalidation.\n")
-
-        # For now, just show what would happen
-        # Actual revalidation would require running the full pipeline
-
-        for opp_id, cluster_id in unvalidated_opps[:5]:
-            print(f"  Would revalidate opportunity #{opp_id} (cluster={cluster_id})")
-
-        print(f"\n  ... and {len(unvalidated_opps) - 5} more")
-
-        # Check current status
-        cursor.execute("SELECT COUNT(*), COUNT(CASE WHEN scoring_version = '0' THEN 1 END), COUNT(CASE WHEN scoring_version = 'v2' THEN 1 END) FROM opportunities")
-        total, legacy, current = cursor.fetchone()
-
-        print(f"\n=== CURRENT STATUS ===")
-        print(f"  Total opportunities: {total}")
-        print(f"  Not validated (needs revalidate): {legacy}")
-        print(f"  v2 (current formula): {current}")
-
-        conn.close()
-        return
-
-    if args.command == "rescore-v4":
-        # Re-score all opportunities with v4 formula (PTS/RRS split)
-        import sqlite3
-        from datetime import datetime
-        from src.opportunity_engine import (
-            score_opportunity,
-            stage_decision,
-            build_counterevidence,
-            assess_market_gap,
-            CURRENT_SCORING_VERSION,
-            CURRENT_FORMULA_VERSION,
-            CURRENT_THRESHOLD_VERSION,
-        )
-
-        # Load config for thresholds
-        config, _ = load_runtime_config(args.config)
-        db_path = resolve_database_path_from_config(args.config)
-        if not db_path.exists():
-            print(f"No database found at {db_path}")
-            return
-
-        print("=== V4 RESCORING ===")
-        print(f"Formula: {CURRENT_FORMULA_VERSION}")
-        print(f"Scoring: {CURRENT_SCORING_VERSION}")
-        print(f"Thresholds: {CURRENT_THRESHOLD_VERSION}")
-        print()
-
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        def _has_column(table: str, column: str) -> bool:
-            return any(row["name"] == column for row in cursor.execute(f"PRAGMA table_info({table})").fetchall())
-
-        atom_cluster_expr = "a.cluster_key" if _has_column("problem_atoms", "cluster_key") else "json_extract(a.metadata_json, '$.cluster_key')"
-        cluster_key_expr = "c.cluster_key" if _has_column("opportunity_clusters", "cluster_key") else "json_extract(c.metadata_json, '$.cluster_key')"
-
-        # Get all clusters with their atoms for scoring
-        cursor.execute(f"""
-            SELECT c.id as cluster_id, c.label, c.summary_json,
-                   GROUP_CONCAT(a.id) as atom_ids
-            FROM opportunity_clusters c
-            LEFT JOIN problem_atoms a ON {atom_cluster_expr} = {cluster_key_expr}
-            GROUP BY c.id
-            ORDER BY c.id
-        """)
-        clusters = cursor.fetchall()
-
-        if not clusters:
-            print("No clusters found")
-            conn.close()
-            return
-
-        print(f"Found {len(clusters)} clusters to rescore")
-        print()
-
-        promote_count = 0
-        park_count = 0
-        kill_count = 0
-
-        for i, cluster in enumerate(clusters):
-            cluster_id = cluster["cluster_id"]
-
-            # Get atoms for this cluster
-            atom_ids = cluster["atom_ids"]
-            if not atom_ids:
-                print(f"  Skipping cluster {cluster_id}: no atoms")
-                continue
-
-            # Get first atom as representative
-            cursor.execute("SELECT * FROM problem_atoms WHERE id = ?", (int(atom_ids.split(",")[0]),))
-            atom_row = cursor.fetchone()
-            if not atom_row:
-                continue
-
-            atom = dict(atom_row)
-
-            # Existing rows expose raw_signal_id; signal_id is only present on the dataclass adapter.
-            signal_id = atom.get("raw_signal_id") or atom.get("signal_id")
-            signal = {}
-            if signal_id:
-                cursor.execute("SELECT * FROM raw_signals WHERE id = ?", (signal_id,))
-                signal_row = cursor.fetchone()
-                if signal_row:
-                    signal = dict(signal_row)
-
-            # Get cluster summary
-            import json
-            summary = json.loads(cluster["summary_json"]) if cluster["summary_json"] else {}
-
-            # Build minimal validation evidence
-            validation_evidence = {
-                "scores": {},
-                "evidence": {},
-                "corroboration": {},
-                "market_enrichment": {},
-            }
-
-            # Score the opportunity (v4)
-            try:
-                scorecard = score_opportunity(
-                    atom=atom,
-                    signal=signal,
-                    cluster_summary=summary,
-                    validation_evidence=validation_evidence,
-                    market_gap=assess_market_gap(summary, {}),
-                )
-            except Exception as e:
-                print(f"  Error scoring cluster {cluster_id}: {e}")
-                continue
-
-            # Get market gap
-            market_gap = assess_market_gap(summary, {})
-
-            # Build counterevidence
-            counterevidence = build_counterevidence(scorecard, market_gap)
-
-            # Get thresholds
-            promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
-
-            # Stage decision with v4 logic
-            decision = stage_decision(
-                scorecard,
-                market_gap,
-                counterevidence,
-                promotion_threshold=promote_thresh,
-                park_threshold=park_thresh,
-            )
-
-            # Update opportunity in DB
-            now = datetime.now().isoformat()
-
-            cursor.execute("""
-                UPDATE opportunities
-                SET recommendation = ?, status = ?,
-                    scoring_version = ?,
-                    problem_truth_score = ?,
-                    revenue_readiness_score = ?,
-                    decision_score = ?,
-                    problem_plausibility = ?,
-                    value_support = ?,
-                    corroboration_strength = ?,
-                    evidence_sufficiency = ?,
-                    willingness_to_pay_proxy = ?,
-                    formula_version = ?,
-                    threshold_version = ?,
-                    evaluated_at = ?,
-                    last_rescored_at = ?,
-                    composite_score = ?,
-                    pain_severity = ?,
-                    frequency_score = ?,
-                    evidence_quality = ?
-                WHERE cluster_id = ?
-            """, (
-                decision["recommendation"],
-                decision["status"],
-                CURRENT_SCORING_VERSION,
-                scorecard.get("problem_truth_score", 0.0),
-                scorecard.get("revenue_readiness_score", 0.0),
-                scorecard.get("decision_score", 0.0),
-                scorecard.get("problem_plausibility", 0.0),
-                scorecard.get("value_support", 0.0),
-                scorecard.get("corroboration_strength", 0.0),
-                scorecard.get("evidence_sufficiency", 0.0),
-                scorecard.get("willingness_to_pay_proxy", 0.0),
-                CURRENT_FORMULA_VERSION,
-                CURRENT_THRESHOLD_VERSION,
-                now,
-                now,
-                scorecard.get("composite_score", 0.0),
-                scorecard.get("pain_severity", 0.0),
-                scorecard.get("frequency_score", 0.0),
-                scorecard.get("evidence_quality", 0.0),
-                cluster_id,
-            ))
-
-            if decision["recommendation"] == "promote":
-                promote_count += 1
-            elif decision["recommendation"] == "park":
-                park_count += 1
-            else:
-                kill_count += 1
-
-            if (i + 1) % 10 == 0:
-                print(f"  Progress: {i+1}/{len(clusters)} processed...")
-
-        conn.commit()
-
-        # Record scoring run
-        cursor.execute("""
-            INSERT INTO scoring_runs (run_id, formula_version, threshold_version, scoring_version,
-                opportunity_count, promote_count, park_count, kill_count, computed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            f"rescore-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-            CURRENT_FORMULA_VERSION,
-            CURRENT_THRESHOLD_VERSION,
-            CURRENT_SCORING_VERSION,
-            len(clusters),
-            promote_count,
-            park_count,
-            kill_count,
-            datetime.now().isoformat(),
-        ))
-        conn.commit()
-
-        print()
-        print("=== RESCORING COMPLETE ===")
-        print(f"  Total: {len(clusters)}")
-        print(f"  Promote: {promote_count}")
-        print(f"  Park: {park_count}")
-        print(f"  Kill: {kill_count}")
-        print(f"  Version: {CURRENT_SCORING_VERSION}")
-        print(f"  Formula: {CURRENT_FORMULA_VERSION}")
-
-        conn.close()
-        return
-
-    app = AutoResearcher(config_path=args.config)
-    original_web: list[str] | None = None
-    original_reddit: list[str] | None = None
-
-    def apply_discovery_overrides() -> None:
-        nonlocal original_web, original_reddit
-        if args.pattern:
-            from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
-
-            if args.pattern not in PATTERN_TO_DISCOVERY_QUERIES:
-                print(f"Unknown pattern: {args.pattern}")
-                print(f"Available patterns: {list(PATTERN_TO_DISCOVERY_QUERIES.keys())}")
-                raise SystemExit(1)
-
-            queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
-            print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
-            print(f"Queries: {queries[:3]}...")
-
-            original_web = list(app.config.get("discovery", {}).get("web", {}).get("keywords", []))
-            original_reddit = list(app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", []))
-
-            if "web" in app.config.get("discovery", {}):
-                app.config["discovery"]["web"]["keywords"] = queries
-
-            if "reddit" in app.config.get("discovery", {}):
-                app.config["discovery"]["reddit"]["problem_keywords"] = queries
-
-            print(f"Running focused discovery with {len(queries)} queries...\n")
-
-        if args.fresh:
-            print("=== FRESH MODE: Bypassing signal cache ===")
-            app.discovery_bypass_cache = True
-
-    def restore_discovery_overrides() -> None:
-        if args.pattern:
-            if original_web is not None and "web" in app.config.get("discovery", {}):
-                app.config["discovery"]["web"]["keywords"] = original_web
-            if original_reddit is not None and "reddit" in app.config.get("discovery", {}):
-                app.config["discovery"]["reddit"]["problem_keywords"] = original_reddit
-
-    if args.command in {"run", "run-once"}:
-        apply_discovery_overrides()
-
-    if args.command == "run":
-        await app.run()
-        return
-
-    if args.command == "run-once":
-        try:
-            summary = await app.run_once(skip_backlog=bool(args.skip_backlog))
-            if args.verbose:
-                print_json(build_verbose_report(app, summary))
-            else:
-                print_json(summary)
-        finally:
-            restore_discovery_overrides()
-
-        if args.pattern:
-            print(f"\n=== Focused discovery complete ===")
-            print(f"Use 'python3 cli.py patterns' to see updated pattern counts")
-        return
-
-    if args.command == "run-unseeded":
-        await app.initialize(start_new_run=True)
-        try:
-            summary = await app.run_unseeded(
-                vertical=args.vertical,
-                max_findings=args.max_findings,
-            )
-            print_json(summary)
-        finally:
-            await app.shutdown()
-        return
-
-    if args.command == "deep-research":
-        from src.agents.deep_research import DeepResearchAgent
-        await app.initialize(start_new_run=True)
-        try:
-            agent = DeepResearchAgent(
-                name="deep_research",
-                db=app.db,
-                vertical=args.vertical,
-            )
-            summary = await agent.run_deep_research(
-                max_signals_per_source=args.max_findings,
-            )
-            print_json(summary)
-        finally:
-            await app.shutdown()
-        return
-
-    await app.initialize(start_new_run=False)
-    try:
+    # --- Commands that share a common app context ---
+    async with app_context(args) as app:
         if args.command == "search":
             if not args.query:
                 print("search requires a query", file=sys.stderr)
@@ -1323,8 +1334,6 @@ async def main() -> None:
             print_json([item.__dict__ for item in app.db.get_ideas(limit=100)] if app.db else [])
         elif args.command == "products":
             print_json(app.db.get_products(limit=100) if app.db else [])
-    finally:
-        await app.shutdown()
 
 
 def main_sync() -> None:

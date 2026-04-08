@@ -86,10 +86,6 @@ class TechnicalWriterAgent(BaseAgent):
         bundle.changelog = self._generate_changelog(spec)
         bundle.endpoints = self._extract_endpoints(spec)
 
-        # Combine API docs
-        if bundle.endpoints:
-            bundle.api_docs = self._format_endpoints(bundle.endpoints)
-
         return bundle
 
     def _generate_readme(self, spec: dict[str, Any]) -> str:

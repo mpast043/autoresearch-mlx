@@ -1,4 +1,4 @@
-"""SRE agent for wedge health monitoring and regression detection."""
+"""SRE agent for opportunity health monitoring and regression detection."""
 
 from __future__ import annotations
 
@@ -31,11 +31,12 @@ class RegressionType(Enum):
 
 
 @dataclass
-class WedgeHealth:
-    """Health metrics for a wedge."""
+class OpportunityHealth:
+    """Health metrics for an opportunity."""
 
-    wedge_id: int
-    wedge_title: str
+    opportunity_id: int
+    cluster_id: int
+    title: str
     status: HealthStatus
     score: float
     previous_score: float
@@ -43,18 +44,16 @@ class WedgeHealth:
     last_validation: str
     atom_count: int
     corroboration_depth: float
-    opportunity_count: int
-    build_ready_count: int
     issues: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Regression:
-    """Detected regression in a wedge."""
+    """Detected regression in an opportunity."""
 
-    wedge_id: int
-    wedge_title: str
+    opportunity_id: int
+    title: str
     regression_type: RegressionType
     severity: str  # critical, warning, info
     current_value: float
@@ -70,19 +69,19 @@ class SREReport:
     """SRE health and regression report."""
 
     generated_at: float
-    wedges_checked: int
+    opportunities_checked: int
     healthy_count: int
     degraded_count: int
     critical_count: int
     regressions: list[Regression] = field(default_factory=list)
-    wedge_health: dict[int, WedgeHealth] = field(default_factory=dict)
+    opportunity_health: dict[int, OpportunityHealth] = field(default_factory=dict)
     summary: str = ""
 
 
 class SREAgent(BaseAgent):
-    """SRE agent for monitoring wedge health and detecting regressions.
+    """SRE agent for monitoring opportunity health and detecting regressions.
 
-    Tracks wedge metrics over time, detects score decay and validation
+    Tracks opportunity metrics over time, detects score decay and validation
     drops, and recommends recovery actions.
     """
 
@@ -100,32 +99,31 @@ class SREAgent(BaseAgent):
     async def process(self, message) -> dict[str, Any]:
         """Process an SRE health check request."""
         payload = message.payload if hasattr(message, "payload") else message
-        wedge_id = payload.get("wedge_id")
+        opportunity_id = payload.get("opportunity_id")
 
-        if wedge_id:
-            health = self.check_wedge_health(wedge_id)
-            regressions = self.detect_regressions(wedge_id)
-            return {"health": health, "regressions": regressions, "formatted": self.format_wedge_status(wedge_id)}
+        if opportunity_id:
+            health = self.check_opportunity_health(opportunity_id)
+            regressions = self.detect_regressions(opportunity_id)
+            return {"health": health, "regressions": regressions, "formatted": self.format_opportunity_status(opportunity_id)}
         else:
             report = self.generate_report()
             return {"report": report, "summary": report.summary}
 
-    def check_wedge_health(self, wedge_id: int) -> WedgeHealth:
-        """Check health metrics for a single wedge.
+    def check_opportunity_health(self, opportunity_id: int) -> OpportunityHealth:
+        """Check health metrics for a single opportunity.
 
         Args:
-            wedge_id: Wedge ID to check
+            opportunity_id: Opportunity ID to check
 
         Returns:
-            WedgeHealth with current metrics
+            OpportunityHealth with current metrics
         """
-        # Get opportunity data - filter by wedge_id from all opportunities
-        all_opportunities = self.db.get_opportunities(limit=500)
-        opportunities = [o for o in all_opportunities if o.wedge_id == wedge_id]
-        if not opportunities:
-            return WedgeHealth(
-                wedge_id=wedge_id,
-                wedge_title="Unknown",
+        opp = self.db.get_opportunity(opportunity_id)
+        if not opp:
+            return OpportunityHealth(
+                opportunity_id=opportunity_id,
+                cluster_id=0,
+                title="Unknown",
                 status=HealthStatus.UNKNOWN,
                 score=0.0,
                 previous_score=0.0,
@@ -133,35 +131,34 @@ class SREAgent(BaseAgent):
                 last_validation="",
                 atom_count=0,
                 corroboration_depth=0.0,
-                opportunity_count=0,
-                build_ready_count=0,
-                issues=["No opportunities found"],
+                issues=["Opportunity not found"],
             )
 
-        # Get current and previous scores
-        current_opp = opportunities[0]
-        current_score = current_opp.composite_score or 0.0
+        current_score = opp.composite_score or 0.0
+        previous_score = self._get_previous_score(opportunity_id)
 
-        # Get previous score from history (would need to track in DB)
-        previous_score = self._get_previous_score(wedge_id)
+        # Count validations via corroborations for this opportunity's cluster
+        validation_count = 0
+        corroboration_depth = 0.0
+        try:
+            corrs = self.db.get_corroborations(cluster_id=opp.cluster_id, limit=100)
+            validation_count = len(corrs)
+            if corrs:
+                depths = [c.corroboration_depth for c in corrs if hasattr(c, "corroboration_depth") and c.corroboration_depth]
+                corroboration_depth = sum(depths) / len(depths) if depths else 0.0
+        except Exception:
+            pass
 
-        # Count validations
-        validation_count = len([o for o in opportunities if o.validation_status])
+        # Count atoms in the same cluster
+        atom_count = 0
+        try:
+            atoms = self.db.get_problem_atoms(limit=500)
+            atom_count = len([a for a in atoms if getattr(a, "cluster_key", None) == str(opp.cluster_id)])
+        except Exception:
+            pass
 
-        # Get last validation time
-        last_validation = current_opp.last_validated_at or ""
-
-        # Get atom count
-        atoms = self.db.get_problem_atoms(limit=1000)
-        atom_count = len([a for a in atoms if a.wedge_id == wedge_id])
-
-        # Get corroboration depth
-        corroboration_depth = self._get_corroboration_depth(wedge_id)
-
-        # Count build-ready opportunities
-        build_ready_count = len(
-            [o for o in opportunities if o.selection_status == "build_ready"]
-        )
+        # Last validation time
+        last_validation = opp.evaluated_at or opp.last_rescored_at or ""
 
         # Determine health status
         status = self._determine_health(
@@ -176,9 +173,10 @@ class SREAgent(BaseAgent):
             current_score, previous_score, validation_count, corroboration_depth
         )
 
-        return WedgeHealth(
-            wedge_id=wedge_id,
-            wedge_title=current_opp.title or "Unknown",
+        return OpportunityHealth(
+            opportunity_id=opp.id or opportunity_id,
+            cluster_id=opp.cluster_id,
+            title=opp.title or "Unknown",
             status=status,
             score=current_score,
             previous_score=previous_score,
@@ -186,23 +184,21 @@ class SREAgent(BaseAgent):
             last_validation=last_validation,
             atom_count=atom_count,
             corroboration_depth=corroboration_depth,
-            opportunity_count=len(opportunities),
-            build_ready_count=build_ready_count,
             issues=issues,
             recommendations=recommendations,
         )
 
-    def detect_regressions(self, wedge_id: int) -> list[Regression]:
-        """Detect regressions for a wedge by comparing to historical data.
+    def detect_regressions(self, opportunity_id: int) -> list[Regression]:
+        """Detect regressions for an opportunity by comparing to historical data.
 
         Args:
-            wedge_id: Wedge ID to check
+            opportunity_id: Opportunity ID to check
 
         Returns:
             List of detected regressions
         """
         regressions = []
-        health = self.check_wedge_health(wedge_id)
+        health = self.check_opportunity_health(opportunity_id)
 
         # Score decay
         if health.previous_score > 0:
@@ -210,8 +206,8 @@ class SREAgent(BaseAgent):
             if score_change <= -self.score_drop_threshold:
                 regressions.append(
                     Regression(
-                        wedge_id=wedge_id,
-                        wedge_title=health.wedge_title,
+                        opportunity_id=opportunity_id,
+                        title=health.title,
                         regression_type=RegressionType.SCORE_DECAY,
                         severity="critical" if score_change <= -0.3 else "warning",
                         current_value=health.score,
@@ -223,15 +219,12 @@ class SREAgent(BaseAgent):
                     )
                 )
 
-        # Validation drop (if we had historical validation counts)
-        # This would require storing validation history in DB
-
         # Corroboration loss
         if health.corroboration_depth < self.corroboration_min:
             regressions.append(
                 Regression(
-                    wedge_id=wedge_id,
-                    wedge_title=health.wedge_title,
+                    opportunity_id=opportunity_id,
+                    title=health.title,
                     regression_type=RegressionType.CORROBORATION_LOSS,
                     severity="warning",
                     current_value=health.corroboration_depth,
@@ -251,8 +244,8 @@ class SREAgent(BaseAgent):
                 if days_stale >= self.stall_days:
                     regressions.append(
                         Regression(
-                            wedge_id=wedge_id,
-                            wedge_title=health.wedge_title,
+                            opportunity_id=opportunity_id,
+                            title=health.title,
                             regression_type=RegressionType.OPPORTUNITY_STALL,
                             severity="warning",
                             current_value=days_stale,
@@ -269,22 +262,24 @@ class SREAgent(BaseAgent):
         return regressions
 
     def generate_report(self) -> SREReport:
-        """Generate comprehensive SRE report for all wedges.
+        """Generate comprehensive SRE report for all opportunities.
 
         Returns:
             SREReport with all health metrics and regressions
         """
-        # Get all opportunities
-        opportunities = self.db.get_all_opportunities()
-        wedge_ids = set(o.wedge_id for o in opportunities if o.wedge_id)
+        # Get opportunities using the actual Database API
+        opportunities = self.db.get_opportunities(limit=500)
 
         health_map = {}
         regressions = []
         healthy = degraded = critical = 0
 
-        for wedge_id in wedge_ids:
-            health = self.check_wedge_health(wedge_id)
-            health_map[wedge_id] = health
+        for opp in opportunities:
+            if not opp.id:
+                continue
+            health = self.check_opportunity_health(opp.id)
+
+            health_map[opp.id] = health
 
             if health.status == HealthStatus.HEALTHY:
                 healthy += 1
@@ -294,42 +289,26 @@ class SREAgent(BaseAgent):
                 critical += 1
 
             # Check for regressions
-            wedge_regressions = self.detect_regressions(wedge_id)
-            regressions.extend(wedge_regressions)
+            opp_regressions = self.detect_regressions(opp.id)
+            regressions.extend(opp_regressions)
 
         report = SREReport(
             generated_at=time.time(),
-            wedges_checked=len(wedge_ids),
+            opportunities_checked=len(opportunities),
             healthy_count=healthy,
             degraded_count=degraded,
             critical_count=critical,
             regressions=regressions,
-            wedge_health=health_map,
+            opportunity_health=health_map,
         )
 
         report.summary = self._format_summary(report)
         return report
 
-    def _get_previous_score(self, wedge_id: int) -> float:
+    def _get_previous_score(self, opportunity_id: int) -> float:
         """Get previous score from historical data."""
-        # Would need to track in DB - for now return current
+        # Would need to track in DB - for now return 0
         # TODO: Implement score history table
-        return 0.0
-
-    def _get_corroboration_depth(self, wedge_id: int) -> float:
-        """Calculate corroboration depth for a wedge."""
-        conn = self.db._get_connection()
-        row = conn.execute(
-            """
-            SELECT AVG(corroboration_count) as avg_corr
-            FROM opportunities
-            WHERE wedge_id = ?
-            """,
-            (wedge_id,),
-        ).fetchone()
-
-        if row and row[0]:
-            return float(row[0])
         return 0.0
 
     def _determine_health(
@@ -402,12 +381,12 @@ class SREAgent(BaseAgent):
     def _format_summary(self, report: SREReport) -> str:
         """Format SRE report summary."""
         lines = [
-            "# Wedge Health Report",
+            "# Opportunity Health Report",
             "",
-            f"Wedges checked: {report.wedges_checked}",
-            f"  ✅ Healthy: {report.healthy_count}",
-            f"  ⚠️  Degraded: {report.degraded_count}",
-            f"  ❌ Critical: {report.critical_count}",
+            f"Opportunities checked: {report.opportunities_checked}",
+            f"  Healthy: {report.healthy_count}",
+            f"  Degraded: {report.degraded_count}",
+            f"  Critical: {report.critical_count}",
             "",
         ]
 
@@ -422,39 +401,39 @@ class SREAgent(BaseAgent):
             if critical:
                 lines.append("### Critical")
                 for r in critical:
-                    lines.append(f"- 🔴 Wedge {r.wedge_id}: {r.regression_type.value} ({r.change_percent:.1f}%)")
+                    lines.append(f"- Opportunity {r.opportunity_id}: {r.regression_type.value} ({r.change_percent:.1f}%)")
                     lines.append(f"  Cause: {r.cause}")
 
             if warning:
                 lines.append("### Warning")
                 for r in warning:
-                    lines.append(f"- ⚠️ Wedge {r.wedge_id}: {r.regression_type.value} ({r.change_percent:.1f}%)")
+                    lines.append(f"- Opportunity {r.opportunity_id}: {r.regression_type.value} ({r.change_percent:.1f}%)")
                     lines.append(f"  Cause: {r.cause}")
 
-        # Health by wedge
+        # Health by opportunity
         lines.append("")
-        lines.append("## Wedge Status")
-        for wedge_id, health in report.wedge_health.items():
+        lines.append("## Opportunity Status")
+        for opp_id, health in report.opportunity_health.items():
             icon = {
-                HealthStatus.HEALTHY: "✅",
-                HealthStatus.DEGRADED: "⚠️",
-                HealthStatus.CRITICAL: "❌",
-                HealthStatus.UNKNOWN: "❓",
+                HealthStatus.HEALTHY: "OK",
+                HealthStatus.DEGRADED: "WARN",
+                HealthStatus.CRITICAL: "CRIT",
+                HealthStatus.UNKNOWN: "???",
             }.get(health.status, "?")
 
-            lines.append(f"{icon} Wedge {wedge_id}: {health.status.value} (score: {health.score:.2f})")
+            lines.append(f"[{icon}] Opportunity {opp_id}: {health.status.value} (score: {health.score:.2f})")
 
         return "\n".join(lines)
 
-    def format_wedge_status(self, wedge_id: int) -> str:
-        """Format status for a specific wedge."""
-        health = self.check_wedge_health(wedge_id)
-        regressions = self.detect_regressions(wedge_id)
+    def format_opportunity_status(self, opportunity_id: int) -> str:
+        """Format status for a specific opportunity."""
+        health = self.check_opportunity_health(opportunity_id)
+        regressions = self.detect_regressions(opportunity_id)
 
         lines = [
-            f"# Wedge {wedge_id} Status",
+            f"# Opportunity {opportunity_id} Status",
             "",
-            f"Title: {health.wedge_title}",
+            f"Title: {health.title}",
             f"Status: {health.status.value}",
             "",
             f"Score: {health.score:.2f} (was {health.previous_score:.2f})",

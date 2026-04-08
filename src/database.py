@@ -533,20 +533,25 @@ class ResourceRecord:
 class _BatchContext:
     """Context manager that batches database commits.
 
-    When active, ``_batch_active`` is set on the thread-local storage so that
-    ``insert_finding``, ``insert_raw_signal``, etc. skip their per-row
-    ``commit()`` calls.  A single commit is issued on successful exit.
+    Tracks a nesting depth so that ``with db.batch():`` blocks can be
+    safely nested.  Only the outermost block performs the commit or
+    rollback; inner blocks simply increment/decrement the depth counter.
     """
 
     def __init__(self, db: Database) -> None:
         self._db = db
 
     def __enter__(self) -> _BatchContext:
-        self._db._local.batch_active = True
+        depth = getattr(self._db._local, "batch_depth", 0)
+        self._db._local.batch_depth = depth + 1
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self._db._local.batch_active = False
+        depth = getattr(self._db._local, "batch_depth", 1)
+        self._db._local.batch_depth = depth - 1
+        # Only the outermost block commits or rolls back.
+        if depth > 1:
+            return
         conn = getattr(self._db._local, "conn", None)
         if conn is None:
             return
@@ -590,7 +595,7 @@ class Database:
 
     def _commit(self, conn: sqlite3.Connection) -> None:
         """Commit unless we're inside a batch block."""
-        if not getattr(self._local, "batch_active", False):
+        if not getattr(self._local, "batch_depth", 0):
             conn.commit()
 
     def close(self) -> None:
@@ -1362,7 +1367,7 @@ class Database:
                 finding.evidence_json,
             ),
         )
-        if not getattr(self._local, "batch_active", False):
+        if not getattr(self._local, "batch_depth", 0):
             self._commit(conn)
         return int(cur.lastrowid)
 
@@ -1385,7 +1390,7 @@ class Database:
     def update_finding_status(self, finding_id: int, status: str) -> None:
         conn = self._get_connection()
         conn.execute("UPDATE findings SET status = ? WHERE id = ?", (status, finding_id))
-        if not getattr(self._local, "batch_active", False):
+        if not getattr(self._local, "batch_depth", 0):
             self._commit(conn)
 
     def insert_raw_signal(self, signal: RawSignal) -> int:
