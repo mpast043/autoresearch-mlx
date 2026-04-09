@@ -1,0 +1,151 @@
+output_dir: output/fresh-verify
+
+database:
+  path: data/autoresearch_fresh_verify.db
+
+sources_db_path: data/sources_db_fresh_verify.json
+
+llm:
+  provider: ollama
+  model: gemma4:latest
+
+build_prep:
+  platform_classification:
+    provider: ollama
+    base_url: http://127.0.0.1:11434/v1
+    api_key: ollama
+    model: gemma4:latest
+  wedge_evaluation:
+    feedback_to_discovery_terms: false
+
+discovery:
+  api_concurrency: 6
+  auto_expand: true
+  exploration_slots_per_cycle: 1
+  theme_query_limit_per_cycle: 2
+  max_queries_per_concept: 1
+  query_family_decay_hours: 18
+  query_family_decay_min_queries: 2
+  screened_out_retention:
+    max_findings: 2000
+  source_selection:
+    always_run: ["reddit", "web"]
+    exploratory_low_yield_sources_per_cycle: 1
+    low_yield_min_runs: 50
+  expansion:
+    max_keywords_per_wave: 5
+    max_subreddits_per_wave: 5
+    min_validation_score: 0.25
+    cooldown_hours: 1
+
+  llm_expansion:
+    enabled: true
+    trigger_after_cycles: 1
+    trigger_interval_cycles: 1
+    max_proposed_spaces: 4
+    min_validated_for_promoted: 1
+    min_prototype_candidates: 1
+    max_idle_cycles_for_exhausted: 3
+    max_idle_cycles_for_archived: 10
+    fallback_to_keywords: true
+    max_keywords_per_space: 10
+    max_subreddits_per_space: 5
+    max_web_queries_per_space: 5
+    max_github_queries_per_space: 3
+
+  web:
+    use_jina_reader: true
+    success_timeout_seconds: 10
+    market_timeout_seconds: 8
+    problem_timeout_seconds: 15
+
+  sources:
+    - reddit
+    - web
+    - github
+    - youtube
+    - youtube-comments
+    - wordpress_reviews
+    - shopify_reviews
+  candidate_filter:
+    min_score: 2
+    behavioral_min_signals: 1
+    behavioral_penalty: 1
+  shopify_reviews:
+    app_handles: []
+    max_apps: 3
+    reviews_per_app: 3
+    rating_filters: [1, 2]
+    sort_by: newest
+    rate_limit_cooldown_seconds: 900
+  github:
+    timeout_seconds: 8
+    hard_skip_after_zero_yield: false
+  wordpress_reviews:
+    plugin_slugs:
+      - woocommerce
+      - fluent-crm
+      - wordfence
+      - updraftplus
+    reviews_per_plugin: 5
+    star_filters: [1, 2]
+  youtube_comments:
+    keywords:
+      - "shopify app review 2024"
+      - "best shopify apps"
+      - "shopify app recommendations"
+      - "shopify app vs"
+      - "ecommerce tools review"
+
+  reddit:
+    search_time_filter: year
+    use_r_all: false
+    max_subreddits_per_wave: 4
+    max_keywords_per_wave: 4
+    pair_concurrency: 3
+    reddit_seed_query_limit: 8
+    search_sorts: ["relevance", "new"]
+    per_sort_limit: 2
+    max_docs_per_pair: 6
+    problem_subreddits:
+      - accounting
+      - smallbusiness
+      - EtsySellers
+      - ecommerce
+      - shopify
+      - projectmanagement
+      - Operations
+      - bookkeeping
+      - marketingops
+      - revops
+      - sysadmin
+      - MSP
+      - contractors
+      - propertymanagement
+      - trucking
+      - logistics
+      - procurement
+      - warehouse
+      - fieldservice
+      - compliance
+      - legalops
+      - insurance
+    problem_keywords:
+      - duct tape spreadsheets
+      - manual handoff workflow
+      - manual reconciliation
+      - month end close spreadsheet
+      - order received label printed workflow
+      - Invoice does not match payment
+      - Payment not matching invoice
+      - '"copy paste" automation issue'
+      - CSV import creates duplicates
+      - which spreadsheet is latest
+      - supplier data spreadsheet workflow
+
+validation:
+  promotion_threshold: 0.18
+  park_threshold: 0.15
+
+orchestration:
+  run_once_max_wait_seconds: 180

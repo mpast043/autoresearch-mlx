@@ -29,3 +29,4 @@ recovery2.py
 data/discovery_expansion.json
 data/*.json
 recovery_artifacts/
+tmp/*.yaml

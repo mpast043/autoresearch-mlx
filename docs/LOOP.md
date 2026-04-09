@@ -26,6 +26,13 @@ python cli.py pipeline-health
 python cli.py run-once --verbose
 ```
 
+For an isolated fresh verification harness with local Ollama build-prep classification, use:
+
+```bash
+python cli.py run-once --config configs/fresh-verify.ollama.example.yaml --fresh --verbose
+python cli.py run-once --config configs/fresh-verify.ollama.example.yaml --pattern stripe_to_quickbooks --fresh --verbose
+```
+
 Then inspect:
 
 ```bash

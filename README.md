@@ -50,7 +50,7 @@ autoresearch run
 autoresearch watch
 ```
 
-**Prerequisites:** Python >=3.10, [Ollama](https://ollama.ai) running locally for builder_v2 (uses `llama3.1:8b` by default).
+**Prerequisites:** Python >=3.10, [Ollama](https://ollama.ai) running locally for builder_v2 and build-prep classification (defaults to `gemma4:latest`).
 
 The repo-root entrypoint still works for local development via `python cli.py ...`, but the packaged console script is now the preferred surface.
 
@@ -197,6 +197,13 @@ Autonomous expansion is still enabled through `discovery.auto_expand`. Expanded 
 ## Configuration
 
 Primary runtime config lives in [config.yaml](/Users/meganpastore/Projects/autoresearch-mlx/config.yaml).
+
+For isolated fresh verification runs, start from [configs/fresh-verify.ollama.example.yaml](/Users/meganpastore/Projects/autoresearch-mlx/configs/fresh-verify.ollama.example.yaml) and run:
+
+```bash
+python cli.py run-once --config configs/fresh-verify.ollama.example.yaml --fresh --verbose
+python cli.py run-once --config configs/fresh-verify.ollama.example.yaml --pattern stripe_to_quickbooks --fresh --verbose
+```
 
 Important sections:
 
