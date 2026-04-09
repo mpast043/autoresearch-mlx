@@ -448,6 +448,112 @@ def test_qualify_problem_signal_rejects_help_choosing_vendor_prompt():
     assert "too_generic_after_review" in screening["negative_signals"]
 
 
+def test_qualify_problem_signal_rejects_virtual_card_expense_shopping_prompt():
+    finding_data = {
+        "source": "reddit-problem/smallbusiness",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/cards",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Growing team looking for the best virtual credit card for expense automation",
+        "body_excerpt": (
+            "We run a 14-person team and everyone puts subscriptions, ad spend, and office costs on personal cards. "
+            "Now we manually chase receipts for reimbursements and want the best virtual card solution."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "user_role": "finance lead",
+        "job_to_be_done": "Automate expense tracking and reimbursement for team spending",
+        "trigger_event": "monthly close",
+        "pain_statement": "The process is slow and error-prone because receipts are collected manually.",
+        "failure_mode": "manual chasing receipts for reimbursements",
+        "current_workaround": "collect receipts in spreadsheets and email",
+        "urgency_clues": "",
+        "frequency_clues": "monthly",
+        "cost_consequence_clues": "slow and error-prone",
+        "why_now_clues": "growing team",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "finance_tool_shopping_without_specific_failure" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_finance_acquisition_chatter_without_specific_failure():
+    finding_data = {
+        "source": "reddit-problem/ecommerce",
+        "source_url": "https://reddit.com/r/ecommerce/comments/melio",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Xero just bought Melio. Will this finally fix vendor payments for small ecommerce brands?",
+        "body_excerpt": (
+            "The whole vendor payments stack has always felt like a bolt-on. "
+            "Net terms are buried in inboxes and approvals are scattered, but the real question is whether this acquisition finally fixes it."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "user_role": "small ecommerce brand owner",
+        "job_to_be_done": "Streamline and automate the entire vendor payment process",
+        "trigger_event": "weekly vendor payments",
+        "pain_statement": "The stack feels bolted on and messy.",
+        "failure_mode": "vendor payments are messy and spread across inboxes",
+        "current_workaround": "email threads and spreadsheets",
+        "urgency_clues": "",
+        "frequency_clues": "weekly",
+        "cost_consequence_clues": "time lost",
+        "why_now_clues": "after the acquisition",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "finance_acquisition_or_vendor_chatter" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_keeps_specific_stripe_quickbooks_reconciliation_failure():
+    finding_data = {
+        "source": "reddit-problem/accounting",
+        "source_url": "https://reddit.com/r/accounting/comments/reconcile",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Stripe CSV dates do not match QuickBooks bank feed imports",
+        "body_excerpt": (
+            "Every week we export Stripe payouts and rework the CSV because QuickBooks imports the dates incorrectly. "
+            "Refunded payments and fees do not reconcile with the bank feed unless we manually split rows."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "user_role": "accountant",
+        "job_to_be_done": "Import Stripe payout data into QuickBooks without reconciliation drift",
+        "trigger_event": "weekly close",
+        "pain_statement": "QuickBooks imports Stripe CSVs with wrong dates and mismatched fees.",
+        "failure_mode": "Stripe CSV dates and fees do not reconcile with QuickBooks bank feeds",
+        "current_workaround": "manually split rows and correct dates in Excel",
+        "urgency_clues": "",
+        "frequency_clues": "weekly",
+        "cost_consequence_clues": "hours lost each close",
+        "why_now_clues": "refund volume increased",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is True
+    assert "finance_tool_shopping_without_specific_failure" not in screening["negative_signals"]
+    assert "finance_acquisition_or_vendor_chatter" not in screening["negative_signals"]
+
+
 def test_qualify_problem_signal_keeps_multistep_workflow_gap_question():
     finding_data = {
         "source": "reddit-problem/ecommerce",
@@ -545,6 +651,79 @@ def test_classify_source_signal_rejects_github_internal_maintenance_issue():
     assert "github_product_specific_issue" in classification["reasons"]
 
 
+def test_classify_source_signal_rejects_finance_acquisition_chatter():
+    finding_data = {
+        "source": "reddit-problem/ecommerce",
+        "source_url": "https://reddit.com/r/ecommerce/comments/melio",
+        "finding_kind": "problem_signal",
+    }
+    signal_payload = {
+        "title": "Xero just bought Melio. Will this finally fix vendor payments?",
+        "body_excerpt": (
+            "This is a big deal for finance teams, but it mostly sounds like another acquisition and "
+            "the same old duct-taped vendor payments story."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"evidence": {}},
+    }
+    atom_payload = {
+        "user_role": "finance lead",
+        "segment": "small ecommerce operators",
+        "job_to_be_done": "streamline vendor payments",
+        "trigger_event": "after the acquisition",
+        "failure_mode": "vendor payment stack feels bolted on",
+        "current_workaround": "using inboxes and spreadsheets",
+        "cost_consequence_clues": "time loss",
+        "frequency_clues": "weekly",
+    }
+
+    classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    assert classification["source_class"] == "competition_signal"
+    assert "finance_acquisition_or_vendor_chatter" in classification["reasons"]
+
+
+def test_classify_source_signal_rejects_broad_buying_prompt_even_with_recommendation_comments():
+    finding_data = {
+        "source": "reddit-problem/smallbusiness",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/cards",
+        "finding_kind": "problem_signal",
+    }
+    signal_payload = {
+        "title": "Growing team looking for the best virtual credit card for expense automation",
+        "body_excerpt": (
+            "We are drowning in receipts, evaluating Ramp and Brex, and want a corporate card solution "
+            "for subscriptions, ad spend, and reimbursements."
+        ),
+        "source_type": "forum",
+        "metadata_json": {
+            "evidence": {
+                "comments": [
+                    "Ramp solved this for us.",
+                    "Brex or Airbase will clean up the receipt mess fast.",
+                    "Wise is better if your issue is international declines.",
+                ]
+            }
+        },
+    }
+    atom_payload = {
+        "user_role": "finance lead",
+        "segment": "small business operations",
+        "job_to_be_done": "automate expense tracking and reimbursement",
+        "trigger_event": "during month-end reimbursements",
+        "pain_statement": "receipt chasing is slow and messy",
+        "failure_mode": "manual receipt collection for reimbursements",
+        "current_workaround": "personal cards and reimbursement spreadsheets",
+        "cost_consequence_clues": "time loss",
+        "frequency_clues": "monthly",
+    }
+
+    classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    assert classification["source_class"] == "low_signal_summary"
+    assert "finance_tool_shopping_without_specific_failure" in classification["reasons"]
+
+
 def test_qualify_problem_signal_keeps_github_transferable_workflow_failure():
     finding_data = {
         "source": "github-issue/example/repo",
@@ -577,6 +756,75 @@ def test_qualify_problem_signal_keeps_github_transferable_workflow_failure():
 
     assert screening["accepted"] is True
     assert "github_without_external_workflow_context" not in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_finance_tool_shopping_prompt():
+    finding_data = {
+        "source": "reddit-problem/smallbusiness",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/cards",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Growing team looking for the best virtual credit card for expense automation",
+        "body_excerpt": (
+            "We are drowning in receipts, evaluating Ramp and Brex, and want a corporate card solution "
+            "for subscriptions, ad spend, and reimbursements."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal", "evidence": {}},
+    }
+    atom_payload = {
+        "job_to_be_done": "automate expense tracking and reimbursement",
+        "trigger_event": "during month-end reimbursements",
+        "pain_statement": "receipt chasing is slow and messy",
+        "failure_mode": "manual receipt collection for reimbursements",
+        "current_workaround": "personal cards and reimbursement spreadsheets",
+        "urgency_clues": "",
+        "frequency_clues": "monthly",
+        "cost_consequence_clues": "time loss",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "finance_tool_shopping_without_specific_failure" in screening["negative_signals"]
+    assert "broad_buying_prompt_without_wedge_slice" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_broad_finance_visibility_prompt():
+    finding_data = {
+        "source": "github-issue/example/repo",
+        "source_url": "https://github.com/example/repo/issues/3",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "SMB owners can't see unified cash position across multiple payment channels",
+        "body_excerpt": (
+            "I want a single up-to-date view of what has been received versus what is still outstanding "
+            "across bank transfers, Stripe, Venmo, cash, and checks."
+        ),
+        "source_type": "github_issue",
+        "metadata_json": {"source_class": "pain_signal", "evidence": {}},
+    }
+    atom_payload = {
+        "job_to_be_done": "see a unified cash position across payment channels",
+        "trigger_event": "when clients pay through many channels",
+        "pain_statement": "cash visibility is fragmented",
+        "failure_mode": "revenue is spread across channels with no shared ledger",
+        "current_workaround": "checking channels separately and manual reconciliation",
+        "urgency_clues": "",
+        "frequency_clues": "every week",
+        "cost_consequence_clues": "guessing cash position",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "broad_finance_visibility_without_specific_failure" in screening["negative_signals"]
 
 
 def test_qualify_problem_signal_rejects_review_without_transferable_workflow():

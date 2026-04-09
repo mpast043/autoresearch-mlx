@@ -217,6 +217,11 @@ llm:
 build_prep:
   wedge_evaluation:
     feedback_to_discovery_terms: false
+  platform_classification:
+    provider: ollama
+    base_url: http://127.0.0.1:11434/v1
+    api_key: ollama
+    model: gemma4:latest
 
 validation:
   promotion_threshold: 0.45

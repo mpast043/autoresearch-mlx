@@ -16,6 +16,7 @@ from src.agents.base import AgentStatus
 from src.agents.discovery import DiscoveryAgent, is_wedge_ready_signal
 from src.database import Database, Finding, Validation
 from src.messaging import MessageType
+from src.research_tools import DiscoveryQueryPlan
 
 
 @pytest.fixture
@@ -177,6 +178,73 @@ def test_custom_sources_initialization(temp_db):
     assert agent.sources == ["reddit", "github"]
 
 
+def test_check_source_web_respects_focused_problem_only_and_configured_problem_queries(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["web"],
+        config={
+            "discovery": {
+                "focused_problem_only": True,
+                "web": {
+                    "problem_keywords": ["stripe quickbooks reconciliation manual"],
+                    "success_keywords": ["should not run"],
+                    "market_keywords": ["should not run"],
+                },
+            }
+        },
+    )
+    calls = []
+
+    class DummyToolkit:
+        def build_discovery_query_plan(self, source_name, queries, limit, cycle_index):
+            return DiscoveryQueryPlan(source_name=source_name, queries=list(queries)[:limit], slice_size=min(limit, len(list(queries))))
+
+        async def _discover_success_stories_on_web(self, queries, observer=None):
+            calls.append(("web-success", list(queries)))
+            return [{"source": "web-success"}]
+
+        async def _discover_marketplace_problem_threads(self, queries, observer=None):
+            calls.append(("market-problem", list(queries)))
+            return [{"source": "market-problem"}]
+
+        async def _discover_web_problem_threads(self, queries, observer=None):
+            calls.append(("web-problem", list(queries)))
+            return [{"source": "web-problem"}]
+
+    agent.toolkit = DummyToolkit()
+
+    results = asyncio.run(agent._check_source("web"))
+
+    assert calls == [("web-problem", ["stripe quickbooks reconciliation manual"])]
+    assert results == [{"source": "web-problem"}]
+
+
+def test_check_source_github_respects_configured_problem_queries(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["github"],
+        config={"discovery": {"github": {"problem_keywords": ['"stripe quickbooks reconciliation" issue']}}},
+    )
+    calls = []
+
+    class DummyToolkit:
+        _discovery_feedback = {}
+
+        def build_discovery_query_plan(self, source_name, queries, limit, cycle_index):
+            return DiscoveryQueryPlan(source_name=source_name, queries=list(queries)[:limit], slice_size=min(limit, len(list(queries))))
+
+        async def _discover_github_problem_threads(self, queries, observer=None):
+            calls.append(list(queries))
+            return [{"source": "github-problem"}]
+
+    agent.toolkit = DummyToolkit()
+
+    results = asyncio.run(agent._check_source("github"))
+
+    assert calls == [['"stripe quickbooks reconciliation" issue']]
+    assert results == [{"source": "github-problem"}]
+
+
 def test_process_finding_persists_qualified_problem_and_emits_message(temp_db):
     agent = DiscoveryAgent(temp_db)
     finding_data = {
@@ -270,6 +338,21 @@ def test_is_wedge_ready_signal_accepts_specific_workflow_failure():
     assert reason == "passed"
 
 
+def test_is_wedge_ready_signal_rejects_broad_finance_prompt():
+    finding_data = {
+        "product_built": "Growing team looking for the best virtual credit card for expense automation",
+        "outcome_summary": (
+            "We're drowning in receipts and evaluating Ramp and Brex because everyone uses personal cards "
+            "for team spend and we want a corporate card solution."
+        ),
+    }
+
+    is_ready, reason = is_wedge_ready_signal(finding_data)
+
+    assert is_ready is False
+    assert reason == "broad_finance_prompt"
+
+
 def test_process_finding_persists_pre_atom_filtered_signal_as_screened_out(temp_db):
     agent = DiscoveryAgent(temp_db)
     finding_data = {
@@ -312,6 +395,30 @@ def test_process_finding_screens_out_broad_manual_tasks_prompt(temp_db):
     assert finding is not None
     assert finding.status == "screened_out"
     assert (finding.evidence or {}).get("pre_atom_filter", {}).get("reason") == "generic_prompt"
+    assert temp_db.get_raw_signals_by_finding(finding_id) == []
+    assert temp_db.get_problem_atoms_by_finding(finding_id) == []
+
+
+def test_process_finding_screens_out_broad_finance_vendor_prompt(temp_db):
+    agent = DiscoveryAgent(temp_db)
+    finding_data = {
+        "source": "reddit-problem",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/virtual-cards",
+        "product_built": "Growing team looking for the best virtual credit card for expense automation",
+        "outcome_summary": (
+            "We're drowning in receipts, use personal cards for software and ad spend, and have looked at "
+            "standard options like Ramp and Brex for a corporate card solution."
+        ),
+        "finding_kind": "problem_signal",
+    }
+
+    finding_id = asyncio.run(agent._process_finding(finding_data))
+
+    assert finding_id is not None
+    finding = temp_db.get_finding(finding_id)
+    assert finding is not None
+    assert finding.status == "screened_out"
+    assert (finding.evidence or {}).get("pre_atom_filter", {}).get("reason") == "broad_finance_prompt"
     assert temp_db.get_raw_signals_by_finding(finding_id) == []
     assert temp_db.get_problem_atoms_by_finding(finding_id) == []
 

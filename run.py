@@ -134,7 +134,9 @@ class AutoResearcher:
 
         # Pass config to opportunity_engine for LLM atom extraction
         from src.opportunity_engine import configure_opportunity_engine
+        from src.build_prep import configure_build_prep
         configure_opportunity_engine(self.config)
+        configure_build_prep(self.config)
 
         builder_config = self.config.get("builder", {})
         orchestration_config = self.config.get("orchestration", {})

@@ -670,6 +670,41 @@ def test_choose_corroboration_action_prioritizes_confirmation_completion_for_nea
     assert action.promotion_gap_class == "corroboration_gap"
 
 
+def test_choose_corroboration_action_prefers_practitioner_confirmation_surfaces_for_sharp_near_miss():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="controller",
+        job_to_be_done="close the books without reconciliation drift",
+        failure_mode="stripe payouts and qbo exports stay out of sync after csv imports",
+        trigger_event="during month end close",
+        current_workaround="manual spreadsheet reconciliation",
+        cost_consequence_clues="time loss and reporting delays",
+        current_tools="stripe qbo csv exports",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["quickbooks stripe payout reconciliation"],
+        finding_kind="problem_signal",
+    )
+
+    action = toolkit._choose_corroboration_action(
+        atom=atom,
+        corroboration_plan=plan,
+        source_yield={"reddit": {"docs_retrieved": 3, "docs_strong_match": 1, "docs_partial_match": 1, "confirmed": True}},
+        matched_results_by_source={"reddit": 1},
+        partial_results_by_source={"reddit": 1},
+        family_confirmation_count=1,
+        source_attempts_by_family={"reddit": 1},
+        budget_profile={"target_sources": 2, "specificity_score": 0.91},
+        available_families=["reddit", "web", "github", "stackoverflow"],
+        promotion_gap_class="corroboration_gap",
+    )
+
+    assert action.action == "GATHER_CORROBORATION"
+    assert action.target_family == "web"
+
+
 def test_web_zero_retrieval_fallback_queries_are_materially_different_and_compact():
     toolkit = ResearchToolkit()
     atom = SimpleNamespace(
@@ -960,7 +995,35 @@ def test_workflow_fragility_web_routing_prefers_external_reviewable_surfaces():
     assert ("superuser.com", "web") in sites
     assert ("webapps.stackexchange.com", "web") in sites
     assert ("community.atlassian.com", "web") in sites
-    assert ("capterra.com", "web") in sites
+    assert (None, "web") in sites
+
+
+def test_accounting_reconciliation_web_routing_prefers_practitioner_communities():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="controller",
+        job_to_be_done="close the books without reconciliation drift",
+        failure_mode="stripe payouts and qbo exports stay out of sync after csv imports",
+        trigger_event="during month end close",
+        current_workaround="manual spreadsheet reconciliation",
+        cost_consequence_clues="time loss and reporting delays",
+        current_tools="stripe qbo csv exports",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["quickbooks stripe payout reconciliation"],
+        finding_kind="problem_signal",
+    )
+
+    sites, reason = toolkit._specialized_web_routing_sites(atom=atom, plan=plan, attempt_index=0)
+
+    assert reason == "accounting_practitioner_surface_first"
+    assert sites[:3] == [
+        ("community.intuit.com", "web"),
+        ("quickbooks.intuit.com/learn-support", "web"),
+        ("community.sap.com", "web"),
+    ]
     assert (None, "web") in sites
 
 
@@ -1037,7 +1100,7 @@ def test_ecosystem_atom_prefers_specialized_web_sites_before_generic_web():
     sites, reason = toolkit._specialized_web_routing_sites(atom=atom, plan=plan, attempt_index=0)
 
     assert reason == "shopify_community_first"
-    assert sites == [("community.shopify.com", "web"), ("apps.shopify.com", "web")]
+    assert sites == [("community.shopify.com", "web")]
 
 
 def test_low_information_atom_does_not_force_cohort_pack():
@@ -2221,6 +2284,54 @@ def test_recurrence_source_specific_queries_shape_by_family():
     )
 
 
+def test_recurrence_source_specific_queries_include_accounting_confirmation_pack():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="controller",
+        job_to_be_done="close the books without reconciliation drift",
+        failure_mode="stripe payouts and qbo exports stay out of sync after csv imports",
+        trigger_event="during month end close",
+        current_workaround="manual spreadsheet reconciliation",
+        cost_consequence_clues="time loss and reporting delays",
+        current_tools="stripe qbo csv exports",
+    )
+
+    web_queries = toolkit._recurrence_source_specific_queries(
+        selected_queries=["manual reconciliation workflow"],
+        atom=atom,
+        source_label="web",
+        limit=5,
+    )
+
+    assert any("quickbooks stripe payout reconciliation" in query for query in web_queries)
+    assert any("bank reconciliation spreadsheet workflow" in query or "month end close csv mismatch" in query for query in web_queries)
+
+
+def test_recurrence_source_specific_queries_include_state_drift_confirmation_pack():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="shopify merchants",
+        user_role="store operator",
+        job_to_be_done="keep order reporting accurate after cleanup",
+        failure_mode="deleted orders still showing in analytics and counts stay out of sync",
+        trigger_event="after deleting duplicate orders",
+        current_workaround="manual spreadsheet checks and recounts",
+        cost_consequence_clues="time loss and reporting confusion",
+        current_tools="shopify analytics exports",
+    )
+
+    web_queries = toolkit._recurrence_source_specific_queries(
+        selected_queries=["deleted order analytics mismatch"],
+        atom=atom,
+        source_label="web",
+        limit=5,
+    )
+
+    assert any("deleted orders still showing analytics" in query for query in web_queries)
+    assert any("inventory counts out sync import" in query or "order analytics mismatch delete" in query for query in web_queries)
+
+
 def test_classify_recurrence_match_strong_partial_none():
     toolkit = ResearchToolkit()
     atom = SimpleNamespace(
@@ -2691,7 +2802,7 @@ def test_specialized_web_routing_metadata_populates(monkeypatch):
     )
 
     assert captured_sites
-    assert captured_sites[0] == [("community.shopify.com", "web"), ("apps.shopify.com", "web")]
+    assert captured_sites[0] == [("community.shopify.com", "web")]
     assert branch["routing_override_reason"] == "shopify_community_first"
 
 

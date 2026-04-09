@@ -56,7 +56,11 @@ class SolutionFramingAgent(_BuildPrepAgent):
 
         framing = {
             "problem_frame": brief_payload.get("problem_summary", ""),
-            "target_user": brief_payload.get("user_role", brief_payload.get("job_to_be_done", "")),
+            "target_user": (
+                brief_payload.get("user_role")
+                or brief_payload.get("segment")
+                or brief_payload.get("job_to_be_done", "")
+            ),
             "narrow_solution_bet": product_name,
             "host_platform": host_platform,
             "product_format": product_format,

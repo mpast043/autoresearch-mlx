@@ -1002,8 +1002,7 @@ async def cmd_rescore_v4(args: argparse.Namespace, _app: AutoResearcher) -> None
 
 async def cmd_run(args: argparse.Namespace, _app: AutoResearcher) -> None:
     app = AutoResearcher(config_path=args.config)
-    original_web: list[str] | None = None
-    original_reddit: list[str] | None = None
+    original_focus: dict[str, Any] | None = None
 
     if args.pattern:
         from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
@@ -1016,14 +1015,30 @@ async def cmd_run(args: argparse.Namespace, _app: AutoResearcher) -> None:
         queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
         print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
         print(f"Queries: {queries[:3]}...")
-
-        original_web = list(app.config.get("discovery", {}).get("web", {}).get("keywords", []))
-        original_reddit = list(app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", []))
-
-        if "web" in app.config.get("discovery", {}):
-            app.config["discovery"]["web"]["keywords"] = queries
-        if "reddit" in app.config.get("discovery", {}):
-            app.config["discovery"]["reddit"]["problem_keywords"] = queries
+        discovery_cfg = app.config.get("discovery", {})
+        original_focus = {
+            "sources": list(discovery_cfg.get("sources", []) or []),
+            "web_keywords": list(discovery_cfg.get("web", {}).get("keywords", []) or []),
+            "web_problem_keywords": list(discovery_cfg.get("web", {}).get("problem_keywords", []) or []),
+            "web_success_keywords": list(discovery_cfg.get("web", {}).get("success_keywords", []) or []),
+            "web_market_keywords": list(discovery_cfg.get("web", {}).get("market_keywords", []) or []),
+            "reddit_keywords": list(discovery_cfg.get("reddit", {}).get("problem_keywords", []) or []),
+            "github_keywords": list(discovery_cfg.get("github", {}).get("problem_keywords", []) or []),
+            "focused_problem_only": bool(discovery_cfg.get("focused_problem_only", False)),
+        }
+        focused_sources = [source for source in ["reddit", "web", "github"] if source in (discovery_cfg.get("sources", []) or [])]
+        if focused_sources:
+            discovery_cfg["sources"] = focused_sources
+        discovery_cfg["focused_problem_only"] = True
+        if "web" in discovery_cfg:
+            discovery_cfg["web"]["keywords"] = queries
+            discovery_cfg["web"]["problem_keywords"] = queries
+            discovery_cfg["web"]["success_keywords"] = []
+            discovery_cfg["web"]["market_keywords"] = []
+        if "reddit" in discovery_cfg:
+            discovery_cfg["reddit"]["problem_keywords"] = queries
+        if "github" in discovery_cfg:
+            discovery_cfg["github"]["problem_keywords"] = queries
 
         print(f"Running focused discovery with {len(queries)} queries...\n")
 
@@ -1036,8 +1051,7 @@ async def cmd_run(args: argparse.Namespace, _app: AutoResearcher) -> None:
 
 async def cmd_run_once(args: argparse.Namespace, _app: AutoResearcher) -> None:
     app = AutoResearcher(config_path=args.config)
-    original_web: list[str] | None = None
-    original_reddit: list[str] | None = None
+    original_focus: dict[str, Any] | None = None
 
     try:
         if args.pattern:
@@ -1051,14 +1065,30 @@ async def cmd_run_once(args: argparse.Namespace, _app: AutoResearcher) -> None:
             queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
             print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
             print(f"Queries: {queries[:3]}...")
-
-            original_web = list(app.config.get("discovery", {}).get("web", {}).get("keywords", []))
-            original_reddit = list(app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", []))
-
-            if "web" in app.config.get("discovery", {}):
-                app.config["discovery"]["web"]["keywords"] = queries
-            if "reddit" in app.config.get("discovery", {}):
-                app.config["discovery"]["reddit"]["problem_keywords"] = queries
+            discovery_cfg = app.config.get("discovery", {})
+            original_focus = {
+                "sources": list(discovery_cfg.get("sources", []) or []),
+                "web_keywords": list(discovery_cfg.get("web", {}).get("keywords", []) or []),
+                "web_problem_keywords": list(discovery_cfg.get("web", {}).get("problem_keywords", []) or []),
+                "web_success_keywords": list(discovery_cfg.get("web", {}).get("success_keywords", []) or []),
+                "web_market_keywords": list(discovery_cfg.get("web", {}).get("market_keywords", []) or []),
+                "reddit_keywords": list(discovery_cfg.get("reddit", {}).get("problem_keywords", []) or []),
+                "github_keywords": list(discovery_cfg.get("github", {}).get("problem_keywords", []) or []),
+                "focused_problem_only": bool(discovery_cfg.get("focused_problem_only", False)),
+            }
+            focused_sources = [source for source in ["reddit", "web", "github"] if source in (discovery_cfg.get("sources", []) or [])]
+            if focused_sources:
+                discovery_cfg["sources"] = focused_sources
+            discovery_cfg["focused_problem_only"] = True
+            if "web" in discovery_cfg:
+                discovery_cfg["web"]["keywords"] = queries
+                discovery_cfg["web"]["problem_keywords"] = queries
+                discovery_cfg["web"]["success_keywords"] = []
+                discovery_cfg["web"]["market_keywords"] = []
+            if "reddit" in discovery_cfg:
+                discovery_cfg["reddit"]["problem_keywords"] = queries
+            if "github" in discovery_cfg:
+                discovery_cfg["github"]["problem_keywords"] = queries
 
             print(f"Running focused discovery with {len(queries)} queries...\n")
 
@@ -1072,11 +1102,20 @@ async def cmd_run_once(args: argparse.Namespace, _app: AutoResearcher) -> None:
         else:
             print_json(summary)
     finally:
-        if args.pattern:
-            if original_web is not None and "web" in app.config.get("discovery", {}):
-                app.config["discovery"]["web"]["keywords"] = original_web
-            if original_reddit is not None and "reddit" in app.config.get("discovery", {}):
-                app.config["discovery"]["reddit"]["problem_keywords"] = original_reddit
+        if args.pattern and original_focus is not None:
+            discovery_cfg = app.config.get("discovery", {})
+            if original_focus.get("sources"):
+                discovery_cfg["sources"] = original_focus["sources"]
+            discovery_cfg["focused_problem_only"] = bool(original_focus.get("focused_problem_only", False))
+            if "web" in discovery_cfg:
+                discovery_cfg["web"]["keywords"] = original_focus.get("web_keywords", [])
+                discovery_cfg["web"]["problem_keywords"] = original_focus.get("web_problem_keywords", [])
+                discovery_cfg["web"]["success_keywords"] = original_focus.get("web_success_keywords", [])
+                discovery_cfg["web"]["market_keywords"] = original_focus.get("web_market_keywords", [])
+            if "reddit" in discovery_cfg:
+                discovery_cfg["reddit"]["problem_keywords"] = original_focus.get("reddit_keywords", [])
+            if "github" in discovery_cfg:
+                discovery_cfg["github"]["problem_keywords"] = original_focus.get("github_keywords", [])
         close_app = getattr(app, "shutdown", None)
         if callable(close_app):
             await close_app()

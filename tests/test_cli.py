@@ -227,15 +227,23 @@ def test_cli_run_applies_pattern_and_fresh_before_dispatch(monkeypatch):
         def __init__(self, config_path=None):
             self.config = {
                 "discovery": {
+                    "sources": ["reddit", "web", "github", "shopify_reviews"],
                     "web": {"keywords": ["original web"]},
                     "reddit": {"problem_keywords": ["original reddit"], "theme_keywords": {}},
+                    "github": {"problem_keywords": ["original github"]},
                 }
             }
             self.discovery_bypass_cache = False
 
         async def run(self):
+            captured["sources"] = list(self.config["discovery"]["sources"])
+            captured["focused_problem_only"] = self.config["discovery"].get("focused_problem_only")
             captured["web_keywords"] = list(self.config["discovery"]["web"]["keywords"])
+            captured["web_problem_keywords"] = list(self.config["discovery"]["web"]["problem_keywords"])
+            captured["web_success_keywords"] = list(self.config["discovery"]["web"]["success_keywords"])
+            captured["web_market_keywords"] = list(self.config["discovery"]["web"]["market_keywords"])
             captured["reddit_keywords"] = list(self.config["discovery"]["reddit"]["problem_keywords"])
+            captured["github_keywords"] = list(self.config["discovery"]["github"]["problem_keywords"])
             captured["bypass_cache"] = self.discovery_bypass_cache
 
     monkeypatch.setattr(cli, "AutoResearcher", DummyRunApp)
@@ -244,8 +252,14 @@ def test_cli_run_applies_pattern_and_fresh_before_dispatch(monkeypatch):
     asyncio.run(cli.main())
 
     assert captured["bypass_cache"] is True
+    assert captured["sources"] == ["reddit", "web", "github"]
+    assert captured["focused_problem_only"] is True
     assert captured["web_keywords"][0] == "bank reconciliation manual process"
+    assert captured["web_problem_keywords"][0] == "bank reconciliation manual process"
+    assert captured["web_success_keywords"] == []
+    assert captured["web_market_keywords"] == []
     assert captured["reddit_keywords"][0] == "bank reconciliation manual process"
+    assert captured["github_keywords"][0] == "bank reconciliation manual process"
 
 
 def test_cli_run_once_restores_pattern_overrides_after_dispatch(monkeypatch):
@@ -257,16 +271,29 @@ def test_cli_run_once_restores_pattern_overrides_after_dispatch(monkeypatch):
         def __init__(self, config_path=None):
             self.config = {
                 "discovery": {
-                    "web": {"keywords": ["original web"]},
+                    "sources": ["reddit", "web", "github", "youtube"],
+                    "web": {
+                        "keywords": ["original web"],
+                        "problem_keywords": ["original web problem"],
+                        "success_keywords": ["original web success"],
+                        "market_keywords": ["original web market"],
+                    },
                     "reddit": {"problem_keywords": ["original reddit"], "theme_keywords": {}},
+                    "github": {"problem_keywords": ["original github"]},
                 }
             }
             self.discovery_bypass_cache = False
             DummyRunOnceApp.last_instance = self
 
         async def run_once(self, *, skip_backlog=False):
+            captured["sources_during_run"] = list(self.config["discovery"]["sources"])
+            captured["focused_problem_only_during_run"] = self.config["discovery"].get("focused_problem_only")
             captured["web_keywords_during_run"] = list(self.config["discovery"]["web"]["keywords"])
+            captured["web_problem_keywords_during_run"] = list(self.config["discovery"]["web"]["problem_keywords"])
+            captured["web_success_keywords_during_run"] = list(self.config["discovery"]["web"]["success_keywords"])
+            captured["web_market_keywords_during_run"] = list(self.config["discovery"]["web"]["market_keywords"])
             captured["reddit_keywords_during_run"] = list(self.config["discovery"]["reddit"]["problem_keywords"])
+            captured["github_keywords_during_run"] = list(self.config["discovery"]["github"]["problem_keywords"])
             captured["bypass_cache_during_run"] = self.discovery_bypass_cache
             captured["skip_backlog_during_run"] = skip_backlog
             return {"ok": True}
@@ -279,10 +306,22 @@ def test_cli_run_once_restores_pattern_overrides_after_dispatch(monkeypatch):
     app = DummyRunOnceApp.last_instance
     assert captured["bypass_cache_during_run"] is True
     assert captured["skip_backlog_during_run"] is False
+    assert captured["sources_during_run"] == ["reddit", "web", "github"]
+    assert captured["focused_problem_only_during_run"] is True
     assert captured["web_keywords_during_run"][0] == "bank reconciliation manual process"
+    assert captured["web_problem_keywords_during_run"][0] == "bank reconciliation manual process"
+    assert captured["web_success_keywords_during_run"] == []
+    assert captured["web_market_keywords_during_run"] == []
     assert captured["reddit_keywords_during_run"][0] == "bank reconciliation manual process"
+    assert captured["github_keywords_during_run"][0] == "bank reconciliation manual process"
+    assert app.config["discovery"]["sources"] == ["reddit", "web", "github", "youtube"]
+    assert app.config["discovery"]["focused_problem_only"] is False
     assert app.config["discovery"]["web"]["keywords"] == ["original web"]
+    assert app.config["discovery"]["web"]["problem_keywords"] == ["original web problem"]
+    assert app.config["discovery"]["web"]["success_keywords"] == ["original web success"]
+    assert app.config["discovery"]["web"]["market_keywords"] == ["original web market"]
     assert app.config["discovery"]["reddit"]["problem_keywords"] == ["original reddit"]
+    assert app.config["discovery"]["github"]["problem_keywords"] == ["original github"]
 
 
 def test_cli_run_once_passes_skip_backlog_flag(monkeypatch):

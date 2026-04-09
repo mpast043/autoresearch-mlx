@@ -129,6 +129,35 @@ GENERIC_PROMPT_PATTERNS = [
     r"most of these aren'?t hard problems",
 ]
 
+FINANCE_BROAD_PROMPT_PATTERNS = [
+    r"looking for the best virtual credit card",
+    r"looking for (?:a|the) corporate card solution",
+    r"corporate card solution that can automate this",
+    r"we(?:'ve| have) looked at standard options",
+    r"will this finally fix vendor payments",
+    r"\bjust bought\b.*\bmelio\b",
+    r"unified cash position across multiple payment channels",
+    r"single up-to-date view of (?:what'?s|what is) been received",
+]
+
+SPECIFIC_FINANCE_FAILURE_HINTS = {
+    "reconcile",
+    "reconciliation",
+    "mismatch",
+    "match",
+    "matching",
+    "duplicate",
+    "duplicates",
+    "csv",
+    "import",
+    "export",
+    "refund",
+    "refunded",
+    "wrong dates",
+    "fees not separated",
+    "shared ledger",
+}
+
 META_PATTERNS = [
     r'^what (is|are) ', r'^how do i ', r'^how to ',
     r'looking to build', r'want to build', r'building a',
@@ -176,6 +205,10 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
     # Check 2b: Broad productivity sermons and multi-workflow bundles
     if any(re.search(pattern, text) for pattern in GENERIC_PROMPT_PATTERNS):
         return False, "generic_prompt"
+    if any(re.search(pattern, text) for pattern in FINANCE_BROAD_PROMPT_PATTERNS):
+        has_specific_finance_failure = any(hint in text for hint in SPECIFIC_FINANCE_FAILURE_HINTS)
+        if not has_specific_finance_failure:
+            return False, "broad_finance_prompt"
     if generic_bucket_hits >= 2 and not has_specific_context:
         return False, "generic_task_bundle"
     if generic_bucket_hits >= 2 and not has_failure and ("," in text or "etc" in text or " and " in text):
@@ -596,13 +629,16 @@ class DiscoveryAgent(BaseAgent):
                 return []
             queries = self._plan_queries(
                 "github-problem",
-                [
-                    '"csv import" issue workflow',
-                    '"manual reconciliation" issue',
-                    '"spreadsheet workflow" issue',
-                    '"copy paste" automation issue',
-                    '"data cleanup" import issue',
-                ],
+                self.config.get("discovery", {}).get("github", {}).get(
+                    "problem_keywords",
+                    [
+                        '"csv import" issue workflow',
+                        '"manual reconciliation" issue',
+                        '"spreadsheet workflow" issue',
+                        '"copy paste" automation issue',
+                        '"data cleanup" import issue',
+                    ],
+                ),
                 default_limit=4,
             )
             github_timeout = self._adaptive_github_timeout_seconds()
@@ -626,61 +662,75 @@ class DiscoveryAgent(BaseAgent):
                     )
                 return []
         if normalized == "web":
+            web_cfg = self.config.get("discovery", {}).get("web", {}) or {}
+            focused_problem_only = bool(self.config.get("discovery", {}).get("focused_problem_only", False))
             success_queries = self._plan_queries(
                 "web-success",
-                self.config.get("discovery", {}).get("web", {}).get(
-                    "keywords",
+                web_cfg.get(
+                    "success_keywords",
+                    web_cfg.get(
+                        "keywords",
+                        [
+                            "AI startup success story revenue",
+                            "GPT business revenue story",
+                            "AI side project customers",
+                        ],
+                    ),
+                ),
+                default_limit=4,
+            ) if not focused_problem_only else []
+            problem_queries = self._plan_queries(
+                "web-problem",
+                web_cfg.get(
+                    "problem_keywords",
                     [
-                        "AI startup success story revenue",
-                        "GPT business revenue story",
-                        "AI side project customers",
+                        "spreadsheet version confusion forum",
+                        "manual reconciliation forum",
+                        "manual handoff workflow forum",
+                        "which spreadsheet is latest",
+                        "workflow handoff tool too expensive",
                     ],
                 ),
                 default_limit=4,
             )
-            problem_queries = self._plan_queries(
-                "web-problem",
-                [
-                    "spreadsheet version confusion forum",
-                    "manual reconciliation forum",
-                    "manual handoff workflow forum",
-                    "which spreadsheet is latest",
-                    "workflow handoff tool too expensive",
-                ],
-                default_limit=4,
-            )
             market_queries = self._plan_queries(
                 "market-problem",
-                [
-                    '"etsy seller" "wish there was" automation',
-                    '"google reviews" "too expensive" tool',
-                    '"youtube comments" "need a way" automate',
-                ],
+                web_cfg.get(
+                    "market_keywords",
+                    [
+                        '"etsy seller" "wish there was" automation',
+                        '"google reviews" "too expensive" tool',
+                        '"youtube comments" "need a way" automate',
+                    ],
+                ),
                 default_limit=3,
-            )
+            ) if not focused_problem_only else []
             success_timeout = self._web_timeout_seconds("success", default=10.0)
             market_timeout = self._web_timeout_seconds("market", default=8.0)
             problem_timeout = self._web_timeout_seconds("problem", default=15.0)
-            success_findings, problem_findings = await asyncio.gather(
-                self._run_source_with_timeout(
-                    "web-success",
-                    self.toolkit._discover_success_stories_on_web(
-                        queries=success_queries,
+            success_findings: list[dict[str, Any]] = []
+            problem_findings: list[dict[str, Any]] = []
+            if not focused_problem_only:
+                success_findings, problem_findings = await asyncio.gather(
+                    self._run_source_with_timeout(
+                        "web-success",
+                        self.toolkit._discover_success_stories_on_web(
+                            queries=success_queries,
+                            observer=observer,
+                        ),
+                        timeout_seconds=success_timeout,
                         observer=observer,
                     ),
-                    timeout_seconds=success_timeout,
-                    observer=observer,
-                ),
-                self._run_source_with_timeout(
-                    "market-problem",
-                    self.toolkit._discover_marketplace_problem_threads(
-                        queries=market_queries,
+                    self._run_source_with_timeout(
+                        "market-problem",
+                        self.toolkit._discover_marketplace_problem_threads(
+                            queries=market_queries,
+                            observer=observer,
+                        ),
+                        timeout_seconds=market_timeout,
                         observer=observer,
                     ),
-                    timeout_seconds=market_timeout,
-                    observer=observer,
-                ),
-            )
+                )
             web_problem_findings = await self._run_source_with_timeout(
                 "web-problem",
                 self.toolkit._discover_web_problem_threads(

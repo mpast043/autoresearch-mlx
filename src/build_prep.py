@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 BUILD_BRIEF_SCHEMA_VERSION = "build_brief_v1"
 BUILD_PREP_RULE_VERSION = "build_prep_v1"
 PROTOTYPE_CANDIDATE_RULE_VERSION = "prototype_candidate_v1"
+_RUNTIME_CONFIG: dict[str, Any] = {}
 
 
 # Vague placeholder patterns to down-rank or reject
@@ -21,6 +22,7 @@ VAGUE_PATTERNS = {
     "workflow_reliability",
     "workflow_diagnostic",
     "operator_workflow_patch",
+    "sync_handoff_assistant",
     "workflow",
     "manual workflow",
     "keep operations in sync",
@@ -39,6 +41,7 @@ VAGUE_PATTERNS = {
 GENERIC_BUILD_READY_PATTERNS = {
     "daily operation",
     "manual execution of tasks",
+    "managing and importing various business data",
     "workflow reliability",
     "workflow diagnostic",
     "workflow_diagnostic_prototype",
@@ -89,6 +92,37 @@ def _looks_generic_build_ready_text(value: str | None) -> bool:
     if not text or len(text) < 18:
         return True
     return any(pattern in text for pattern in GENERIC_BUILD_READY_PATTERNS)
+
+
+def _prefer_specific_problem_summary(summary: str, pain_statement: str, failure_mode: str) -> str:
+    summary_text = (summary or "").strip()
+    lowered = summary_text.lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "how do you prevent",
+            "what's the one task",
+            "manual tasks",
+            "spreadsheet or csv errors",
+            "problem:",
+        )
+    ):
+        return (pain_statement or failure_mode or summary_text).strip()
+    return summary_text
+
+
+def _prefer_specific_job_to_be_done(job_to_be_done: str, failure_mode: str, current_tools: str, trigger_event: str) -> str:
+    job = (job_to_be_done or "").strip()
+    haystack = " ".join([job_to_be_done or "", failure_mode or "", current_tools or "", trigger_event or ""]).lower()
+    if "various business data" in haystack:
+        if "quickbooks" in haystack or "qbo" in haystack:
+            return "Import Stripe and bank-feed CSVs into QuickBooks without reconciliation drift"
+        if "shopify" in haystack:
+            return "Import supplier and inventory CSVs into Shopify without corrupting downstream data"
+        if "csv" in haystack and "import" in haystack:
+            return "Validate CSV imports before they corrupt downstream business data"
+        return failure_mode or trigger_event or job
+    return job
 
 
 def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, Any]:
@@ -148,12 +182,58 @@ def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, A
 def get_platform_classification_config() -> dict[str, str]:
     """Get configuration for platform classification LLM provider."""
     import os
+    build_prep_config = _RUNTIME_CONFIG.get("build_prep", {}) if _RUNTIME_CONFIG else {}
+    classifier_config = build_prep_config.get("platform_classification", {}) if isinstance(build_prep_config, dict) else {}
+    llm_config = _RUNTIME_CONFIG.get("llm", {}) if _RUNTIME_CONFIG else {}
+
+    def _pick(*values: Any, default: str = "") -> str:
+        for value in values:
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return default
+
     return {
-        "provider": os.environ.get("PLATFORM_FIT_LLM_PROVIDER", "auto"),
-        "ollama_base_url": os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
-        "ollama_model": os.environ.get("OLLAMA_MODEL", "qwen2.5:3b"),
-        "anthropic_api_key": os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY"),
+        "provider": _pick(
+            classifier_config.get("provider"),
+            llm_config.get("provider"),
+            os.environ.get("PLATFORM_FIT_LLM_PROVIDER"),
+            default="auto",
+        ),
+        "ollama_base_url": _pick(
+            classifier_config.get("base_url"),
+            llm_config.get("base_url"),
+            os.environ.get("OLLAMA_BASE_URL"),
+            default="http://127.0.0.1:11434",
+        ),
+        "ollama_model": _pick(
+            classifier_config.get("model"),
+            llm_config.get("model"),
+            os.environ.get("OLLAMA_MODEL"),
+            default="gemma4:latest",
+        ),
+        "ollama_api_key": _pick(
+            classifier_config.get("api_key"),
+            llm_config.get("api_key"),
+            os.environ.get("OLLAMA_API_KEY"),
+            default="",
+        ),
+        "anthropic_api_key": _pick(
+            classifier_config.get("anthropic_api_key"),
+            llm_config.get("anthropic_api_key"),
+            os.environ.get("ANTHROPIC_API_KEY"),
+            os.environ.get("CLAUDE_API_KEY"),
+            default="",
+        ),
     }
+
+
+def configure_build_prep(config: dict[str, Any]) -> None:
+    """Set runtime config for build-prep provider selection."""
+    global _RUNTIME_CONFIG
+    _RUNTIME_CONFIG = config or {}
 
 
 # Optimized prompt for local/small models
@@ -250,6 +330,7 @@ def _classify_via_ollama(
     config = get_platform_classification_config()
     base_url = config["ollama_base_url"]
     model = config["ollama_model"]
+    api_key = config.get("ollama_api_key", "")
 
     # Format the prompt
     prompt = PLATFORM_CLASSIFICATION_PROMPT.format(
@@ -266,25 +347,55 @@ def _classify_via_ollama(
         import urllib.request
         import urllib.error
 
-        request_data = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.1,  # Low temperature for more consistent output
-                "num_predict": 300,   # Limit output length
+        normalized_base_url = base_url.rstrip("/")
+        use_openai_compat = normalized_base_url.endswith("/v1")
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        if use_openai_compat:
+            request_data = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "Output ONLY valid JSON. No markdown. No prose."},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.1,
+                "max_tokens": 300,
             }
-        }
+            endpoint = f"{normalized_base_url}/chat/completions"
+        else:
+            request_data = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "Output ONLY valid JSON. No markdown. No prose."},
+                    {"role": "user", "content": prompt},
+                ],
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": 300,
+                },
+            }
+            endpoint = f"{normalized_base_url}/api/chat"
 
         req = urllib.request.Request(
-            f"{base_url}/api/generate",
+            endpoint,
             data=json.dumps(request_data).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
 
         with urllib.request.urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode("utf-8"))
-            raw = result.get("response", "").strip()
+            if use_openai_compat:
+                raw = (
+                    result.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+            else:
+                raw = result.get("message", {}).get("content", "").strip()
 
             if not raw:
                 logger.warning("Ollama: Empty response")
@@ -774,6 +885,12 @@ def determine_narrow_output_type(
     # Check trigger conditions - require more context for LLM
     has_trigger = any([trigger_event, pain_statement, current_workaround, cluster_summary])
     has_primary = job_to_be_done or failure_mode
+    fallback = _determine_product_via_keyword(
+        wedge_name=wedge_name,
+        job_to_be_done=job_to_be_done,
+        failure_mode=failure_mode,
+        user_role=user_role,
+    )
 
     if has_primary and has_trigger:
         result = _determine_product_via_llm(
@@ -786,24 +903,131 @@ def determine_narrow_output_type(
             cluster_summary=cluster_summary,
         )
         if result and result.product_name:
+            result = _normalize_platform_fit_with_context(
+                result=result,
+                fallback=fallback,
+                wedge_name=wedge_name,
+                job_to_be_done=job_to_be_done,
+                failure_mode=failure_mode,
+                user_role=user_role,
+                trigger_event=trigger_event,
+                current_workaround=current_workaround,
+                pain_statement=pain_statement,
+                cluster_summary=cluster_summary,
+            )
             logger.info(
                 f"LLM classification succeeded: platform={result.host_platform}, "
                 f"format={result.product_format}, name={result.product_name}"
             )
             return result
 
-    # Fallback to keyword matching (legacy)
-    fallback = _determine_product_via_keyword(
-        wedge_name=wedge_name,
-        job_to_be_done=job_to_be_done,
-        failure_mode=failure_mode,
-        user_role=user_role,
-    )
     logger.info(
         f"Fallback classification: platform={fallback.host_platform}, "
         f"format={fallback.product_format}, name={fallback.product_name}"
     )
     return fallback
+
+
+def _normalize_platform_fit_with_context(
+    *,
+    result: PlatformFit,
+    fallback: PlatformFit,
+    wedge_name: str,
+    job_to_be_done: str,
+    failure_mode: str,
+    user_role: str,
+    trigger_event: str,
+    current_workaround: str,
+    pain_statement: str,
+    cluster_summary: str,
+) -> PlatformFit:
+    """Repair obviously incompatible LLM classifications using deterministic context."""
+    context_text = " ".join(
+        str(value or "")
+        for value in [
+            wedge_name,
+            job_to_be_done,
+            failure_mode,
+            user_role,
+            trigger_event,
+            current_workaround,
+            pain_statement,
+            cluster_summary,
+        ]
+    ).lower()
+    result_text = " ".join(
+        str(value or "")
+        for value in [
+            result.host_platform or "",
+            result.product_format or "",
+            result.product_name or "",
+            result.one_sentence_product or "",
+            result.why_this_format or "",
+        ]
+    ).lower()
+    result_surface_text = " ".join(
+        str(value or "") for value in [result.host_platform or "", result.product_format or ""]
+    ).lower()
+
+    accounting_markers = {
+        "quickbooks",
+        "qbo",
+        "reconciliation",
+        "bookkeeper",
+        "accounting",
+        "ledger",
+        "invoice",
+        "bank feed",
+        "stripe",
+    }
+    shopify_markers = {"shopify", "merchant", "catalog", "inventory", "sku"}
+    csv_markers = {"csv", "import", "spreadsheet", "vendor"}
+    generic_doc_surfaces = {"google docs", "gmail", "slack", "word add-in", "docs add-on"}
+
+    fallback_is_specific = (fallback.host_platform or "").lower() not in {"", "unknown"}
+    if not fallback_is_specific:
+        return result
+
+    def _has_any(markers: set[str], text: str) -> bool:
+        return any(marker in text for marker in markers)
+
+    mismatch = False
+    if _has_any(accounting_markers, context_text):
+        mismatch = _has_any(generic_doc_surfaces, result_surface_text) or not _has_any(accounting_markers, result_text)
+    elif _has_any(shopify_markers, context_text):
+        mismatch = _has_any(generic_doc_surfaces, result_surface_text) or "shopify" not in result_text
+    elif _has_any(csv_markers, context_text) and "csv import workflow" in (fallback.host_platform or "").lower():
+        mismatch = _has_any(generic_doc_surfaces, result_text) or not _has_any(csv_markers, result_text)
+
+    if not mismatch:
+        return result
+
+    merged_name = result.product_name
+    if not merged_name or PlatformFit(product_name=merged_name).is_vague:
+        merged_name = fallback.product_name
+
+    merged_sentence = result.one_sentence_product or fallback.one_sentence_product
+    if not merged_sentence or _looks_generic_build_ready_text(merged_sentence):
+        merged_sentence = fallback.one_sentence_product
+
+    logger.info(
+        "Normalized incompatible LLM platform fit from %s/%s to %s/%s",
+        result.host_platform,
+        result.product_format,
+        fallback.host_platform,
+        fallback.product_format,
+    )
+    return PlatformFit(
+        host_platform=fallback.host_platform,
+        product_format=fallback.product_format,
+        product_name=merged_name or fallback.product_name,
+        one_sentence_product=merged_sentence,
+        why_this_format=fallback.why_this_format or result.why_this_format,
+        llm_used=result.llm_used,
+        fallback_used=True,
+        classification_confidence=result.classification_confidence,
+        raw_classification=result.raw_classification,
+    )
 
 
 def _determine_product_via_keyword(
@@ -816,6 +1040,26 @@ def _determine_product_via_keyword(
     """Fallback keyword-based classification."""
     text = " ".join([wedge_name, job_to_be_done, failure_mode, user_role]).lower()
 
+    csv_import_markers = [
+        "csv",
+        "import",
+        "vendor",
+        "inventory",
+        "pricing",
+        "catalog",
+        "sku",
+        "spreadsheet",
+    ]
+    accounting_import_markers = [
+        "quickbooks",
+        "qbo",
+        "bookkeeper",
+        "accounting",
+        "invoice",
+        "payment",
+        "reconciliation",
+    ]
+
     if "backup" in text or "restore" in text or "recovery" in text:
         return PlatformFit(
             host_platform="Internal workflow",
@@ -823,6 +1067,36 @@ def _determine_product_via_keyword(
             product_name="backup_reliability_console",
             one_sentence_product="Recover lost data from failed backups",
             why_this_format="Direct access to backup infrastructure",
+            llm_used=False,
+            fallback_used=True,
+        )
+    if "csv" in text and any(marker in text for marker in csv_import_markers):
+        if any(marker in text for marker in accounting_import_markers):
+            return PlatformFit(
+                host_platform="QuickBooks",
+                product_format="QuickBooks App",
+                product_name="ledger_import_guard",
+                one_sentence_product="Validate ledger import files before they create reconciliation drift",
+                why_this_format="Close to the accounting import workflow and monthly review loop",
+                llm_used=False,
+                fallback_used=True,
+            )
+        if "shopify" in text or "merchant" in text or "store" in text:
+            return PlatformFit(
+                host_platform="Shopify Admin",
+                product_format="Shopify App",
+                product_name="catalog_import_guard",
+                one_sentence_product="Catch bad catalog rows before they corrupt product and inventory imports",
+                why_this_format="Runs at the exact merchant import step where bad feeds cause damage",
+                llm_used=False,
+                fallback_used=True,
+            )
+        return PlatformFit(
+            host_platform="CSV import workflow",
+            product_format="web-based CSV validator",
+            product_name="csv_import_guard",
+            one_sentence_product="Validate CSV rows before import so one bad value does not break downstream data",
+            why_this_format="Fits a narrow pre-import checkpoint better than a generic internal workflow tool",
             llm_used=False,
             fallback_used=True,
         )
@@ -1071,9 +1345,19 @@ def build_brief_payload(
         "selection_gate": selection_gate,
         "prototype_gate": prototype_gate,
         "linked_finding_ids": linked_finding_ids,
-        "problem_summary": cluster.get("summary", {}).get("human_summary")
-        or evidence_payload.get("summary", {}).get("problem_statement", ""),
-        "job_to_be_done": cluster.get("job_to_be_done", ""),
+        "problem_summary": _prefer_specific_problem_summary(
+            cluster.get("summary", {}).get("human_summary")
+            or evidence_payload.get("summary", {}).get("problem_statement", ""),
+            getattr(anchor_atom, "pain_statement", ""),
+            getattr(anchor_atom, "failure_mode", ""),
+        ),
+        "job_to_be_done": _prefer_specific_job_to_be_done(
+            cluster.get("job_to_be_done", ""),
+            getattr(anchor_atom, "failure_mode", ""),
+            getattr(anchor_atom, "current_tools", ""),
+            getattr(anchor_atom, "trigger_event", ""),
+        ),
+        "user_role": cluster.get("user_role", ""),
         "pain_workaround": {
             "pain_statement": getattr(anchor_atom, "pain_statement", ""),
             "failure_mode": getattr(anchor_atom, "failure_mode", ""),

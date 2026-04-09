@@ -3436,6 +3436,14 @@ class ResearchToolkit:
             signature_terms=signature_terms,
         ):
             source_priority = ("reddit", "web", "stackoverflow", "etsy", "github")
+        if atom is not None:
+            budget_profile = self._recurrence_budget_profile(atom)
+            meaningful = self._meaningful_candidate_snapshot(atom)
+            if meaningful["meaningful_candidate"] and float(budget_profile.get("specificity_score", 0.0) or 0.0) >= 0.72:
+                if self._atom_supports_stackoverflow_recurrence(atom):
+                    source_priority = ("web", "stackoverflow", "github", "reddit", "etsy")
+                else:
+                    source_priority = ("web", "github", "reddit", "stackoverflow", "etsy")
         if finding_kind == "pain_point":
             source_priority = ("web", "github", "reddit", "stackoverflow", "etsy")
         return CorroborationPlan(
@@ -3575,7 +3583,27 @@ class ResearchToolkit:
             return False
         if any(contains_marker(marker) for marker in technical_markers):
             return True
-        if any(contains_marker(marker) for marker in tool_surface_markers):
+        tool_integration_markers = [
+            "api",
+            "sdk",
+            "webhook",
+            "oauth",
+            "plugin",
+            "extension",
+            "integration",
+            "deployment",
+            "config",
+            "configuration",
+            "script",
+            "cli",
+            "automation",
+            "import",
+            "export",
+            "sync",
+        ]
+        if any(contains_marker(marker) for marker in tool_surface_markers) and any(
+            contains_marker(marker) for marker in tool_integration_markers
+        ):
             return True
         return False
 
@@ -4069,6 +4097,14 @@ class ResearchToolkit:
             if any_partials and family not in partial_results_by_source:
                 score += 0.08
             if promotion_gap_class in {"corroboration_gap", "evidence_sufficiency_gap"} and family_confirmation_count >= 1:
+                if family == "reddit":
+                    score -= 0.28
+                if family == "web":
+                    score += 0.22
+                elif family == "stackoverflow" and self._atom_supports_stackoverflow_recurrence(atom):
+                    score += 0.1
+                elif family == "github" and self._atom_supports_github_recurrence(atom=atom):
+                    score += 0.06
                 if int(matched_results_by_source.get(family, 0) or 0) == 0:
                     score += 0.16
                 if int(partial_results_by_source.get(family, 0) or 0) > 0:
@@ -4385,6 +4421,85 @@ class ResearchToolkit:
         ]
         return any(marker in haystack for marker in cohort_markers)
 
+    def _is_accounting_reconciliation_cohort(
+        self,
+        *,
+        atom: Optional[Any],
+        plan: Optional[CorroborationPlan],
+    ) -> bool:
+        if atom is None or plan is None:
+            return False
+        haystack = normalize_content(
+            " ".join(
+                [
+                    getattr(atom, "segment", "") or "",
+                    getattr(atom, "user_role", "") or "",
+                    getattr(atom, "job_to_be_done", "") or "",
+                    getattr(atom, "failure_mode", "") or "",
+                    getattr(atom, "current_workaround", "") or "",
+                    getattr(atom, "cost_consequence_clues", "") or "",
+                    getattr(atom, "current_tools", "") or "",
+                    " ".join(plan.signature_terms),
+                ]
+            )
+        )
+        accounting_markers = [
+            "reconciliation",
+            "bank",
+            "deposit",
+            "month end",
+            "close",
+            "sales tax",
+            "accounts receivable",
+            "invoice",
+            "payment",
+            "payout",
+            "quickbooks",
+            "qbo",
+            "books",
+            "stripe",
+        ]
+        return any(marker in haystack for marker in accounting_markers)
+
+    def _is_state_drift_operator_cohort(
+        self,
+        *,
+        atom: Optional[Any],
+        plan: Optional[CorroborationPlan],
+    ) -> bool:
+        if atom is None or plan is None:
+            return False
+        haystack = normalize_content(
+            " ".join(
+                [
+                    getattr(atom, "segment", "") or "",
+                    getattr(atom, "user_role", "") or "",
+                    getattr(atom, "job_to_be_done", "") or "",
+                    getattr(atom, "failure_mode", "") or "",
+                    getattr(atom, "current_workaround", "") or "",
+                    getattr(atom, "cost_consequence_clues", "") or "",
+                    getattr(atom, "current_tools", "") or "",
+                    " ".join(plan.signature_terms),
+                ]
+            )
+        )
+        drift_markers = [
+            "deleted order",
+            "analytics",
+            "out of sync",
+            "drift",
+            "inventory mismatch",
+            "wrong count",
+            "still showing",
+            "status mismatch",
+            "duplicate order",
+            "order status",
+            "fulfillment",
+            "shipment",
+            "inventory",
+        ]
+        return any(marker in haystack for marker in drift_markers)
+
     def _specialized_operator_surface_queries(
         self,
         *,
@@ -4414,6 +4529,14 @@ class ResearchToolkit:
         add("back office workflow", failure_seed or "manual approvals", "software")
         add(workaround_seed or "using spreadsheets for reporting", cost_seed, "tool")
         add(segment_seed, "manual reporting workflow", "software")
+        if self._is_accounting_reconciliation_cohort(atom=atom, plan=plan):
+            add("quickbooks community reconciliation workflow")
+            add("stripe quickbooks payout reconciliation forum")
+            add("month end close csv mismatch forum")
+        if self._is_state_drift_operator_cohort(atom=atom, plan=plan):
+            add("deleted order still showing analytics forum")
+            add("inventory counts out of sync after import forum")
+            add("order status mismatch reporting community")
         return queries[:4]
 
     def _is_workflow_fragility_cohort(
@@ -4600,7 +4723,7 @@ class ResearchToolkit:
             )
         )
         if any(term in haystack for term in ["shopify", "merchant", "storefront", "app store"]):
-            sites = [("community.shopify.com", "web"), ("apps.shopify.com", "web")]
+            sites = [("community.shopify.com", "web")]
             if attempt_index > 0:
                 sites.append((None, "web"))
             return (sites, "shopify_community_first")
@@ -4614,17 +4737,22 @@ class ResearchToolkit:
             if attempt_index > 0:
                 sites.append((None, "web"))
             return (sites, "seller_community_first")
+        if self._is_accounting_reconciliation_cohort(atom=atom, plan=plan):
+            sites = [
+                ("community.intuit.com", "web"),
+                ("quickbooks.intuit.com/learn-support", "web"),
+                ("community.sap.com", "web"),
+                (None, "web"),
+            ]
+            return (sites, "accounting_practitioner_surface_first")
         if self._is_workflow_fragility_cohort(atom=atom, plan=plan):
             sites = [
                 ("superuser.com", "web"),
                 ("webapps.stackexchange.com", "web"),
                 ("community.atlassian.com", "web"),
                 ("community.monday.com", "web"),
-                ("capterra.com", "web"),
                 (None, "web"),
             ]
-            if attempt_index > 0:
-                sites.insert(3, ("g2.com", "web"))
             return (sites, "workflow_fragility_surface_first")
         if attempt_index > 0 and self._is_spreadsheet_operator_admin_cohort(atom=atom, plan=plan):
             return ([(None, "web")], "operator_surface_queries_first")
@@ -4779,6 +4907,8 @@ class ResearchToolkit:
         fragility_queries = self._workflow_fragility_web_queries(atom=atom, plan=plan)
         cohort_queries = self._spreadsheet_operator_admin_web_queries(atom=atom, plan=plan)
         specialized_queries = self._specialized_operator_surface_queries(atom=atom, plan=plan)
+        accounting_focus = self._is_accounting_reconciliation_cohort(atom=atom, plan=plan)
+        state_drift_focus = self._is_state_drift_operator_cohort(atom=atom, plan=plan)
         fragility_focus_haystack = normalize_content(
             " ".join(
                 [
@@ -4804,14 +4934,25 @@ class ResearchToolkit:
         # only after a retry path. Retry mode still needs to prioritize the actual
         # reshape/fallback queries so a second attempt is meaningfully different.
         if not reshape_reason:
+            if accounting_focus:
+                add("quickbooks stripe payout reconciliation")
+                add("bank reconciliation spreadsheet workflow")
+                add("month end close csv mismatch")
+            if state_drift_focus:
+                add("deleted orders still showing analytics")
+                add("inventory counts out of sync after import")
+                add("order analytics mismatch after delete")
             if fragility_queries:
-                for query in fragility_queries[:3]:
+                fragility_limit = 1 if (accounting_focus or state_drift_focus) else 3
+                for query in fragility_queries[:fragility_limit]:
                     add(query)
             if cohort_queries:
-                for query in cohort_queries[:2]:
+                cohort_limit = 1 if (accounting_focus or state_drift_focus) else 2
+                for query in cohort_queries[:cohort_limit]:
                     add(query)
             if specialized_queries:
-                for query in specialized_queries[:2]:
+                specialized_limit = 3 if (accounting_focus or state_drift_focus) else 2
+                for query in specialized_queries[:specialized_limit]:
                     add(query)
 
         if reshape_reason:
@@ -4865,6 +5006,14 @@ class ResearchToolkit:
                 add(job_seed, role_seed, artifact_seed or "workflow")
 
         if is_spreadsheet:
+            if accounting_focus:
+                add("quickbooks stripe payout reconciliation")
+                add("bank deposit reconciliation spreadsheet")
+                add("month end close csv mismatch")
+            if state_drift_focus:
+                add("deleted orders still showing analytics")
+                add("order analytics mismatch after delete")
+                add("inventory counts out of sync after import")
             add("spreadsheet import duplicates", "manual cleanup")
             add("csv import cleanup workflow", role_seed)
             add("vendor spreadsheet cleanup", "excel")
@@ -6002,6 +6151,14 @@ class ResearchToolkit:
             if compliance_pain:
                 push('"manual audit exports"', '"compliance evidence collection"', role_terms or "compliance")
                 push('"m365 audit exports"', '"manual compliance evidence"', "forum")
+            if any(term in haystack for term in ["reconciliation", "quickbooks", "qbo", "bank", "month end", "payout", "sales tax"]):
+                push('"quickbooks stripe payout reconciliation"', "forum")
+                push('"bank reconciliation spreadsheet workflow"', "community")
+                push('"month end close csv mismatch"', "forum")
+            if any(term in haystack for term in ["deleted order", "analytics", "still showing", "inventory mismatch", "status mismatch"]):
+                push('"deleted orders still showing analytics"', "community")
+                push('"inventory counts out of sync after import"', "forum")
+                push('"order analytics mismatch after delete"', "merchant")
             if generic_manual_pain and not (spreadsheet_pain or ops_admin_pain or compliance_pain):
                 push(job_phrase or '"manual process"', '"workflow forum"', segment_terms or role_terms)
                 push(failure_phrase or '"manual workaround"', '"operator workflow"', segment_terms)

@@ -208,6 +208,71 @@ ROI_SHOPPING_PATTERNS = [
     "outsourcing an automation project",
     "break the bank",
 ]
+FINANCE_TOOL_SHOPPING_PATTERNS = [
+    "looking for the best virtual credit card",
+    "best virtual credit card",
+    "corporate card solution",
+    "we've looked at standard options",
+    "we have looked at standard options",
+    "ramp and brex",
+]
+FINANCE_ACQUISITION_CHATTER_PATTERNS = [
+    "will this finally fix vendor payments",
+    "just bought melio",
+    "xero just bought melio",
+    "another acquisition",
+]
+FINANCE_BROAD_VISIBILITY_PATTERNS = [
+    "unified cash position across multiple payment channels",
+    "single up-to-date view",
+    "across multiple payment channels",
+    "what's been received versus what's still outstanding",
+    "what has been received versus what is still outstanding",
+]
+BROAD_BUYING_PROMPT_PATTERNS = [
+    "help choosing",
+    "need help choosing",
+    "what's the best",
+    "what is the best",
+    "what app should i use",
+    "what software are you all using",
+    "what system are you using",
+    "which tool do you use",
+    "which software do you use",
+]
+BROAD_SCOPE_JOB_PATTERNS = [
+    "automate expense tracking",
+    "expense tracking and reimbursement",
+    "streamline vendor payments",
+    "streamline and automate the entire vendor payment process",
+    "see a unified real-time cash position",
+    "keep all payments in one place",
+]
+BROAD_SCOPE_FAILURE_PATTERNS = [
+    "manual chasing receipts",
+    "manual receipt collection",
+    "manual reimbursements",
+    "vendor payments are messy",
+    "vendor payment process is a mess",
+    "payment channels are scattered",
+]
+SPECIFIC_WEDGE_SLICE_TERMS = [
+    "duplicate",
+    "duplicates",
+    "mismatch",
+    "does not match",
+    "still showing",
+    "declined",
+    "flagged",
+    "reconciliation drift",
+    "import failure",
+    "csv import",
+    "csv export",
+    "bank feed",
+    "refund",
+    "fees not separated",
+    "wrong dates",
+]
 PRODUCT_COMPLAINT_PATTERNS = [
     "should focus on improving",
     "pricing is terrible",
@@ -607,6 +672,24 @@ STACKOVERFLOW_IMPLEMENTATION_ONLY_PATTERNS = [
     "frontend state",
 ]
 
+SPECIFIC_FINANCE_FAILURE_TERMS = [
+    "reconcile",
+    "reconciliation",
+    "mismatch",
+    "does not match",
+    "don't reconcile",
+    "duplicate",
+    "duplicates",
+    "csv export",
+    "csv import",
+    "import failure",
+    "wrong dates",
+    "fees not separated",
+    "shared ledger",
+    "refunded payment",
+    "split payment",
+]
+
 
 def _is_generic_phrase(text: str) -> bool:
     """Check if text is a generic cluster label rather than specific extraction."""
@@ -674,6 +757,60 @@ def _has_transferable_workflow_shape(text: str) -> bool:
     return _has_phrase(lowered, TRANSFERABLE_WORKFLOW_TERMS) and _has_phrase(lowered, TRANSFERABLE_FAILURE_TERMS)
 
 
+def _has_specific_finance_failure_shape(text: str) -> bool:
+    lowered = _normalized(text)
+    return _has_phrase(lowered, SPECIFIC_FINANCE_FAILURE_TERMS) or _is_failure_event_atom(lowered)
+
+
+def _is_broad_buying_prompt_without_wedge_slice(
+    text: str,
+    atom_payload: dict[str, Any] | None,
+    workflow_context: str,
+) -> bool:
+    lowered = _normalized(text)
+    if not (
+        _has_phrase(lowered, BROAD_BUYING_PROMPT_PATTERNS)
+        or _has_phrase(lowered, GENERIC_REQUEST_PATTERNS)
+        or _has_phrase(lowered, ROI_SHOPPING_PATTERNS)
+        or _has_phrase(lowered, FINANCE_TOOL_SHOPPING_PATTERNS)
+    ):
+        return False
+
+    context = _normalized(
+        " ".join(
+            [
+                workflow_context,
+                str((atom_payload or {}).get("job_to_be_done", "") or ""),
+                str((atom_payload or {}).get("trigger_event", "") or ""),
+                str((atom_payload or {}).get("failure_mode", "") or ""),
+                str((atom_payload or {}).get("current_workaround", "") or ""),
+            ]
+        )
+    )
+    if _is_failure_event_atom(context):
+        return False
+    if _has_specific_finance_failure_shape(context):
+        return False
+    if _has_phrase(
+        context,
+        [
+            "form response",
+            "payment link",
+            "booking workflow",
+            "csv import",
+            "duplicate invoices",
+            "wrong dates",
+            "fees not separated",
+            "deleted orders",
+            "still showing",
+            "supplier file",
+            "inventory import",
+        ],
+    ):
+        return False
+    return True
+
+
 def _has_transferable_review_shape(text: str) -> bool:
     lowered = _normalized(text)
     workflow_hit = _has_phrase(lowered, REVIEW_TRANSFERABLE_WORKFLOW_TERMS)
@@ -693,6 +830,38 @@ def _comment_text_value(comment: Any) -> str:
     if isinstance(comment, dict):
         return str(comment.get("text", "") or "")
     return str(comment or "")
+
+
+def _is_broad_buying_prompt_without_wedge_slice(text: str, atom_payload: dict[str, Any], workflow_context: str) -> bool:
+    lowered_text = _normalized(text)
+    lowered_workflow = _normalized(
+        " ".join(
+            [
+                workflow_context,
+                atom_payload.get("job_to_be_done", ""),
+                atom_payload.get("failure_mode", ""),
+                atom_payload.get("pain_statement", ""),
+            ]
+        )
+    )
+    if not (
+        _has_phrase(lowered_text, GENERIC_REQUEST_PATTERNS)
+        or _has_phrase(lowered_text, ROI_SHOPPING_PATTERNS)
+        or _has_phrase(lowered_text, FINANCE_TOOL_SHOPPING_PATTERNS)
+        or _has_phrase(lowered_text, FINANCE_BROAD_VISIBILITY_PATTERNS)
+        or _has_phrase(lowered_text, FINANCE_ACQUISITION_CHATTER_PATTERNS)
+    ):
+        return False
+
+    generic_scope = (
+        _is_generic_phrase(atom_payload.get("job_to_be_done", ""))
+        or _has_phrase(lowered_workflow, BROAD_SCOPE_JOB_PATTERNS)
+        or _has_phrase(lowered_workflow, BROAD_SCOPE_FAILURE_PATTERNS)
+    )
+    if not generic_scope:
+        return False
+
+    return not _has_phrase(lowered_workflow, SPECIFIC_WEDGE_SLICE_TERMS)
 
 
 def _validate_atom_quality(atom: dict[str, Any], source_text: str) -> dict[str, Any]:
@@ -2032,6 +2201,16 @@ def classify_source_signal(
 ) -> dict[str, Any]:
     evidence = signal_payload.get("metadata_json", {}).get("evidence", {})
     record_origin = str(signal_payload.get("metadata_json", {}).get("record_origin", "") or evidence.get("record_origin", "")).strip()
+    origin_text = _normalized(
+        " ".join(
+            [
+                finding_data.get("source", ""),
+                finding_data.get("source_url", ""),
+                signal_payload.get("title", ""),
+                signal_payload.get("body_excerpt", ""),
+            ]
+        )
+    )
     text = _normalized(
         " ".join(
             [
@@ -2073,6 +2252,20 @@ def classify_source_signal(
         return {"source_class": "meta_guidance", "reasons": reasons}
     if _has_phrase(text, PROMOTIONAL_PATTERNS):
         reasons.append("promo_or_generic_praise")
+        return {"source_class": "low_signal_summary", "reasons": reasons}
+    if _has_phrase(origin_text, FINANCE_ACQUISITION_CHATTER_PATTERNS) and not _has_specific_finance_failure_shape(origin_text):
+        reasons.append("finance_acquisition_or_vendor_chatter")
+        return {"source_class": "competition_signal", "reasons": reasons}
+    if _has_phrase(origin_text, FINANCE_TOOL_SHOPPING_PATTERNS) and not _has_specific_finance_failure_shape(origin_text):
+        reasons.append("finance_tool_shopping_without_specific_failure")
+        if _is_broad_buying_prompt_without_wedge_slice(origin_text, atom_payload, origin_text):
+            reasons.append("broad_buying_prompt_without_wedge_slice")
+        return {"source_class": "low_signal_summary", "reasons": reasons}
+    if _has_phrase(origin_text, FINANCE_BROAD_VISIBILITY_PATTERNS) and not _has_specific_finance_failure_shape(origin_text):
+        reasons.append("broad_finance_visibility_without_specific_failure")
+        return {"source_class": "low_signal_summary", "reasons": reasons}
+    if _is_broad_buying_prompt_without_wedge_slice(origin_text, atom_payload, origin_text):
+        reasons.append("broad_buying_prompt_without_wedge_slice")
         return {"source_class": "low_signal_summary", "reasons": reasons}
 
     review_profile: dict[str, Any] = {}
@@ -2260,6 +2453,18 @@ def qualify_problem_signal(
     if _has_phrase(text, ROI_SHOPPING_PATTERNS):
         negative_signals.append("roi_or_vendor_shopping_prompt")
         score -= 5
+    if _has_phrase(text, FINANCE_ACQUISITION_CHATTER_PATTERNS) and not _has_specific_finance_failure_shape(text):
+        negative_signals.append("finance_acquisition_or_vendor_chatter")
+        score -= 7
+    if _has_phrase(text, FINANCE_TOOL_SHOPPING_PATTERNS) and not _has_specific_finance_failure_shape(text):
+        negative_signals.append("finance_tool_shopping_without_specific_failure")
+        score -= 6
+    if _has_phrase(text, FINANCE_BROAD_VISIBILITY_PATTERNS) and not _has_specific_finance_failure_shape(text):
+        negative_signals.append("broad_finance_visibility_without_specific_failure")
+        score -= 6
+    if _is_broad_buying_prompt_without_wedge_slice(text, atom_payload, workflow_context):
+        negative_signals.append("broad_buying_prompt_without_wedge_slice")
+        score -= 7
     if _has_phrase(text, GENERIC_REQUEST_PATTERNS):
         negative_signals.append("generic_request_or_vendor_shopping")
         score -= 3
@@ -2318,6 +2523,10 @@ def qualify_problem_signal(
         and "tutorial_or_instructional_post" not in negative_signals
         and "vague_negative_review" not in negative_signals
         and "roi_or_vendor_shopping_prompt" not in negative_signals
+        and "finance_acquisition_or_vendor_chatter" not in negative_signals
+        and "finance_tool_shopping_without_specific_failure" not in negative_signals
+        and "broad_finance_visibility_without_specific_failure" not in negative_signals
+        and "broad_buying_prompt_without_wedge_slice" not in negative_signals
         and "advice_seeking_without_actionable_stakes" not in negative_signals
         and "solicitation_for_problem_examples" not in negative_signals
         and "venting_without_transferable_workflow_problem" not in negative_signals
