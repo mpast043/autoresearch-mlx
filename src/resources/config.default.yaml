@@ -85,8 +85,8 @@ discovery:
     pair_concurrency: 3
     # Prime only a small, diversified relay seed set per run.
     reddit_seed_query_limit: 8
-    # For each sub×keyword pair, run these Reddit sort modes (all/recent/top/comments).
-    search_sorts: ["relevance", "new", "top", "comments"]
+    # Favor precision and throughput over breadth in discovery.
+    search_sorts: ["relevance", "new"]
     # Per sort mode result limit and hard cap per sub×keyword pair after URL dedupe.
     per_sort_limit: 2
     max_docs_per_pair: 6
@@ -170,7 +170,7 @@ builder:
 # LLM config for builder_v2 code generation
 llm:
   provider: ollama
-  model: llama3.1:8b
+  model: gemma4:latest
   base_url: http://localhost:11434
   max_tokens: 12000
 

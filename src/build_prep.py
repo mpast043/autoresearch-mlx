@@ -36,6 +36,17 @@ VAGUE_PATTERNS = {
     "collaboration",
 }
 
+GENERIC_BUILD_READY_PATTERNS = {
+    "daily operation",
+    "manual execution of tasks",
+    "workflow reliability",
+    "workflow diagnostic",
+    "workflow_diagnostic_prototype",
+    "small businesses are spending excessive time",
+    "responding to reviews, following up",
+    "manual tasks like",
+}
+
 
 @dataclass
 class PlatformFit:
@@ -70,6 +81,64 @@ class PlatformFit:
         return any(fmt in formats for fmt in [
             "add-on", "add-in", "extension", "app", "plugin", "micro-saas"
         ])
+
+
+def _looks_generic_build_ready_text(value: str | None) -> bool:
+    """Detect placeholder or overly broad text in build-ready artifacts."""
+    text = (value or "").strip().lower()
+    if not text or len(text) < 18:
+        return True
+    return any(pattern in text for pattern in GENERIC_BUILD_READY_PATTERNS)
+
+
+def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, Any]:
+    """Apply deterministic sharpness checks before any build-ready promotion.
+
+    This protects the build-ready transition from broad or placeholder briefs even
+    when later LLM outputs sound polished. The checks are intentionally conservative:
+    a candidate must identify a specific product shape, a non-generic host context,
+    a concrete failure mode, and enough corroboration to justify a build-ready handoff.
+    """
+    platform_fit = PlatformFit(**(brief_payload.get("platform_fit") or {}))
+    pain = brief_payload.get("pain_workaround", {}) or {}
+    corroboration = brief_payload.get("source_family_corroboration", {}) or {}
+
+    reasons: list[str] = []
+
+    host_platform = str(platform_fit.host_platform or "").strip()
+    if not host_platform or host_platform.lower() == "unknown":
+        reasons.append("unknown_host_platform")
+
+    if platform_fit.is_vague:
+        reasons.append("vague_product_name")
+
+    job_to_be_done = str(brief_payload.get("job_to_be_done", "") or "")
+    if _looks_generic_build_ready_text(job_to_be_done):
+        reasons.append("generic_job_to_be_done")
+
+    failure_mode = str(pain.get("failure_mode", "") or "")
+    if _looks_generic_build_ready_text(failure_mode):
+        reasons.append("generic_failure_mode")
+
+    trigger_event = str(pain.get("trigger_event", "") or "")
+    if _looks_generic_build_ready_text(trigger_event):
+        reasons.append("generic_trigger_event")
+
+    source_family_diversity = int(
+        corroboration.get("source_family_diversity")
+        or corroboration.get("core_source_family_diversity")
+        or 0
+    )
+    if source_family_diversity < 2:
+        reasons.append("insufficient_source_family_diversity")
+
+    return {
+        "passes": not reasons,
+        "reasons": reasons,
+        "host_platform": host_platform or "Unknown",
+        "product_name": platform_fit.product_name or "",
+        "source_family_diversity": source_family_diversity,
+    }
 
 
 # =============================================================================
@@ -351,6 +420,12 @@ def determine_selection_state(
     evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
     value_support = float(scorecard.get("value_support", 0.0) or 0.0)
     composite_score = float(scorecard.get("composite_score", 0.0) or 0.0)
+    frequency_score = float(scorecard.get("frequency_score", 0.0) or 0.0)
+    workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
+    cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
+    buildability = float(scorecard.get("buildability", 0.0) or 0.0)
+    cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
+    generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
     wedge_active = bool(market_enrichment.get("wedge_active"))
 
     reasons: list[str] = []
@@ -414,6 +489,20 @@ def determine_selection_state(
         and evidence_quality >= 0.5
         and composite_score >= 0.4
     )
+    sharp_checkpoint_candidate = (
+        core_family_diversity >= 2
+        and recurrence_state in {"thin", "timeout", "supported", "strong"}
+        and corroboration_score >= 0.22
+        and cross_source_match_score >= 0.16
+        and generalizability_score >= 0.58
+        and frequency_score >= 0.25
+        and value_support >= 0.46
+        and evidence_quality >= 0.42
+        and composite_score >= 0.31
+        and workaround_density >= 0.34
+        and cost_of_inaction >= 0.4
+        and buildability >= 0.52
+    )
 
     exploratory_candidate = (
         generalizability_class == "reusable_workflow_pain"
@@ -425,6 +514,9 @@ def determine_selection_state(
                 and value_support >= 0.55
                 and evidence_quality >= 0.45
                 and composite_score >= 0.34
+            )
+            or (
+                sharp_checkpoint_candidate
             )
             or (
                 core_family_diversity == 1
@@ -451,7 +543,16 @@ def determine_selection_state(
 
     if exploratory_candidate:
         exploratory_reasons = list(dict.fromkeys(reasons))
-        if core_family_diversity >= 2:
+        if sharp_checkpoint_candidate and not (
+            core_family_diversity >= 2
+            and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
+            and corroboration_score >= 0.25
+            and value_support >= 0.55
+            and evidence_quality >= 0.45
+            and composite_score >= 0.34
+        ):
+            exploratory_reasons.append("prototype_candidate_sharp_checkpoint")
+        elif core_family_diversity >= 2:
             exploratory_reasons.append("prototype_candidate_multifamily_near_miss")
         else:
             exploratory_reasons.append("prototype_candidate_single_family_exception")
@@ -503,6 +604,12 @@ def explain_selection_gate_detail(
     evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
     value_support = float(scorecard.get("value_support", 0.0) or 0.0)
     composite_score = float(scorecard.get("composite_score", 0.0) or 0.0)
+    frequency_score = float(scorecard.get("frequency_score", 0.0) or 0.0)
+    workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
+    cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
+    buildability = float(scorecard.get("buildability", 0.0) or 0.0)
+    cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
+    generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
     wedge_active = bool(market_enrichment.get("wedge_active"))
 
     exploratory_recurrence_ok = recurrence_state in {"thin", "supported", "strong"}
@@ -513,6 +620,20 @@ def explain_selection_gate_detail(
         and value_support >= 0.6
         and evidence_quality >= 0.5
         and composite_score >= 0.4
+    )
+    sharp_checkpoint_candidate = (
+        core_family_diversity >= 2
+        and recurrence_state in {"thin", "timeout", "supported", "strong"}
+        and corroboration_score >= 0.22
+        and cross_source_match_score >= 0.16
+        and generalizability_score >= 0.58
+        and frequency_score >= 0.25
+        and value_support >= 0.46
+        and evidence_quality >= 0.42
+        and composite_score >= 0.31
+        and workaround_density >= 0.34
+        and cost_of_inaction >= 0.4
+        and buildability >= 0.52
     )
 
     strict_checks: list[dict[str, Any]] = [
@@ -588,6 +709,21 @@ def explain_selection_gate_detail(
                 "value_support_floor": 0.55,
                 "evidence_quality_floor": 0.45,
                 "composite_floor": 0.34,
+            },
+        },
+        {
+            "id": "exploratory_sharp_checkpoint_branch",
+            "pass": sharp_checkpoint_candidate,
+            "detail": {
+                "cross_source_match_score": round(cross_source_match_score, 4),
+                "generalizability_score": round(generalizability_score, 4),
+                "frequency_score": round(frequency_score, 4),
+                "workaround_density": round(workaround_density, 4),
+                "cost_of_inaction": round(cost_of_inaction, 4),
+                "buildability": round(buildability, 4),
+                "value_support_floor": 0.46,
+                "evidence_quality_floor": 0.42,
+                "composite_floor": 0.31,
             },
         },
         {

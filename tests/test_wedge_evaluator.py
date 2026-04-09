@@ -121,10 +121,10 @@ class TestIsNarrowWedge(unittest.TestCase):
         assert _is_narrow_wedge("People", "Do stuff", "Things break", "microSaaS Web App") is False
 
     def test_commission_keyword_passes(self) -> None:
-        assert _is_narrow_wedge("Sales ops", "Calculate commission in spreadsheet", "Commission errors", "Spreadsheet Add-in") is True
+        assert _is_narrow_wedge("Sales ops analysts", "Calculate commission in Google Sheets", "Commission formula mismatch overpays reps", "Spreadsheet Add-in") is True
 
-    def test_bid_keyword_passes(self) -> None:
-        assert _is_narrow_wedge("Ad operators", "Adjust bids manually", "Budget overrun", "microSaaS Web App") is True
+    def test_generic_bid_workflow_rejected(self) -> None:
+        assert _is_narrow_wedge("Ad operators", "Adjust bids manually", "Budget overrun", "microSaaS Web App") is False
 
 
 class TestWedgeEvaluatorHeuristic(unittest.TestCase):

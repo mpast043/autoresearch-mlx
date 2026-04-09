@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from src.agents.base import BaseAgent
-from src.build_prep import is_allowed_selection_transition
+from src.build_prep import evaluate_build_ready_sharpness, is_allowed_selection_transition
 from src.database import BuildPrepOutput, Database
 from src.messaging import MessageQueue, MessageType
 
@@ -28,6 +28,10 @@ class _BuildPrepAgent(BaseAgent):
             raise ValueError(f"build brief {build_brief_id} not found")
         brief_payload = brief.brief
         return brief, brief_payload, build_brief_id
+
+    def _wedge_feedback_enabled(self) -> bool:
+        wedge_cfg = self.config.get("build_prep", {}).get("wedge_evaluation", {}) or {}
+        return bool(wedge_cfg.get("feedback_to_discovery_terms", False))
 
 
 class SolutionFramingAgent(_BuildPrepAgent):
@@ -234,16 +238,51 @@ class SpecGenerationAgent(_BuildPrepAgent):
             )
         )
 
-        # Wedge evaluation gate — only mark build_ready if wedge criteria pass
+        # Deterministic sharpness gate runs before LLM judgment so broad
+        # or placeholder briefs never reach build_ready just because the
+        # evaluator can invent a plausible commercialization story.
         from src.builder_output import WedgeEvaluator, WedgeEvaluation
 
         opportunity = self.db.get_opportunity(brief.opportunity_id)
         if opportunity:
+            notes = json.loads(opportunity.notes_json) if hasattr(opportunity, 'notes_json') and opportunity.notes_json else {}
+            sharpness_gate = evaluate_build_ready_sharpness(brief_payload)
+            notes["build_ready_sharpness_gate"] = sharpness_gate
+
+            if not sharpness_gate["passes"]:
+                self.db.update_opportunity_notes(brief.opportunity_id, json.dumps(notes))
+                if is_allowed_selection_transition(opportunity.selection_status, "research_more"):
+                    failure_reasons = ", ".join(sharpness_gate["reasons"])
+                    self.db.update_opportunity_selection(
+                        brief.opportunity_id,
+                        selection_status="research_more",
+                        selection_reason=f"sharpness_gate_failed:{failure_reasons}",
+                    )
+                logger.info(
+                    "Opp #%s failed build-ready sharpness gate: %s",
+                    brief.opportunity_id,
+                    ", ".join(sharpness_gate["reasons"]),
+                )
+                await self.send_message(
+                    to_agent="orchestrator",
+                    msg_type=MessageType.BUILD_PREP,
+                    payload={
+                        "build_brief_id": build_brief_id,
+                        "opportunity_id": brief.opportunity_id,
+                        "validation_id": brief.validation_id,
+                        "agent_name": self.name,
+                        "prep_stage": "spec_generation",
+                        "output_id": output_id,
+                        "next_agent": "",
+                    },
+                    priority=2,
+                )
+                return {"success": True, "output_id": output_id, "gate": "sharpness_failed"}
+
             wedge_evaluator = WedgeEvaluator(self.db, self.config if hasattr(self, 'config') else {})
             wedge_eval = wedge_evaluator.evaluate_sync(brief.opportunity_id)
 
             # Store evaluation on opportunity notes
-            notes = json.loads(opportunity.notes_json) if hasattr(opportunity, 'notes_json') and opportunity.notes_json else {}
             notes["wedge_evaluation"] = {
                 "software_fit": wedge_eval.software_fit,
                 "monetization_fit": wedge_eval.monetization_fit,
@@ -282,7 +321,10 @@ class SpecGenerationAgent(_BuildPrepAgent):
                 )
 
             # Propagate wedge evaluation results back to source search terms
-            self._feedback_wedge_result(brief.opportunity_id, wedge_eval, notes)
+            # only when explicitly enabled. This feedback loop is powerful and
+            # should not reshape discovery from a single soft judgment by default.
+            if self._wedge_feedback_enabled():
+                self._feedback_wedge_result(brief.opportunity_id, wedge_eval, notes)
 
         await self.send_message(
             to_agent="orchestrator",
@@ -363,4 +405,3 @@ class SpecGenerationAgent(_BuildPrepAgent):
             f"Wedge feedback sent for opp #{opportunity_id}: "
             f"{len(queries)} queries, buildable={is_buildable}, too_broad={is_too_broad}"
         )
-

@@ -16,6 +16,7 @@ from src.reddit_relay import (
     STORE_KEY,
     RedditRelayStore,
     build_relay_app,
+    cached_comments,
     cached_search,
     cached_thread,
 )
@@ -44,6 +45,33 @@ def test_relay_store_search_round_trip():
             os.remove(path)
 
 
+def test_relay_store_recreates_missing_search_table_on_access():
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        store = RedditRelayStore(path)
+        with sqlite3.connect(path) as conn:
+            conn.execute("DROP TABLE reddit_search_cache")
+
+        assert store.has_search(subreddit="operations", query="manual cleanup", sort="relevance", cursor="") is False
+
+        store.put_search(
+            subreddit="operations",
+            query="manual cleanup",
+            sort="relevance",
+            cursor="",
+            items=[{"id": "abc", "kind": "post", "source_type": "reddit", "post_id": "abc"}],
+            next_cursor="t3_next",
+        )
+
+        result = store.get_search(subreddit="operations", query="manual cleanup", sort="relevance", cursor="", limit=10)
+        assert result is not None
+        assert result["next_cursor"] == "t3_next"
+        assert result["items"][0]["id"] == "abc"
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def test_relay_store_thread_and_comments_round_trip():
     path = tempfile.mktemp(suffix=".db")
     try:
@@ -62,6 +90,29 @@ def test_relay_store_thread_and_comments_round_trip():
         assert comment_result is not None
         assert comment_result["items"][0]["id"] == "c1"
         assert store.has_thread(url=url)
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_relay_store_thread_matches_relative_and_absolute_urls():
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        store = RedditRelayStore(path)
+        absolute_url = "https://www.reddit.com/r/ops/comments/abc123/thread/"
+        relative_url = "/r/ops/comments/abc123/thread/"
+        post = {"id": "abc123", "kind": "post", "source_type": "reddit", "post_id": "abc123"}
+        comments = [{"id": "c1", "kind": "comment", "source_type": "reddit", "post_id": "abc123"}]
+
+        store.put_thread(url=absolute_url, post=post, comments=comments)
+        store.put_comments(url=absolute_url, items=comments)
+
+        thread = store.get_thread(url=relative_url)
+        comment_result = store.get_comments(url=relative_url, limit=10)
+        assert thread is not None
+        assert thread["post"]["id"] == "abc123"
+        assert comment_result is not None
+        assert comment_result["items"][0]["id"] == "c1"
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -165,6 +216,98 @@ def test_cached_search_handles_invalid_json_payload():
         body = response.text
         assert '"ok": true' in body.lower()
         assert '"items": []' in body
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_cached_search_returns_cache_miss_when_live_fetch_fails():
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        app = build_relay_app({"reddit_relay": {"cache_db_path": path, "allow_no_auth": True}})
+
+        async def fake_fetch_live_search(**kwargs):
+            return None
+
+        app[STORE_KEY].fetch_live_search = fake_fetch_live_search
+        request = make_mocked_request("POST", "/api/reddit/search-posts", app=app, headers={"Content-Type": "application/json"})
+
+        async def fake_json():
+            return {"subreddit": "ops", "query": "manual cleanup", "limit": 5}
+
+        request.json = fake_json
+        response = sys.modules["asyncio"].run(cached_search(request))
+        assert response.status == 404
+        body = response.text
+        assert '"error_code": "no_cached_result"' in body
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_cached_thread_fetches_live_on_cache_miss():
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        app = build_relay_app({"reddit_relay": {"cache_db_path": path, "allow_no_auth": True}})
+
+        async def fake_fetch_live_thread(**kwargs):
+            app[STORE_KEY].put_thread(
+                url=kwargs["url"],
+                post={"id": "abc123", "kind": "post", "source_type": "reddit", "post_id": "abc123"},
+                comments=[{"id": "c1", "kind": "comment", "source_type": "reddit", "post_id": "abc123"}],
+            )
+            app[STORE_KEY].put_comments(
+                url=kwargs["url"],
+                items=[{"id": "c1", "kind": "comment", "source_type": "reddit", "post_id": "abc123"}],
+            )
+            return app[STORE_KEY].get_thread(url=kwargs["url"])
+
+        app[STORE_KEY].fetch_live_thread = fake_fetch_live_thread
+        request = make_mocked_request("POST", "/api/reddit/post-thread", app=app, headers={"Content-Type": "application/json"})
+
+        async def fake_json():
+            return {"url": "/r/ops/comments/abc123/thread/", "comment_limit": 5, "depth": 2}
+
+        request.json = fake_json
+        response = sys.modules["asyncio"].run(cached_thread(request))
+        assert response.status == 200
+        body = response.text
+        assert '"ok": true' in body.lower()
+        assert '"post_id": "abc123"' in body
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_cached_comments_fetches_live_thread_on_cache_miss():
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        app = build_relay_app({"reddit_relay": {"cache_db_path": path, "allow_no_auth": True}})
+
+        async def fake_fetch_live_thread(**kwargs):
+            app[STORE_KEY].put_thread(
+                url=kwargs["url"],
+                post={"id": "abc123", "kind": "post", "source_type": "reddit", "post_id": "abc123"},
+                comments=[{"id": "c1", "kind": "comment", "source_type": "reddit", "post_id": "abc123"}],
+            )
+            app[STORE_KEY].put_comments(
+                url=kwargs["url"],
+                items=[{"id": "c1", "kind": "comment", "source_type": "reddit", "post_id": "abc123"}],
+            )
+            return app[STORE_KEY].get_thread(url=kwargs["url"])
+
+        app[STORE_KEY].fetch_live_thread = fake_fetch_live_thread
+        request = make_mocked_request("POST", "/api/reddit/comments", app=app, headers={"Content-Type": "application/json"})
+
+        async def fake_json():
+            return {"url": "https://reddit.com/r/ops/comments/abc123/thread/", "limit": 5, "depth": 2}
+
+        request.json = fake_json
+        response = sys.modules["asyncio"].run(cached_comments(request))
+        assert response.status == 200
+        body = response.text
+        assert '"ok": true' in body.lower()
+        assert '"id": "c1"' in body
     finally:
         if os.path.exists(path):
             os.remove(path)

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from src.reddit_bridge import BridgeError
+from src.llm_discovery_expander import LLMClient
 from src.research_tools import ResearchToolkit, SearchDocument
 
 
@@ -262,6 +263,30 @@ def test_generic_manual_prompt_uses_narrower_recurrence_budget():
     assert sites == [(None, "web")]
 
 
+def test_specific_manual_candidate_gets_expanded_recurrence_budget():
+    toolkit = ResearchToolkit()
+    atom = type(
+        "Atom",
+        (),
+        {
+            "job_to_be_done": "keep inventory counts aligned across goods receipt and goods issue workflows",
+            "failure_mode": "goods receipt quantities do not match inventory after manual reconciliation",
+            "trigger_event": "after receiving stock into inventory",
+            "current_workaround": "manual spreadsheet reconciliation before import",
+            "cost_consequence_clues": "inventory errors and delayed shipments",
+            "segment": "small business operations",
+            "user_role": "inventory manager",
+        },
+    )()
+
+    profile = toolkit._recurrence_budget_profile(atom)
+
+    assert profile["specificity_score"] >= 0.85
+    assert profile["query_limit"] == 5
+    assert profile["target_sources"] == 2
+    assert profile["site_limit"] == 4
+
+
 def test_nontechnical_spreadsheet_atom_deprioritizes_github_site_plan():
     toolkit = ResearchToolkit()
     atom = SimpleNamespace(
@@ -441,6 +466,52 @@ def test_choose_corroboration_action_stops_partial_only_web_retry_for_promising_
 
     assert action.action == "STOP_FOR_BUDGET"
     assert action.reason == "partial_only_confirmation_family_low_yield"
+
+
+def test_choose_corroboration_action_retries_high_specificity_web_confirmation_gap():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="inventory operations",
+        user_role="inventory manager",
+        job_to_be_done="keep goods receipt and issue counts aligned",
+        failure_mode="received quantities drift from inventory after import",
+        trigger_event="after receiving stock",
+        current_workaround="manual spreadsheet reconciliation",
+        cost_consequence_clues="inventory errors and delayed shipments",
+        current_tools="inventory csv import spreadsheet",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=['"goods receipt" inventory mismatch'],
+        finding_kind="problem_signal",
+    )
+
+    action = toolkit._choose_corroboration_action(
+        atom=atom,
+        corroboration_plan=plan,
+        source_yield={"web": {"docs_retrieved": 0, "docs_strong_match": 0, "docs_partial_match": 0}},
+        matched_results_by_source={"reddit": 1, "web": 0},
+        partial_results_by_source={"reddit": 1, "web": 0},
+        family_confirmation_count=1,
+        source_attempts_by_family={"web": 1, "reddit": 1},
+        budget_profile={"target_sources": 2, "specificity_score": 0.92},
+        available_families=["web"],
+        current_family="web",
+        promotion_gap_class="corroboration_gap",
+    )
+
+    assert action.action == "RETRY_WITH_RESHAPED_QUERY"
+    assert action.reason == "high_specificity_cross_source_retry"
+
+
+def test_research_toolkit_defaults_ddgs_backend_to_duckduckgo():
+    toolkit = ResearchToolkit({"validation": {"search": {}}})
+    assert toolkit.ddgs_backend == "duckduckgo"
+
+
+def test_llm_client_defaults_to_gemma4_latest():
+    client = LLMClient({})
+    assert client.model == "gemma4:latest"
 
 
 def test_choose_corroboration_action_stops_for_budget_when_attempts_exhausted():
@@ -1234,6 +1305,32 @@ def test_web_problem_filter_keeps_independent_operator_thread():
     ) is False
 
 
+def test_validation_recurrence_filter_rejects_generic_comparison_listicles():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_relevant_search_result(
+        query="csv import duplicate invoices",
+        title="Best CSV Import Software Alternatives for 2026",
+        snippet="Compare the best tools and pricing across top vendors.",
+        domain="www.capterra.com",
+        url="https://www.capterra.com/best-csv-import-software/",
+        intent="validation_recurrence",
+    ) is False
+
+
+def test_validation_recurrence_filter_keeps_practitioner_thread():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_relevant_search_result(
+        query="csv import duplicate invoices",
+        title="Duplicate invoices after CSV import during month-end close",
+        snippet="Accounting ops thread describing manual spreadsheet cleanup after import.",
+        domain="ops-operators.example.com",
+        url="https://ops-operators.example.com/t/csv-import-duplicate-invoices/42",
+        intent="validation_recurrence",
+    ) is True
+
+
 def test_build_discovery_query_plan_prefers_queries_that_produced_prototype_candidates():
     toolkit = ResearchToolkit()
     toolkit.set_discovery_feedback(
@@ -1438,6 +1535,133 @@ def test_problem_candidate_rejects_resume_and_news_recap_threads():
     ) is False
 
 
+def test_should_hydrate_reddit_problem_doc_rejects_obvious_news_recap():
+    toolkit = ResearchToolkit()
+
+    should_hydrate = toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="This week's top ecommerce news stories March 30th",
+            url="https://reddit.com/r/shopify/comments/example",
+            snippet="Weekly ecommerce industry news recap and commentary",
+            source="reddit/shopify",
+        )
+    )
+
+    assert should_hydrate is False
+
+
+def test_should_hydrate_reddit_problem_doc_rejects_broad_advice_and_comparison_threads():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="What are you using for price / competitor monitoring",
+            url="https://reddit.com/r/shopify/comments/example-1",
+            snippet="Looking for tools people recommend",
+            source="reddit/shopify",
+        )
+    ) is False
+
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="What's the best inventory management app for Shopify?",
+            url="https://reddit.com/r/shopify/comments/example-2",
+            snippet="Need recommendations for scaling inventory ops",
+            source="reddit/shopify",
+        )
+    ) is False
+
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="What's the one task in your business that eats your time every single day?",
+            url="https://reddit.com/r/smallbusiness/comments/example-4",
+            snippet="Curious what people would automate first",
+            source="reddit/smallbusiness",
+        )
+    ) is False
+
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="How do you handle supplier product data and inventory feeds at scale?",
+            url="https://reddit.com/r/ecommerce/comments/example-5",
+            snippet="Looking for workflow advice from other operators",
+            source="reddit/ecommerce",
+        )
+    ) is False
+
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="How are you guys managing outdated automation software that still makes us do 30% manually?",
+            url="https://reddit.com/r/smallbusiness/comments/example-6",
+            snippet="Trying to understand what the most outdated process still is",
+            source="reddit/smallbusiness",
+        )
+    ) is False
+
+
+def test_should_hydrate_reddit_problem_doc_keeps_specific_failure_question():
+    toolkit = ResearchToolkit()
+
+    should_hydrate = toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="Deleted orders still showing in analytics - normal delay?",
+            url="https://reddit.com/r/shopify/comments/example-3",
+            snippet="Orders were deleted but analytics still shows them and reporting is wrong",
+            source="reddit/shopify",
+        )
+    )
+
+    assert should_hydrate is True
+
+
+def test_stackoverflow_recurrence_requires_transferable_operational_shape():
+    toolkit = ResearchToolkit()
+
+    transferable_atom = SimpleNamespace(
+        segment="finance operators",
+        user_role="ops admin",
+        job_to_be_done="import payout csvs without duplicate cleanup",
+        failure_mode="csv import creates duplicate invoices",
+        current_workaround="spreadsheet cleanup",
+        current_tools="csv import quickbooks webhook",
+    )
+    local_impl_atom = SimpleNamespace(
+        segment="engineering team",
+        user_role="frontend engineer",
+        job_to_be_done="fix unit tests after refactor",
+        failure_mode="react component mock fails",
+        current_workaround="manual mock setup",
+        current_tools="react jest typescript",
+    )
+
+    assert toolkit._atom_supports_stackoverflow_recurrence(transferable_atom) is True
+    assert toolkit._atom_supports_stackoverflow_recurrence(local_impl_atom) is False
+
+
+def test_youtube_comment_filter_requires_repeated_concrete_operator_pain():
+    toolkit = ResearchToolkit()
+
+    concrete_comments = [
+        {"text": "CSV import keeps duplicating invoices and we do spreadsheet cleanup every week."},
+        {"text": "Order export is out of sync, so ops manually fixes the shipment labels."},
+    ]
+    vague_comments = [
+        {"text": "Great list"},
+        {"text": "This app is awesome"},
+    ]
+
+    assert toolkit._should_keep_youtube_comment_candidate(
+        title="Operator workflow breakdowns in ecommerce",
+        snippet="Comments from merchants about inventory sync issues",
+        comments=concrete_comments,
+    ) is True
+    assert toolkit._should_keep_youtube_comment_candidate(
+        title="Best Shopify Apps for 2026",
+        snippet="My top recommendations",
+        comments=vague_comments,
+    ) is False
+
+
 def test_reddit_query_matches_subreddit_filters_obvious_mismatches():
     toolkit = ResearchToolkit()
 
@@ -1542,6 +1766,45 @@ def test_discover_reddit_problem_threads_uses_bounded_concurrency():
 
     assert len(findings) == 4
     assert elapsed < 0.28
+
+
+def test_discover_reddit_problem_threads_skips_thread_fetch_for_prefiltered_docs():
+    toolkit = ResearchToolkit(
+        {
+            "discovery": {
+                "reddit": {
+                    "search_sorts": ["relevance"],
+                    "per_sort_limit": 1,
+                    "max_docs_per_pair": 1,
+                }
+            }
+        }
+    )
+
+    async def fake_reddit_search(subreddit, query, limit=2, sort="relevance"):
+        return [
+            SearchDocument(
+                title="This week's top ecommerce news stories March 30th",
+                url="https://reddit.com/r/shopify/comments/example",
+                snippet="Weekly ecommerce industry news recap and commentary",
+                source=f"reddit/{subreddit}",
+            )
+        ]
+
+    async def should_not_fetch_thread_context(url):
+        raise AssertionError("thread context should not be fetched for prefiltered recap threads")
+
+    toolkit.reddit_search = fake_reddit_search
+    toolkit.reddit_thread_context = should_not_fetch_thread_context
+
+    findings = asyncio.run(
+        toolkit._discover_reddit_problem_threads(
+            subreddits=["shopify"],
+            queries=["csv import creates duplicates"],
+        )
+    )
+
+    assert findings == []
 
 
 def test_discover_reddit_problem_threads_queries_multiple_sort_modes():
@@ -1701,7 +1964,7 @@ def test_warm_reddit_validation_queries_seeds_missing_pairs_in_bridge_only(monke
 
         async def seed(self, *, subreddits=None, queries=None):
             self.calls.append(("seed", tuple(subreddits or []), tuple(queries or [])))
-            return SimpleNamespace(cached_searches=4)
+            return SimpleNamespace(cached_searches=4, uncovered_pairs=0)
 
     monkeypatch.setattr("reddit_seed.RedditSeeder", FakeSeeder)
 

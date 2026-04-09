@@ -292,10 +292,14 @@ def test_cli_run_once_passes_skip_backlog_flag(monkeypatch):
         def __init__(self, config_path=None):
             self.config = {"discovery": {"web": {"keywords": []}, "reddit": {"problem_keywords": [], "theme_keywords": {}}}}
             self.discovery_bypass_cache = False
+            self.shutdown_calls = 0
 
         async def run_once(self, *, skip_backlog=False):
             captured["skip_backlog"] = skip_backlog
             return {"ok": True}
+
+        async def shutdown(self):
+            self.shutdown_calls += 1
 
     monkeypatch.setattr(cli, "AutoResearcher", DummyRunOnceApp)
     monkeypatch.setattr(sys, "argv", ["cli.py", "run-once", "--skip-backlog"])
@@ -303,6 +307,33 @@ def test_cli_run_once_passes_skip_backlog_flag(monkeypatch):
     asyncio.run(cli.main())
 
     assert captured["skip_backlog"] is True
+
+
+def test_cli_run_once_shuts_down_app_when_run_fails(monkeypatch):
+    captured = {}
+
+    class DummyRunOnceApp:
+        last_instance = None
+
+        def __init__(self, config_path=None):
+            self.config = {"discovery": {"web": {"keywords": []}, "reddit": {"problem_keywords": [], "theme_keywords": {}}}}
+            self.discovery_bypass_cache = False
+            self.shutdown_calls = 0
+            DummyRunOnceApp.last_instance = self
+
+        async def run_once(self, *, skip_backlog=False):
+            raise RuntimeError("boom")
+
+        async def shutdown(self):
+            self.shutdown_calls += 1
+            captured["shutdown_calls"] = self.shutdown_calls
+
+    monkeypatch.setattr(cli, "AutoResearcher", DummyRunOnceApp)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(cli.cmd_run_once(SimpleNamespace(pattern=None, fresh=False, skip_backlog=False, verbose=False, config="config.yaml"), None))
+
+    assert captured["shutdown_calls"] == 1
 
 
 def test_render_watch_snapshot_shows_runtime_and_live_counts():

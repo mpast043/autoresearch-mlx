@@ -206,7 +206,6 @@ class RedditTransport:
             seeder = RedditSeeder(self.config)
             before = seeder.coverage_report(subreddits=normalized_subreddits, queries=normalized_queries)
             summary = await seeder.seed(subreddits=normalized_subreddits, queries=normalized_queries)
-            after = seeder.coverage_report(subreddits=normalized_subreddits, queries=normalized_queries)
         except Exception as exc:
             self._logger.warning("reddit validation query warm failed (%s)", exc)
             return {
@@ -222,20 +221,20 @@ class RedditTransport:
         self.metrics["reddit_validation_seeded_pairs"] += len(pairs)
         self.metrics["reddit_validation_seed_searches"] += int(summary.cached_searches)
         self.metrics["reddit_validation_seed_uncovered_before"] += int(before.uncovered_pairs)
-        self.metrics["reddit_validation_seed_uncovered_after"] += int(after.uncovered_pairs)
+        self.metrics["reddit_validation_seed_uncovered_after"] += int(summary.uncovered_pairs)
         self._logger.info(
             "reddit validation queries warmed pairs=%s searches=%s uncovered_before=%s uncovered_after=%s",
             len(pairs),
             summary.cached_searches,
             before.uncovered_pairs,
-            after.uncovered_pairs,
+            summary.uncovered_pairs,
         )
         return {
             "seed_runs": 1,
             "seeded_pairs": len(pairs),
             "seeded_searches": int(summary.cached_searches),
             "uncovered_before": int(before.uncovered_pairs),
-            "uncovered_after": int(after.uncovered_pairs),
+            "uncovered_after": int(summary.uncovered_pairs),
         }
 
     async def search(

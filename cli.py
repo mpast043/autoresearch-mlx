@@ -1039,33 +1039,33 @@ async def cmd_run_once(args: argparse.Namespace, _app: AutoResearcher) -> None:
     original_web: list[str] | None = None
     original_reddit: list[str] | None = None
 
-    if args.pattern:
-        from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
-
-        if args.pattern not in PATTERN_TO_DISCOVERY_QUERIES:
-            print(f"Unknown pattern: {args.pattern}")
-            print(f"Available patterns: {list(PATTERN_TO_DISCOVERY_QUERIES.keys())}")
-            raise SystemExit(1)
-
-        queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
-        print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
-        print(f"Queries: {queries[:3]}...")
-
-        original_web = list(app.config.get("discovery", {}).get("web", {}).get("keywords", []))
-        original_reddit = list(app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", []))
-
-        if "web" in app.config.get("discovery", {}):
-            app.config["discovery"]["web"]["keywords"] = queries
-        if "reddit" in app.config.get("discovery", {}):
-            app.config["discovery"]["reddit"]["problem_keywords"] = queries
-
-        print(f"Running focused discovery with {len(queries)} queries...\n")
-
-    if args.fresh:
-        print("=== FRESH MODE: Bypassing signal cache ===")
-        app.discovery_bypass_cache = True
-
     try:
+        if args.pattern:
+            from src.opportunity_engine import PATTERN_TO_DISCOVERY_QUERIES
+
+            if args.pattern not in PATTERN_TO_DISCOVERY_QUERIES:
+                print(f"Unknown pattern: {args.pattern}")
+                print(f"Available patterns: {list(PATTERN_TO_DISCOVERY_QUERIES.keys())}")
+                raise SystemExit(1)
+
+            queries = PATTERN_TO_DISCOVERY_QUERIES[args.pattern]
+            print(f"=== FOCUSED DISCOVERY: {args.pattern} ===")
+            print(f"Queries: {queries[:3]}...")
+
+            original_web = list(app.config.get("discovery", {}).get("web", {}).get("keywords", []))
+            original_reddit = list(app.config.get("discovery", {}).get("reddit", {}).get("problem_keywords", []))
+
+            if "web" in app.config.get("discovery", {}):
+                app.config["discovery"]["web"]["keywords"] = queries
+            if "reddit" in app.config.get("discovery", {}):
+                app.config["discovery"]["reddit"]["problem_keywords"] = queries
+
+            print(f"Running focused discovery with {len(queries)} queries...\n")
+
+        if args.fresh:
+            print("=== FRESH MODE: Bypassing signal cache ===")
+            app.discovery_bypass_cache = True
+
         summary = await app.run_once(skip_backlog=bool(args.skip_backlog))
         if args.verbose:
             print_json(build_verbose_report(app, summary))
@@ -1077,6 +1077,9 @@ async def cmd_run_once(args: argparse.Namespace, _app: AutoResearcher) -> None:
                 app.config["discovery"]["web"]["keywords"] = original_web
             if original_reddit is not None and "reddit" in app.config.get("discovery", {}):
                 app.config["discovery"]["reddit"]["problem_keywords"] = original_reddit
+        close_app = getattr(app, "shutdown", None)
+        if callable(close_app):
+            await close_app()
 
     if args.pattern:
         print(f"\n=== Focused discovery complete ===")

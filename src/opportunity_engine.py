@@ -459,6 +459,153 @@ INTERNAL_IDENTIFIER_PATTERNS = [
     "ticket only",
     "template id",
 ]
+GITHUB_INTERNAL_MAINTENANCE_PATTERNS = [
+    "unit test",
+    "unit tests",
+    "missing coverage",
+    "coverage gap",
+    "coverage report",
+    "nightly",
+    "nightly qa",
+    "regression file",
+    "regression suite",
+    "repo status",
+    "backlog",
+    "epic",
+    "parity",
+    "coding task",
+    "internal automation",
+    "test fixture",
+    "acceptance criteria",
+    "qa scan",
+    "lint rule",
+    "refactor task",
+]
+TRANSFERABLE_WORKFLOW_TERMS = [
+    "import",
+    "export",
+    "csv",
+    "spreadsheet",
+    "invoice",
+    "payment",
+    "reconciliation",
+    "bank",
+    "inventory",
+    "fulfillment",
+    "shipment",
+    "label",
+    "order",
+    "vendor",
+    "customer",
+    "backup",
+    "restore",
+    "recovery",
+    "sync",
+    "migration",
+    "audit",
+    "compliance",
+    "handoff",
+    "document",
+    "contract",
+]
+TRANSFERABLE_FAILURE_TERMS = [
+    "duplicate",
+    "duplicating",
+    "duplicates",
+    "mismatch",
+    "out of sync",
+    "missing",
+    "broken",
+    "fails",
+    "failed",
+    "error",
+    "wrong",
+    "corrupt",
+    "not matching",
+    "still showing",
+    "deleted",
+    "late",
+    "delay",
+    "delayed",
+    "unreachable",
+    "fallback",
+]
+REVIEW_VENDOR_ONLY_PATTERNS = [
+    "support ignored",
+    "no support",
+    "terrible support",
+    "support deleted",
+    "waste of money",
+    "too expensive",
+    "pricing",
+    "price hike",
+    "plugin is bad",
+    "app is bad",
+    "dated features",
+    "slow development",
+    "doesn't work how it should",
+    "doesnt work how it should",
+]
+REVIEW_TRANSFERABLE_WORKFLOW_TERMS = [
+    "backup",
+    "restore",
+    "recovery",
+    "sync",
+    "migration",
+    "import",
+    "export",
+    "csv",
+    "reconciliation",
+    "inventory",
+    "shipping",
+    "shipment",
+    "label",
+    "landed cost",
+    "state mismatch",
+    "fulfillment",
+    "data handoff",
+    "manual workaround",
+]
+REVIEW_TRANSFERABLE_CONSEQUENCE_TERMS = [
+    "manual workaround",
+    "manual work",
+    "fallback",
+    "out of sync",
+    "duplicate",
+    "wrong",
+    "missing",
+    "revenue",
+    "refund",
+    "lost sale",
+    "downtime",
+    "hours",
+    "error",
+    "broken workflow",
+]
+YOUTUBE_LOW_SIGNAL_PATTERNS = [
+    "best shopify apps",
+    "shopify app recommendations",
+    "shopify app vs",
+    "top 10",
+    "top tools",
+    "must-have apps",
+    "must have apps",
+    "review roundup",
+    "app roundup",
+    "alternatives",
+]
+STACKOVERFLOW_IMPLEMENTATION_ONLY_PATTERNS = [
+    "unit test",
+    "mock",
+    "fixture",
+    "refactor",
+    "lint",
+    "types",
+    "typescript",
+    "react component",
+    "css",
+    "frontend state",
+]
 
 
 def _is_generic_phrase(text: str) -> bool:
@@ -520,6 +667,32 @@ def _has_meaningful_consequence(text: str) -> bool:
     ]
 
     return any(term in lowered for term in consequence_terms)
+
+
+def _has_transferable_workflow_shape(text: str) -> bool:
+    lowered = _normalized(text)
+    return _has_phrase(lowered, TRANSFERABLE_WORKFLOW_TERMS) and _has_phrase(lowered, TRANSFERABLE_FAILURE_TERMS)
+
+
+def _has_transferable_review_shape(text: str) -> bool:
+    lowered = _normalized(text)
+    workflow_hit = _has_phrase(lowered, REVIEW_TRANSFERABLE_WORKFLOW_TERMS)
+    consequence_hit = _has_phrase(lowered, REVIEW_TRANSFERABLE_CONSEQUENCE_TERMS) or _has_meaningful_consequence(lowered)
+    return workflow_hit and consequence_hit
+
+
+def _comment_text_has_concrete_operational_pain(text: str) -> bool:
+    lowered = _normalized(text)
+    return _has_phrase(lowered, TRANSFERABLE_FAILURE_TERMS) and (
+        _has_phrase(lowered, TRANSFERABLE_WORKFLOW_TERMS)
+        or _has_phrase(lowered, ACTIONABLE_WORKFLOW_HINTS)
+    )
+
+
+def _comment_text_value(comment: Any) -> str:
+    if isinstance(comment, dict):
+        return str(comment.get("text", "") or "")
+    return str(comment or "")
 
 
 def _validate_atom_quality(atom: dict[str, Any], source_text: str) -> dict[str, Any]:
@@ -1082,14 +1255,18 @@ def _review_generalizability(text: str, source_name: str, source_url: str) -> di
     lowered = _normalized(f"{source_name} {source_url} {text}")
     reasons: list[str] = []
     score = 0.0
-    if any(term in lowered for term in ["restore", "recovery", "sync", "manual workaround", "manual work", "fallback", "csv", "spreadsheet"]):
-        score += 0.55
-        reasons.append("workflow_relevance")
-    if any(term in lowered for term in ["support deleted", "no support", "terrible support", "useless"]):
-        score -= 0.42
+    if _has_transferable_review_shape(lowered):
+        score += 0.7
+        reasons.extend(["workflow_relevance", "operational_consequence"])
+    elif _has_phrase(lowered, REVIEW_TRANSFERABLE_WORKFLOW_TERMS):
+        score += 0.24
+        reasons.append("workflow_hint_without_consequence")
+    if _has_phrase(lowered, REVIEW_VENDOR_ONLY_PATTERNS):
+        score -= 0.58
         reasons.append("vendor_specific_complaint")
     if any(term in lowered for term in ["plugin", "app", "extension"]) and not reasons:
-        score += 0.05
+        score -= 0.08
+        reasons.append("product_specific_surface_only")
     issue_type = "reusable_workflow_pain" if score >= 0.42 else "product_specific_issue"
     return {
         "review_issue_type": issue_type,
@@ -1102,15 +1279,20 @@ def _github_generalizability(text: str) -> dict[str, Any]:
     lowered = _normalized(text)
     reasons: list[str] = []
     score = 0.0
-    if any(term in lowered for term in ["restore", "backup", "recovery", "sync", "manual workaround", "fall back", "unreachable"]):
-        score += 0.58
-        reasons.append("workflow_failure")
-    if any(term in lowered for term in INTERNAL_IDENTIFIER_PATTERNS):
-        score -= 0.55
-        reasons.append("internal_identifier_github_issue")
+    if _has_transferable_workflow_shape(lowered):
+        score += 0.68
+        reasons.extend(["workflow_failure", "externalizable_operational_shape"])
+    elif _has_phrase(lowered, TRANSFERABLE_WORKFLOW_TERMS):
+        score += 0.18
+        reasons.append("workflow_hint_without_failure")
+    if _has_phrase(lowered, GITHUB_INTERNAL_MAINTENANCE_PATTERNS) or any(term in lowered for term in INTERNAL_IDENTIFIER_PATTERNS):
+        score -= 0.72
+        reasons.append("internal_maintenance_github_issue")
     if any(term in lowered for term in ["feature request", "wishlist", "nice to have"]) and score < 0.4:
         score -= 0.25
         reasons.append("generic_feature_request")
+    if score < 0.42 and not _has_transferable_workflow_shape(lowered):
+        reasons.append("missing_external_workflow_context")
     issue_type = "reusable_workflow_pain" if score >= 0.42 else "product_specific_issue"
     return {
         "github_issue_type": issue_type,
@@ -1898,6 +2080,7 @@ def classify_source_signal(
     source_name = str(finding_data.get("source", "") or "")
     source_type = str(signal_payload.get("source_type", "") or "")
     finding_kind = str(finding_data.get("finding_kind", "") or "")
+    evidence_comments = evidence.get("comments") or []
 
     if finding_kind == "success_signal":
         return {"source_class": "success_signal", "reasons": ["success_signal_finding_kind"]}
@@ -1912,6 +2095,17 @@ def classify_source_signal(
         github_profile = _github_generalizability(text)
         if github_profile["github_issue_type"] == "product_specific_issue":
             reasons.append("github_product_specific_issue")
+    if "youtube" in source_name.lower() or "youtube" in source_type:
+        concrete_comment_count = sum(
+            1
+            for comment in evidence_comments
+            if _comment_text_has_concrete_operational_pain(_comment_text_value(comment))
+        )
+        if _has_phrase(text, YOUTUBE_LOW_SIGNAL_PATTERNS) or concrete_comment_count == 0:
+            reasons.append("youtube_commentary_without_concrete_workflow")
+    if "stackoverflow" in source_name.lower() or "stackoverflow" in source_type:
+        if _has_phrase(text, STACKOVERFLOW_IMPLEMENTATION_ONLY_PATTERNS) or not _has_transferable_workflow_shape(text):
+            reasons.append("stackoverflow_implementation_local_only")
 
     specificity = sum(
         bool(value)
@@ -1935,6 +2129,8 @@ def classify_source_signal(
         and has_structure
         and "review_product_specific_issue" not in reasons
         and "github_product_specific_issue" not in reasons
+        and "youtube_commentary_without_concrete_workflow" not in reasons
+        and "stackoverflow_implementation_local_only" not in reasons
     ):
         return {"source_class": "pain_signal", "reasons": ["specific_structured_pain_evidence"], **review_profile, **github_profile}
 
@@ -1958,6 +2154,9 @@ def qualify_problem_signal(
     negative_signals: list[str] = []
     score = 0
     source_name = str(finding_data.get("source", "") or "")
+    source_type = str(signal_payload.get("source_type", "") or "")
+    evidence = signal_payload.get("metadata_json", {}).get("evidence", {}) or {}
+    comments = evidence.get("comments") or []
     why_now_text = _normalized(atom_payload.get("why_now_clues", ""))
     why_now_tokens = {token for token in re.split(r"[\s,;/]+", why_now_text) if token}
     has_descriptive_why_now = bool(why_now_tokens - GENERIC_WHY_NOW_FILLERS)
@@ -1984,15 +2183,26 @@ def qualify_problem_signal(
         " ".join(
             [
                 text,
+                source_name,
                 atom_payload.get("job_to_be_done", ""),
                 atom_payload.get("trigger_event", ""),
                 atom_payload.get("pain_statement", ""),
                 atom_payload.get("failure_mode", ""),
                 atom_payload.get("current_workaround", ""),
+                atom_payload.get("cost_consequence_clues", ""),
             ]
         )
     )
     actionable_workflow = _has_phrase(workflow_context, ACTIONABLE_WORKFLOW_HINTS)
+    github_source = "github" in source_name.lower() or "github" in source_type
+    review_source = "review" in source_name.lower() or "review" in source_type
+    youtube_source = "youtube" in source_name.lower() or "youtube" in source_type
+    stackoverflow_source = "stackoverflow" in source_name.lower() or "stackoverflow" in source_type
+    github_transferable = _has_transferable_workflow_shape(workflow_context)
+    review_transferable = _has_transferable_review_shape(workflow_context)
+    concrete_youtube_comment_count = sum(
+        1 for comment in comments if _comment_text_has_concrete_operational_pain(_comment_text_value(comment))
+    )
 
     if finding_kind in {"pain_point", "problem_signal"}:
         positive_signals.append("problem_finding_kind")
@@ -2072,7 +2282,7 @@ def qualify_problem_signal(
     if "?" in signal_payload.get("title", "") and not atom_payload.get("current_workaround"):
         negative_signals.append("question_without_workaround")
         score -= 1
-    if "github" in source_name.lower() and "feature request" in text:
+    if github_source and "feature request" in text:
         behavior_signals = sum(
             bool(atom_payload.get(field))
             for field in ["current_workaround", "frequency_clues", "urgency_clues", "cost_consequence_clues"]
@@ -2080,6 +2290,25 @@ def qualify_problem_signal(
         if behavior_signals < 2:
             negative_signals.append("feature_request_without_behavioral_evidence")
             score -= 3
+    if github_source and _has_phrase(text, GITHUB_INTERNAL_MAINTENANCE_PATTERNS):
+        negative_signals.append("github_internal_maintenance_issue")
+        score -= 7
+    if github_source and not github_transferable:
+        negative_signals.append("github_without_external_workflow_context")
+        score -= 4
+    if review_source and not review_transferable:
+        negative_signals.append("review_without_transferable_workflow")
+        score -= 6
+    if youtube_source:
+        if _has_phrase(text, YOUTUBE_LOW_SIGNAL_PATTERNS):
+            negative_signals.append("youtube_roundup_or_recommendation_chatter")
+            score -= 6
+        if concrete_youtube_comment_count == 0:
+            negative_signals.append("youtube_commentary_without_concrete_workflow_pain")
+            score -= 6
+    if stackoverflow_source and (_has_phrase(text, STACKOVERFLOW_IMPLEMENTATION_ONLY_PATTERNS) or not github_transferable):
+        negative_signals.append("stackoverflow_local_implementation_issue")
+        score -= 5
 
     accepted = (
         score >= 3
@@ -2093,6 +2322,12 @@ def qualify_problem_signal(
         and "solicitation_for_problem_examples" not in negative_signals
         and "venting_without_transferable_workflow_problem" not in negative_signals
         and "product_specific_complaint_without_workflow_context" not in negative_signals
+        and "github_internal_maintenance_issue" not in negative_signals
+        and "github_without_external_workflow_context" not in negative_signals
+        and "review_without_transferable_workflow" not in negative_signals
+        and "youtube_roundup_or_recommendation_chatter" not in negative_signals
+        and "youtube_commentary_without_concrete_workflow_pain" not in negative_signals
+        and "stackoverflow_local_implementation_issue" not in negative_signals
         and (not source_class or source_class == "pain_signal")
     )
     if accepted and _has_phrase(text, GENERIC_REQUEST_PATTERNS) and (score < 7 or not actionable_workflow):
@@ -2930,6 +3165,9 @@ def stage_decision(
     value_support = float(opportunity_scores.get("value_support", 0.0) or 0.0)
     evidence_quality = float(opportunity_scores.get("evidence_quality", 0.0) or 0.0)
     frequency_score = float(opportunity_scores.get("frequency_score", 0.0) or 0.0)
+    workaround_density = float(opportunity_scores.get("workaround_density", 0.0) or 0.0)
+    cost_of_inaction = float(opportunity_scores.get("cost_of_inaction", 0.0) or 0.0)
+    buildability = float(opportunity_scores.get("buildability", 0.0) or 0.0)
 
     # Hard kill conditions
     hard_kill = (
@@ -3007,6 +3245,27 @@ def stage_decision(
             "park_subreason": subreason,
         }
 
+    sharp_research_candidate = (
+        market_gap.get("market_gap") == "needs_more_recurrence_evidence"
+        and decision_score >= max(park_threshold - 0.035, 0.1)
+        and problem_truth_score >= 0.115
+        and revenue_readiness_score >= 0.18
+        and evidence_quality >= 0.42
+        and value_support >= 0.38
+        and frequency_score >= 0.25
+        and workaround_density >= 0.34
+        and cost_of_inaction >= 0.4
+        and buildability >= 0.52
+    )
+    if sharp_research_candidate:
+        return {
+            "status": "parked",
+            "recommendation": "park",
+            "reason": "sharp_but_thin_evidence",
+            "decision_reason": "sharp_but_thin_evidence",
+            "park_subreason": "sharp_but_thin_evidence",
+        }
+
     # Default: kill
     return {
         "status": "killed",
@@ -3036,6 +3295,13 @@ def diagnose_stage_decision(
     sufficiency = float(opportunity_scores.get("evidence_sufficiency", 0.0) or 0.0)
     value_support = float(opportunity_scores.get("value_support", 0.0) or 0.0)
     evidence_quality = float(opportunity_scores.get("evidence_quality", 0.0) or 0.0)
+    decision_score = float(opportunity_scores.get("decision_score", 0.0) or 0.0) + park_bias - kill_bias
+    problem_truth_score = float(opportunity_scores.get("problem_truth_score", 0.0) or 0.0)
+    revenue_readiness_score = float(opportunity_scores.get("revenue_readiness_score", 0.0) or 0.0)
+    frequency_score = float(opportunity_scores.get("frequency_score", 0.0) or 0.0)
+    workaround_density = float(opportunity_scores.get("workaround_density", 0.0) or 0.0)
+    cost_of_inaction = float(opportunity_scores.get("cost_of_inaction", 0.0) or 0.0)
+    buildability = float(opportunity_scores.get("buildability", 0.0) or 0.0)
 
     decision = stage_decision(
         opportunity_scores,
@@ -3095,6 +3361,18 @@ def diagnose_stage_decision(
     ]
 
     all_promotion_numeric_gates_pass = all(check["pass"] for check in promote_checks)
+    sharp_research_candidate = (
+        market_gap.get("market_gap") == "needs_more_recurrence_evidence"
+        and decision_score >= max(park_threshold - 0.035, 0.1)
+        and problem_truth_score >= 0.115
+        and revenue_readiness_score >= 0.18
+        and evidence_quality >= 0.42
+        and value_support >= 0.38
+        and frequency_score >= 0.25
+        and workaround_density >= 0.34
+        and cost_of_inaction >= 0.4
+        and buildability >= 0.52
+    )
 
     return {
         "decision": decision,
@@ -3106,10 +3384,20 @@ def diagnose_stage_decision(
             "supported_counterevidence_hits": supported_count,
             "promotion_threshold": promotion_threshold,
             "park_threshold": park_threshold,
+            "decision_score": round(decision_score, 4),
+            "problem_truth_score": round(problem_truth_score, 4),
+            "revenue_readiness_score": round(revenue_readiness_score, 4),
         },
         "hard_kill_reasons": hard_kill_reasons,
         "promote_checks": promote_checks,
         "all_promotion_numeric_gates_pass": all_promotion_numeric_gates_pass,
+        "sharp_research_candidate": sharp_research_candidate,
+        "sharp_research_details": {
+            "frequency_score": round(frequency_score, 4),
+            "workaround_density": round(workaround_density, 4),
+            "cost_of_inaction": round(cost_of_inaction, 4),
+            "buildability": round(buildability, 4),
+        },
         "park_subreason_if_parked": decision.get("park_subreason") if decision.get("recommendation") == "park" else "",
     }
 

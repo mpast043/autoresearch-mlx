@@ -105,6 +105,73 @@ def test_discover_once_refreshes_config_after_expansion(temp_db, tmp_path, monke
     assert captured["subreddits"] == ["basesub", "freshsub"]
 
 
+def test_discover_once_closes_old_toolkit_when_refreshing_config(temp_db, tmp_path, monkeypatch):
+    state_path = tmp_path / "discovery_expansion.json"
+    toolkits = []
+
+    class DummyToolkit:
+        def __init__(self, config):
+            self.config = config
+            self.closed = False
+            toolkits.append(self)
+
+        async def close(self):
+            self.closed = True
+
+        def set_discovery_feedback(self, feedback):
+            return None
+
+    monkeypatch.setattr("src.agents.discovery.ResearchToolkit", DummyToolkit)
+
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["reddit"],
+        config={
+            "discovery": {
+                "auto_expand": True,
+                "expansion": {"state_path": str(state_path), "cooldown_hours": 0},
+                "reddit": {"problem_keywords": ["base keyword"], "problem_subreddits": ["basesub"]},
+            }
+        },
+    )
+
+    monkeypatch.setattr(
+        "agents.discovery.run_expansion",
+        lambda db, config: {
+            "expanded": True,
+            "added_keywords": ["fresh keyword"],
+            "added_subreddits": ["freshsub"],
+        },
+    )
+
+    def fake_get_expanded_config(config):
+        merged = dict(config)
+        discovery = dict(merged.get("discovery", {}))
+        reddit = dict(discovery.get("reddit", {}))
+        reddit["problem_keywords"] = [*reddit.get("problem_keywords", []), "fresh keyword"]
+        reddit["problem_subreddits"] = [*reddit.get("problem_subreddits", []), "freshsub"]
+        discovery["reddit"] = reddit
+        merged["discovery"] = discovery
+        return merged
+
+    monkeypatch.setattr("src.agents.discovery.get_expanded_config", fake_get_expanded_config)
+
+    async def no_prime():
+        return None
+
+    async def no_results(source):
+        return []
+
+    agent._prime_reddit_relay = no_prime
+    agent._check_source = no_results
+
+    asyncio.run(agent._discover_once())
+
+    assert len(toolkits) >= 2
+    assert toolkits[0].closed is True
+    assert toolkits[-1].closed is False
+
+
 def test_custom_sources_initialization(temp_db):
     agent = DiscoveryAgent(temp_db, sources=["reddit", "github"])
     assert agent.sources == ["reddit", "github"]
@@ -172,6 +239,37 @@ def test_is_wedge_ready_signal_rejects_meta_post():
     assert reason == "meta_post"
 
 
+def test_is_wedge_ready_signal_rejects_generic_task_bundle():
+    finding_data = {
+        "product_built": "If you're still doing this manually in your business, you're wasting hours every week",
+        "outcome_summary": (
+            "If you or your team are still doing repetitive tasks manually "
+            "(data entry, moving info between tools, basic follow-ups, reporting, etc), "
+            "you're probably losing hours every week."
+        ),
+    }
+
+    is_ready, reason = is_wedge_ready_signal(finding_data)
+
+    assert is_ready is False
+    assert reason == "generic_prompt"
+
+
+def test_is_wedge_ready_signal_accepts_specific_workflow_failure():
+    finding_data = {
+        "product_built": "Stripe imports into QuickBooks keep breaking for client books",
+        "outcome_summary": (
+            "We manually reformat Stripe CSV exports because duplicate rows and bad date columns "
+            "cause QuickBooks imports to fail every month."
+        ),
+    }
+
+    is_ready, reason = is_wedge_ready_signal(finding_data)
+
+    assert is_ready is True
+    assert reason == "passed"
+
+
 def test_process_finding_persists_pre_atom_filtered_signal_as_screened_out(temp_db):
     agent = DiscoveryAgent(temp_db)
     finding_data = {
@@ -189,6 +287,31 @@ def test_process_finding_persists_pre_atom_filtered_signal_as_screened_out(temp_
     assert finding is not None
     assert finding.status == "screened_out"
     assert (finding.evidence or {}).get("pre_atom_filter", {}).get("accepted") is False
+    assert temp_db.get_raw_signals_by_finding(finding_id) == []
+    assert temp_db.get_problem_atoms_by_finding(finding_id) == []
+
+
+def test_process_finding_screens_out_broad_manual_tasks_prompt(temp_db):
+    agent = DiscoveryAgent(temp_db)
+    finding_data = {
+        "source": "reddit-problem",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/manual-tasks",
+        "product_built": "If you're still doing this manually in your business, you're wasting hours every week",
+        "outcome_summary": (
+            "If you or your team are still doing repetitive tasks manually "
+            "(data entry, moving info between tools, basic follow-ups, reporting, etc), "
+            "you're probably losing hours every week."
+        ),
+        "finding_kind": "problem_signal",
+    }
+
+    finding_id = asyncio.run(agent._process_finding(finding_data))
+
+    assert finding_id is not None
+    finding = temp_db.get_finding(finding_id)
+    assert finding is not None
+    assert finding.status == "screened_out"
+    assert (finding.evidence or {}).get("pre_atom_filter", {}).get("reason") == "generic_prompt"
     assert temp_db.get_raw_signals_by_finding(finding_id) == []
     assert temp_db.get_problem_atoms_by_finding(finding_id) == []
 
@@ -916,17 +1039,12 @@ def test_prime_reddit_relay_includes_learned_theme_queries(temp_db, monkeypatch)
 
     captured: dict[str, list[str]] = {}
 
-    class FakeCoverage:
-        total_pairs = 6
-        skipped_fresh_pairs = 0
-        existing_cached_pairs = 0
-        uncovered_pairs = 0
-
     class FakeSummary:
         total_pairs = 6
         searched_pairs = 0
         skipped_fresh_pairs = 0
         existing_cached_pairs = 0
+        uncovered_pairs = 0
         cached_searches = 0
         cached_threads = 0
         thread_cache_hits = 0
@@ -936,12 +1054,9 @@ def test_prime_reddit_relay_includes_learned_theme_queries(temp_db, monkeypatch)
         def __init__(self, _config, **_kwargs):
             pass
 
-        def coverage_report(self, *, subreddits, queries):
+        async def seed(self, *, subreddits, queries):
             captured["queries"] = list(queries)
             captured["subreddits"] = list(subreddits)
-            return FakeCoverage()
-
-        async def seed(self, *, subreddits, queries):
             captured["seed_queries"] = list(queries)
             return FakeSummary()
 
@@ -949,8 +1064,8 @@ def test_prime_reddit_relay_includes_learned_theme_queries(temp_db, monkeypatch)
 
     asyncio.run(agent._prime_reddit_relay())
 
-    assert "duct tape spreadsheets" in captured["queries"]
-    assert "manual handoff workflow" in captured["queries"]
+    assert "duct tape spreadsheets" in captured["seed_queries"]
+    assert "manual handoff workflow" in captured["seed_queries"]
 
 
 def test_load_learning_feedback_sets_query_cooldown_for_repeated_low_yield(temp_db):
@@ -1004,17 +1119,12 @@ def test_prime_reddit_relay_caps_seed_query_count(temp_db, monkeypatch):
 
     captured = {}
 
-    class FakeCoverage:
-        total_pairs = 3
-        skipped_fresh_pairs = 0
-        existing_cached_pairs = 0
-        uncovered_pairs = 0
-
     class FakeSummary:
         total_pairs = 3
         searched_pairs = 3
         skipped_fresh_pairs = 0
         existing_cached_pairs = 0
+        uncovered_pairs = 0
         cached_searches = 3
         cached_threads = 0
         thread_cache_hits = 0
@@ -1024,12 +1134,9 @@ def test_prime_reddit_relay_caps_seed_query_count(temp_db, monkeypatch):
         def __init__(self, config, bypass_cache=False):
             captured["bypass_cache"] = bypass_cache
 
-        def coverage_report(self, *, subreddits, queries):
+        async def seed(self, *, subreddits, queries):
             captured["queries"] = list(queries)
             captured["subreddits"] = list(subreddits)
-            return FakeCoverage()
-
-        async def seed(self, *, subreddits, queries):
             captured["seed_queries"] = list(queries)
             return FakeSummary()
 
@@ -1067,17 +1174,12 @@ def test_prime_reddit_relay_caps_seed_subreddit_count(temp_db, monkeypatch):
 
     captured = {}
 
-    class FakeCoverage:
-        total_pairs = 4
-        skipped_fresh_pairs = 0
-        existing_cached_pairs = 0
-        uncovered_pairs = 0
-
     class FakeSummary:
         total_pairs = 4
         searched_pairs = 4
         skipped_fresh_pairs = 0
         existing_cached_pairs = 0
+        uncovered_pairs = 0
         cached_searches = 4
         cached_threads = 0
         thread_cache_hits = 0
@@ -1087,12 +1189,9 @@ def test_prime_reddit_relay_caps_seed_subreddit_count(temp_db, monkeypatch):
         def __init__(self, config, bypass_cache=False):
             pass
 
-        def coverage_report(self, *, subreddits, queries):
+        async def seed(self, *, subreddits, queries):
             captured["subreddits"] = list(subreddits)
             captured["queries"] = list(queries)
-            return FakeCoverage()
-
-        async def seed(self, *, subreddits, queries):
             captured["seed_subreddits"] = list(subreddits)
             captured["seed_queries"] = list(queries)
             return FakeSummary()

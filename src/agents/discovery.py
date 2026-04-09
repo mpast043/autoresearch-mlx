@@ -67,6 +67,68 @@ FAILURE_VERBS = {
     'lost', 'late', 'inconsistent', 'corrupt',
 }
 
+GENERIC_TASK_BUCKETS = {
+    "manual tasks",
+    "repetitive tasks",
+    "routine business tasks",
+    "daily tasks",
+    "basic follow-ups",
+    "follow-ups",
+    "data entry",
+    "moving info between tools",
+    "moving information between tools",
+    "reporting",
+    "scheduling",
+    "admin work",
+    "administrative work",
+    "operations work",
+    "day-to-day operations",
+    "every single day",
+    "wasting hours",
+    "hours every week",
+    "hours every day",
+}
+
+SPECIFIC_CONTEXT_HINTS = {
+    "csv",
+    "invoice",
+    "invoices",
+    "receipt",
+    "receipts",
+    "stripe",
+    "quickbooks",
+    "shopify",
+    "google reviews",
+    "google review",
+    "order received",
+    "label printed",
+    "bank payment",
+    "bank payments",
+    "bank deposit",
+    "reconciliation",
+    "expense",
+    "expenses",
+    "vendor",
+    "vendors",
+    "payout",
+    "fulfillment",
+    "fulfilment",
+    "returns",
+    "chargeback",
+    "duplicate",
+    "mismatch",
+    "missing",
+    "import",
+    "export",
+}
+
+GENERIC_PROMPT_PATTERNS = [
+    r"what'?s the one task in your business",
+    r"if you'?re still doing this manually in your business",
+    r"if your team is still doing this manually",
+    r"most of these aren'?t hard problems",
+]
+
 META_PATTERNS = [
     r'^what (is|are) ', r'^how do i ', r'^how to ',
     r'looking to build', r'want to build', r'building a',
@@ -96,7 +158,7 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
     # Support multiple field names - product_built/title for title, outcome_summary/body_excerpt for body
     title = (finding_data.get('product_built') or finding_data.get('title') or '').lower()
     body = (finding_data.get('outcome_summary') or finding_data.get('body_excerpt') or '').lower()
-    text = f'{title} {body}'
+    text = f'{title} {body}'.replace("’", "'")
 
     # Check 1: Too short
     if len(text.strip()) < 30:
@@ -107,13 +169,24 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
         if re.search(pattern, text):
             return False, "meta_post"
 
+    generic_bucket_hits = sum(1 for phrase in GENERIC_TASK_BUCKETS if phrase in text)
+    has_specific_context = any(hint in text for hint in SPECIFIC_CONTEXT_HINTS)
+    has_failure = any(verb in text for verb in FAILURE_VERBS)
+
+    # Check 2b: Broad productivity sermons and multi-workflow bundles
+    if any(re.search(pattern, text) for pattern in GENERIC_PROMPT_PATTERNS):
+        return False, "generic_prompt"
+    if generic_bucket_hits >= 2 and not has_specific_context:
+        return False, "generic_task_bundle"
+    if generic_bucket_hits >= 2 and not has_failure and ("," in text or "etc" in text or " and " in text):
+        return False, "multi_workflow_bundle"
+
     # Check 3: Contains concrete object
     has_object = any(obj in text for obj in CONCRETE_OBJECTS)
     if not has_object:
         return False, "no_concrete_object"
 
     # Check 4: Contains failure verb/pattern
-    has_failure = any(verb in text for verb in FAILURE_VERBS)
     if not has_failure:
         return False, "no_failure_pattern"
 
@@ -272,6 +345,15 @@ class DiscoveryAgent(BaseAgent):
         _sem_limit = int(self.config.get("discovery", {}).get("api_concurrency", 6))
         self._api_semaphore = asyncio.Semaphore(max(1, _sem_limit))
 
+    async def _refresh_toolkit(self, new_config: dict[str, Any]) -> None:
+        old_toolkit = self.toolkit
+        self.config = new_config
+        self.check_interval = self.config.get("discovery", {}).get("check_interval", 300)
+        self.toolkit = ResearchToolkit(self.config)
+        close_old = getattr(old_toolkit, "close", None)
+        if callable(close_old):
+            await close_old()
+
     def _screened_out_retention_limit(self) -> int:
         retention = self.config.get("discovery", {}).get("screened_out_retention", {}) or {}
         try:
@@ -317,9 +399,7 @@ class DiscoveryAgent(BaseAgent):
                 logger.info(f"Discovery expanded: +{len(expansion_result.get('added_keywords', []))} keywords, "
                             f"+{len(expansion_result.get('added_subreddits', []))} subreddits")
                 # Refresh toolkit with expanded config so the new scope is used immediately.
-                self.config = get_expanded_config(self.base_config)
-                self.check_interval = self.config.get("discovery", {}).get("check_interval", 300)
-                self.toolkit = ResearchToolkit(self.config)
+                await self._refresh_toolkit(get_expanded_config(self.base_config))
         except Exception as e:
             logger.warning(f"Expansion failed: {e}")
 
@@ -682,26 +762,13 @@ class DiscoveryAgent(BaseAgent):
         self._cycle_counts["reddit-relay-seed"] = self._cycle_counts.get("reddit-relay-seed", 0) + 1
         try:
             seeder = RedditSeeder(self.config, bypass_cache=self.bypass_cache)
-            baseline_coverage = seeder.coverage_report(subreddits=subreddits, queries=queries)
-            self._last_reddit_seed_summary = {
-                "seeded_total_pairs": baseline_coverage.total_pairs,
-                "seeded_pairs_searched": 0,
-                "seeded_pairs_fresh": baseline_coverage.skipped_fresh_pairs,
-                "seeded_pairs_existing_cache": baseline_coverage.existing_cached_pairs,
-                "seeded_pairs_uncovered": baseline_coverage.uncovered_pairs,
-                "seeded_cached_searches": 0,
-                "seeded_cached_threads": 0,
-                "seeded_thread_cache_hits": 0,
-                "seeded_unique_urls": 0,
-            }
             summary = await seeder.seed(subreddits=subreddits, queries=queries)
-            coverage = seeder.coverage_report(subreddits=subreddits, queries=queries)
             self._last_reddit_seed_summary = {
                 "seeded_total_pairs": summary.total_pairs,
                 "seeded_pairs_searched": summary.searched_pairs,
                 "seeded_pairs_fresh": summary.skipped_fresh_pairs,
                 "seeded_pairs_existing_cache": summary.existing_cached_pairs,
-                "seeded_pairs_uncovered": coverage.uncovered_pairs,
+                "seeded_pairs_uncovered": summary.uncovered_pairs,
                 "seeded_cached_searches": summary.cached_searches,
                 "seeded_cached_threads": summary.cached_threads,
                 "seeded_thread_cache_hits": summary.thread_cache_hits,
@@ -713,11 +780,11 @@ class DiscoveryAgent(BaseAgent):
                 summary.searched_pairs,
                 summary.cached_searches,
                 summary.cached_threads,
-                coverage.uncovered_pairs,
+                summary.uncovered_pairs,
             )
             if self.status_tracker:
                 self.status_tracker.log(
-                    f"reddit_relay_seed total_pairs={summary.total_pairs} searched_pairs={summary.searched_pairs} cached_threads={summary.cached_threads} uncovered_pairs={coverage.uncovered_pairs}"
+                    f"reddit_relay_seed total_pairs={summary.total_pairs} searched_pairs={summary.searched_pairs} cached_threads={summary.cached_threads} uncovered_pairs={summary.uncovered_pairs}"
                 )
         except Exception as exc:
             logger.warning("reddit relay auto-seed failed: %s", exc)
@@ -1623,7 +1690,7 @@ class DiscoveryAgent(BaseAgent):
                     ", ".join(s.space_key for s in new_spaces),
                 )
                 # Merge derived queries into discovery config for next cycle
-                self._merge_problem_space_queries(new_spaces)
+                await self._merge_problem_space_queries(new_spaces)
                 # Update space lifecycle metrics
                 self._update_problem_space_lifecycle()
             return new_spaces
@@ -1631,7 +1698,7 @@ class DiscoveryAgent(BaseAgent):
             logger.warning("LLM expansion failed: %s", exc)
             return []
 
-    def _merge_problem_space_queries(self, spaces: list) -> None:
+    async def _merge_problem_space_queries(self, spaces: list) -> None:
         """Merge problem space derived queries into the discovery config.
 
         This makes the LLM-derived keywords, subreddits, and queries available
@@ -1688,8 +1755,7 @@ class DiscoveryAgent(BaseAgent):
         )
 
         # Refresh toolkit with updated config
-        self.config = get_expanded_config(self.base_config)
-        self.toolkit = ResearchToolkit(self.config)
+        await self._refresh_toolkit(get_expanded_config(self.base_config))
 
     def _update_problem_space_lifecycle(self) -> None:
         """Update problem space lifecycle states and metrics.

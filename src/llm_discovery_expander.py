@@ -131,7 +131,7 @@ class LLMClient:
     def __init__(self, config: dict[str, Any]) -> None:
         llm_config = config.get("llm", {})
         self.provider = llm_config.get("provider", "ollama")
-        self.model = llm_config.get("model", "llama3.1:8b")
+        self.model = llm_config.get("model", "gemma4:latest")
         self.base_url = llm_config.get("base_url", "http://localhost:11434")
         self.api_key = llm_config.get("api_key", "") or ""
         self.max_tokens = llm_config.get("max_tokens", 2000)

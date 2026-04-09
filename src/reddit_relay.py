@@ -41,10 +41,15 @@ def _resolve_env(value: str | None) -> str:
 
 
 def _canonical_url(url: str) -> str:
-    parsed = urlparse(url.strip())
+    raw = url.strip()
+    if raw.startswith("/"):
+        raw = f"https://reddit.com{raw}"
+    parsed = urlparse(raw)
     scheme = parsed.scheme or "https"
-    netloc = parsed.netloc.lower()
-    path = parsed.path.rstrip("/")
+    netloc = parsed.netloc.lower() or "reddit.com"
+    if netloc == "www.reddit.com":
+        netloc = "reddit.com"
+    path = parsed.path.rstrip("/") or "/"
     return f"{scheme}://{netloc}{path}"
 
 
@@ -60,6 +65,16 @@ class RedditRelayStore:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         return connection
+
+    def _with_schema_retry(self, operation):
+        try:
+            return operation()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc).lower():
+                raise
+            logger.warning("reddit relay store missing schema at %s; recreating tables", self.db_path)
+            self._ensure_schema()
+            return operation()
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
@@ -116,19 +131,22 @@ class RedditRelayStore:
         payload = json.dumps(items)
         collected_at = int(collected_at or time.time())
         cache_key = self._search_key(subreddit, query, sort, cursor)
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO reddit_search_cache (
-                    cache_key, subreddit, query, sort, cursor, next_cursor, payload_json, collected_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(cache_key) DO UPDATE SET
-                    next_cursor = excluded.next_cursor,
-                    payload_json = excluded.payload_json,
-                    collected_at = excluded.collected_at
-                """,
-                (cache_key, subreddit, query, sort, cursor, next_cursor, payload, collected_at),
-            )
+        def _op() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO reddit_search_cache (
+                        cache_key, subreddit, query, sort, cursor, next_cursor, payload_json, collected_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        next_cursor = excluded.next_cursor,
+                        payload_json = excluded.payload_json,
+                        collected_at = excluded.collected_at
+                    """,
+                    (cache_key, subreddit, query, sort, cursor, next_cursor, payload, collected_at),
+                )
+
+        self._with_schema_retry(_op)
 
     def get_search(
         self,
@@ -140,15 +158,18 @@ class RedditRelayStore:
         limit: int,
     ) -> dict[str, Any] | None:
         cache_key = self._search_key(subreddit, query, sort, cursor)
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT payload_json, next_cursor, collected_at
-                FROM reddit_search_cache
-                WHERE cache_key = ?
-                """,
-                (cache_key,),
-            ).fetchone()
+        def _op():
+            with self._connect() as conn:
+                return conn.execute(
+                    """
+                    SELECT payload_json, next_cursor, collected_at
+                    FROM reddit_search_cache
+                    WHERE cache_key = ?
+                    """,
+                    (cache_key,),
+                ).fetchone()
+
+        row = self._with_schema_retry(_op)
         if row is None:
             return None
         try:
@@ -179,15 +200,18 @@ class RedditRelayStore:
         max_age_seconds: int = 21600,
     ) -> bool:
         cache_key = self._search_key(subreddit, query, sort, cursor)
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT collected_at
-                FROM reddit_search_cache
-                WHERE cache_key = ?
-                """,
-                (cache_key,),
-            ).fetchone()
+        def _op():
+            with self._connect() as conn:
+                return conn.execute(
+                    """
+                    SELECT collected_at
+                    FROM reddit_search_cache
+                    WHERE cache_key = ?
+                    """,
+                    (cache_key,),
+                ).fetchone()
+
+        row = self._with_schema_retry(_op)
         if row is None:
             return False
         return int(time.time()) - int(row["collected_at"]) <= max_age_seconds
@@ -201,15 +225,18 @@ class RedditRelayStore:
         cursor: str = "",
     ) -> bool:
         cache_key = self._search_key(subreddit, query, sort, cursor)
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT 1
-                FROM reddit_search_cache
-                WHERE cache_key = ?
-                """,
-                (cache_key,),
-            ).fetchone()
+        def _op():
+            with self._connect() as conn:
+                return conn.execute(
+                    """
+                    SELECT 1
+                    FROM reddit_search_cache
+                    WHERE cache_key = ?
+                    """,
+                    (cache_key,),
+                ).fetchone()
+
+        row = self._with_schema_retry(_op)
         return row is not None
 
     async def fetch_live_search(
@@ -298,6 +325,109 @@ class RedditRelayStore:
             "collected_at": collected_at,
         }
 
+    async def fetch_live_thread(
+        self,
+        *,
+        url: str,
+        comment_limit: int = 50,
+        depth: int = 4,
+    ) -> dict[str, Any] | None:
+        """Fetch a Reddit thread directly and hydrate thread/comment caches on miss."""
+        canonical_url = _canonical_url(url)
+        json_url = f"{canonical_url}.json?limit={min(max(comment_limit, 1), 50)}&depth={max(depth, 1)}&raw_json=1"
+        headers = {
+            "User-Agent": "AutoResearcher/1.0 (Python;aiohttp)",
+            "Accept": "application/json",
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(json_url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                    if resp.status != 200:
+                        logger.warning("live reddit thread failed status=%s url=%s", resp.status, canonical_url)
+                        return None
+                    data = await resp.json()
+        except asyncio.TimeoutError:
+            logger.warning("live reddit thread timeout url=%s", canonical_url)
+            return None
+        except Exception as exc:
+            logger.warning("live reddit thread error url=%s error=%s", canonical_url, exc)
+            return None
+
+        if not isinstance(data, list) or len(data) < 2:
+            logger.warning("live reddit thread bad payload url=%s", canonical_url)
+            return None
+
+        post_children = data[0].get("data", {}).get("children", [])
+        if not post_children:
+            return None
+        post_data = post_children[0].get("data", {})
+        post_id = str(post_data.get("id", "") or "")
+        if not post_id:
+            return None
+
+        permalink = str(post_data.get("permalink", "") or "")
+        canonical_permalink = _canonical_url(permalink or canonical_url)
+        post_item = {
+            "id": post_id,
+            "kind": "post",
+            "subreddit": str(post_data.get("subreddit", "") or ""),
+            "title": str(post_data.get("title", "") or ""),
+            "body": str(post_data.get("selftext", "") or post_data.get("body", "") or ""),
+            "author": str(post_data.get("author", "") or ""),
+            "permalink": canonical_permalink,
+            "score": int(post_data.get("score", 0) or 0),
+            "num_comments": int(post_data.get("num_comments", 0) or 0),
+            "created_utc": int(post_data.get("created_utc", 0) or 0),
+            "source_type": "reddit",
+            "post_id": post_id,
+            "parent_id": "",
+        }
+
+        comment_items: list[dict[str, Any]] = []
+
+        def _walk_comments(children: list[dict[str, Any]]) -> None:
+            for child in children:
+                if len(comment_items) >= min(max(comment_limit, 1), 50):
+                    return
+                if child.get("kind") != "t1":
+                    continue
+                comment = child.get("data", {}) or {}
+                comment_id = str(comment.get("id", "") or "")
+                body = str(comment.get("body", "") or "")
+                if not comment_id or not body.strip():
+                    replies = comment.get("replies")
+                    if isinstance(replies, dict):
+                        _walk_comments(replies.get("data", {}).get("children", []) or [])
+                    continue
+                comment_items.append(
+                    {
+                        "id": comment_id,
+                        "kind": "comment",
+                        "subreddit": str(comment.get("subreddit", post_item["subreddit"]) or post_item["subreddit"]),
+                        "title": "",
+                        "body": body,
+                        "author": str(comment.get("author", "") or ""),
+                        "permalink": canonical_permalink,
+                        "score": int(comment.get("score", 0) or 0),
+                        "num_comments": 0,
+                        "created_utc": int(comment.get("created_utc", 0) or 0),
+                        "source_type": "reddit",
+                        "post_id": post_id,
+                        "parent_id": str(comment.get("parent_id", f"t3_{post_id}") or f"t3_{post_id}"),
+                    }
+                )
+                replies = comment.get("replies")
+                if isinstance(replies, dict):
+                    _walk_comments(replies.get("data", {}).get("children", []) or [])
+
+        _walk_comments(data[1].get("data", {}).get("children", []) or [])
+
+        collected_at = int(time.time())
+        self.put_thread(url=canonical_permalink, post=post_item, comments=comment_items, collected_at=collected_at)
+        self.put_comments(url=canonical_permalink, items=comment_items, collected_at=collected_at)
+        return self.get_thread(url=canonical_permalink)
+
     def put_thread(
         self,
         *,
@@ -308,24 +438,30 @@ class RedditRelayStore:
     ) -> None:
         collected_at = int(collected_at or time.time())
         payload = json.dumps({"post": post, "comments": comments})
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO reddit_thread_cache (url, payload_json, collected_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(url) DO UPDATE SET
-                    payload_json = excluded.payload_json,
-                    collected_at = excluded.collected_at
-                """,
-                (_canonical_url(url), payload, collected_at),
-            )
+        def _op() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO reddit_thread_cache (url, payload_json, collected_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(url) DO UPDATE SET
+                        payload_json = excluded.payload_json,
+                        collected_at = excluded.collected_at
+                    """,
+                    (_canonical_url(url), payload, collected_at),
+                )
+
+        self._with_schema_retry(_op)
 
     def get_thread(self, *, url: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT payload_json, collected_at FROM reddit_thread_cache WHERE url = ?",
-                (_canonical_url(url),),
-            ).fetchone()
+        def _op():
+            with self._connect() as conn:
+                return conn.execute(
+                    "SELECT payload_json, collected_at FROM reddit_thread_cache WHERE url = ?",
+                    (_canonical_url(url),),
+                ).fetchone()
+
+        row = self._with_schema_retry(_op)
         if row is None:
             return None
         payload = json.loads(row["payload_json"])
@@ -333,11 +469,14 @@ class RedditRelayStore:
         return payload
 
     def has_thread(self, *, url: str) -> bool:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM reddit_thread_cache WHERE url = ?",
-                (_canonical_url(url),),
-            ).fetchone()
+        def _op():
+            with self._connect() as conn:
+                return conn.execute(
+                    "SELECT 1 FROM reddit_thread_cache WHERE url = ?",
+                    (_canonical_url(url),),
+                ).fetchone()
+
+        row = self._with_schema_retry(_op)
         return row is not None
 
     def put_comments(
@@ -348,24 +487,30 @@ class RedditRelayStore:
         collected_at: int | None = None,
     ) -> None:
         collected_at = int(collected_at or time.time())
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO reddit_comments_cache (url, payload_json, collected_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(url) DO UPDATE SET
-                    payload_json = excluded.payload_json,
-                    collected_at = excluded.collected_at
-                """,
-                (_canonical_url(url), json.dumps(items), collected_at),
-            )
+        def _op() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO reddit_comments_cache (url, payload_json, collected_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(url) DO UPDATE SET
+                        payload_json = excluded.payload_json,
+                        collected_at = excluded.collected_at
+                    """,
+                    (_canonical_url(url), json.dumps(items), collected_at),
+                )
+
+        self._with_schema_retry(_op)
 
     def get_comments(self, *, url: str, limit: int) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT payload_json, collected_at FROM reddit_comments_cache WHERE url = ?",
-                (_canonical_url(url),),
-            ).fetchone()
+        def _op():
+            with self._connect() as conn:
+                return conn.execute(
+                    "SELECT payload_json, collected_at FROM reddit_comments_cache WHERE url = ?",
+                    (_canonical_url(url),),
+                ).fetchone()
+
+        row = self._with_schema_retry(_op)
         if row is None:
             return None
         items = json.loads(row["payload_json"])
@@ -545,7 +690,8 @@ async def cached_search(request: web.Request) -> web.Response:
             cursor=cursor,
         )
         if result is None:
-            return _json_error(502, "live_search_failed", "live reddit search failed", items=[], next_cursor="")
+            # Surface this as a cache miss so clients can warm/retry without poisoning the bridge circuit.
+            return _json_error(404, "no_cached_result", "no cached search result", items=[], next_cursor="")
 
     return web.json_response(
         {
@@ -560,13 +706,18 @@ async def cached_search(request: web.Request) -> web.Response:
 async def cached_thread(request: web.Request) -> web.Response:
     body = await request.json()
     store = request.app[STORE_KEY]
-    result = store.get_thread(url=str(body.get("url", "") or ""))
+    url = str(body.get("url", "") or "")
+    comment_limit = min(max(int(body.get("comment_limit", 50) or 50), 1), 50)
+    depth = max(int(body.get("depth", 4) or 4), 1)
+    result = store.get_thread(url=url)
+    if result is None:
+        result = await store.fetch_live_thread(url=url, comment_limit=comment_limit, depth=depth)
     if result is None:
         return _json_error(404, "no_cached_result", "no cached thread result", post=None, comments=[])
     try:
         normalized = _normalize_cached_thread_payload(result)
     except Exception as exc:
-        logger.warning("reddit relay cached_thread normalization failed url=%s error=%s", body.get("url", ""), exc)
+        logger.warning("reddit relay cached_thread normalization failed url=%s error=%s", url, exc)
         return _json_error(500, "cached_thread_bad_shape", "cached thread payload could not be normalized", post=None, comments=[])
     return web.json_response(
         {
@@ -582,7 +733,11 @@ async def cached_comments(request: web.Request) -> web.Response:
     body = await request.json()
     limit = min(max(int(body.get("limit", 8) or 8), 1), 50)
     store = request.app[STORE_KEY]
-    result = store.get_comments(url=str(body.get("url", "") or ""), limit=limit)
+    url = str(body.get("url", "") or "")
+    result = store.get_comments(url=url, limit=limit)
+    if result is None:
+        await store.fetch_live_thread(url=url, comment_limit=limit, depth=max(int(body.get("depth", 4) or 4), 1))
+        result = store.get_comments(url=url, limit=limit)
     if result is None:
         return _json_error(404, "no_cached_result", "no cached comments result", items=[])
     return web.json_response({"ok": True, "items": result["items"], "collected_at": result["collected_at"]})

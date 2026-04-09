@@ -4,11 +4,13 @@ import asyncio
 import os
 import sys
 import tempfile
+from unittest.mock import patch
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from src.agents.build_prep import ExperimentDesignAgent, SolutionFramingAgent, SpecGenerationAgent
+from src.builder_output import WedgeEvaluation
 from src.agents.validation import ValidationAgent
 import src.agents.validation as validation_module
 from src.database import Database, Finding
@@ -139,21 +141,35 @@ def test_validation_to_build_prep_artifacts_end_to_end():
         )
         assert ed_result["success"] is True
 
-        sg_result = asyncio.run(
-            spec_agent.process(
-                create_message(
-                    from_agent="orchestrator",
-                    to_agent="spec_generation",
-                    msg_type=MessageType.BUILD_PREP,
-                    payload={
-                        "build_brief_id": build_brief_id,
-                        "opportunity_id": opportunity_id,
-                        "validation_id": validation_id,
-                        "next_agent": "spec_generation",
-                    },
+        with patch(
+            "src.builder_output.WedgeEvaluator.evaluate_sync",
+            return_value=WedgeEvaluation(
+                opportunity_id=opportunity_id,
+                software_fit=0.82,
+                monetization_fit=0.58,
+                is_narrow=True,
+                trust_risk="low",
+                verdict="build_now",
+            ),
+        ), patch(
+            "src.agents.build_prep.evaluate_build_ready_sharpness",
+            return_value={"passes": True, "reasons": []},
+        ):
+            sg_result = asyncio.run(
+                spec_agent.process(
+                    create_message(
+                        from_agent="orchestrator",
+                        to_agent="spec_generation",
+                        msg_type=MessageType.BUILD_PREP,
+                        payload={
+                            "build_brief_id": build_brief_id,
+                            "opportunity_id": opportunity_id,
+                            "validation_id": validation_id,
+                            "next_agent": "spec_generation",
+                        },
+                    )
                 )
             )
-        )
         assert sg_result["success"] is True
 
         outputs = db.list_build_prep_outputs(run_id=db.active_run_id, build_brief_id=build_brief_id, limit=10)

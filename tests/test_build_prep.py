@@ -10,6 +10,7 @@ from build_prep import (
     build_brief_payload,
     determine_selection_state,
     determine_narrow_output_type,
+    evaluate_build_ready_sharpness,
     is_allowed_selection_transition,
     PlatformFit,
     VAGUE_PATTERNS,
@@ -159,6 +160,33 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertEqual(reason, "prototype_candidate_gate")
         self.assertTrue(gate["eligible"])
         self.assertIn("prototype_candidate_multifamily_near_miss", gate["reasons"])
+
+    def test_selection_gate_allows_sharp_multifamily_timeout_candidate(self):
+        status, reason, gate = determine_selection_state(
+            decision="park",
+            scorecard={
+                "evidence_quality": 0.43,
+                "value_support": 0.49,
+                "composite_score": 0.32,
+                "frequency_score": 0.28,
+                "workaround_density": 0.41,
+                "cost_of_inaction": 0.48,
+                "buildability": 0.61,
+            },
+            corroboration={
+                "corroboration_score": 0.24,
+                "cross_source_match_score": 0.21,
+                "generalizability_score": 0.67,
+                "source_family_diversity": 2,
+                "generalizability_class": "reusable_workflow_pain",
+                "recurrence_state": "timeout",
+            },
+            market_enrichment={"wedge_active": False},
+        )
+        self.assertEqual(status, "prototype_candidate")
+        self.assertEqual(reason, "prototype_candidate_gate")
+        self.assertTrue(gate["eligible"])
+        self.assertIn("prototype_candidate_sharp_checkpoint", gate["reasons"])
 
     def test_selection_gate_allows_exceptional_single_family_prototype_candidate(self):
         # With source_family_diversity=1, single_family_explore path requires stricter
@@ -568,6 +596,52 @@ class TestPlatformFit(unittest.TestCase):
             product_format="lightweight microSaaS",
         )
         self.assertFalse(vague.is_platform_native)
+
+
+class TestBuildReadySharpness(unittest.TestCase):
+    def test_sharpness_gate_accepts_specific_platform_fit(self):
+        gate = evaluate_build_ready_sharpness(
+            {
+                "platform_fit": {
+                    "host_platform": "Google Docs",
+                    "product_format": "Google Docs add-on",
+                    "product_name": "Contract Guard",
+                },
+                "job_to_be_done": "Review Google Docs contracts before sending them to clients",
+                "pain_workaround": {
+                    "failure_mode": "Template reuse leaves the wrong legal entity on client contracts",
+                    "trigger_event": "Right before sending a renewal contract for signature",
+                },
+                "source_family_corroboration": {
+                    "source_family_diversity": 2,
+                },
+            }
+        )
+        self.assertTrue(gate["passes"])
+        self.assertEqual(gate["reasons"], [])
+
+    def test_sharpness_gate_rejects_unknown_generic_output(self):
+        gate = evaluate_build_ready_sharpness(
+            {
+                "platform_fit": {
+                    "host_platform": "Unknown",
+                    "product_format": "lightweight microSaaS",
+                    "product_name": "workflow_diagnostic_prototype",
+                },
+                "job_to_be_done": "daily operation",
+                "pain_workaround": {
+                    "failure_mode": "manual execution of tasks",
+                    "trigger_event": "daily operation",
+                },
+                "source_family_corroboration": {
+                    "source_family_diversity": 1,
+                },
+            }
+        )
+        self.assertFalse(gate["passes"])
+        self.assertIn("unknown_host_platform", gate["reasons"])
+        self.assertIn("vague_product_name", gate["reasons"])
+        self.assertIn("insufficient_source_family_diversity", gate["reasons"])
 
     def test_build_brief_payload_includes_platform_fit(self):
         """Test that build_brief_payload includes platform_fit."""

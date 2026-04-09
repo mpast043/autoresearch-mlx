@@ -392,6 +392,8 @@ def test_completion_state_reports_queue_and_worker_activity():
         assert state["open_qualified"] == 1
         assert state["evidence_busy"] == 1
         assert state["validation_busy"] == 0
+        assert state["total_busy"] == 1
+        assert state["busy_agents"]["evidence"] == 1
         assert state["drained"] is False
     finally:
         db.close()
@@ -765,12 +767,36 @@ def test_completion_state_ignores_backlog_in_discovery_only_mode():
 
         assert state["actual_open_qualified"] == 1
         assert state["open_qualified"] == 0
+        assert state["total_busy"] == 0
         assert state["drained"] is True
     finally:
         db.close()
         if os.path.exists(db_path):
             os.remove(db_path)
         os.rmdir(temp_dir)
+
+
+def test_wait_for_pipeline_drained_treats_stable_idle_queue_as_drained():
+    app = AutoResearcher(config_path=str(Path(__file__).resolve().parents[1] / "config.yaml"))
+    app.shutdown_event = asyncio.Event()
+    states = [
+        {
+            "queue_empty": False,
+            "queue_size": 3,
+            "open_qualified": 0,
+            "actual_open_qualified": 0,
+            "evidence_busy": 0,
+            "validation_busy": 0,
+            "total_busy": 0,
+            "busy_agents": {},
+            "drained": False,
+        }
+    ]
+    app.completion_state = lambda: states[0]
+
+    drained = asyncio.run(app._wait_for_pipeline_drained(6))
+
+    assert drained is True
 
 
 def test_snapshot_screening_uses_current_run_counts():

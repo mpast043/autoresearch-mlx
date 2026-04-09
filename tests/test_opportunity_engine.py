@@ -11,6 +11,7 @@ from src.opportunity_engine import (
     OpportunityEngine,
     build_cluster_summary,
     build_problem_atom,
+    classify_source_signal,
     plan_validation_experiment,
     qualify_problem_signal,
     score_opportunity,
@@ -513,6 +514,204 @@ def test_qualify_problem_signal_rejects_vendor_vent_without_transferable_workflo
 
     assert screening["accepted"] is False
     assert "venting_without_transferable_workflow_problem" in screening["negative_signals"]
+
+
+def test_classify_source_signal_rejects_github_internal_maintenance_issue():
+    finding_data = {
+        "source": "github-issue/example/repo",
+        "source_url": "https://github.com/example/repo/issues/1",
+        "finding_kind": "problem_signal",
+    }
+    signal_payload = {
+        "title": "[nightly] Missing unit tests for all 7 CSV importers",
+        "body_excerpt": "Backlog cleanup item to improve coverage and add regression files for nightly QA.",
+        "source_type": "github_issue",
+        "metadata_json": {"evidence": {}},
+    }
+    atom_payload = {
+        "user_role": "engineer",
+        "segment": "engineering team",
+        "job_to_be_done": "increase test coverage",
+        "trigger_event": "nightly QA",
+        "failure_mode": "missing unit tests",
+        "current_workaround": "manual regression checklist",
+        "cost_consequence_clues": "",
+        "frequency_clues": "nightly",
+    }
+
+    classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    assert classification["source_class"] == "low_signal_summary"
+    assert "github_product_specific_issue" in classification["reasons"]
+
+
+def test_qualify_problem_signal_keeps_github_transferable_workflow_failure():
+    finding_data = {
+        "source": "github-issue/example/repo",
+        "source_url": "https://github.com/example/repo/issues/2",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "CSV import duplicates invoices during reconciliation",
+        "body_excerpt": (
+            "Ops admins importing Stripe payout CSVs into QuickBooks get duplicate invoices, "
+            "then fall back to spreadsheet cleanup before month-end close."
+        ),
+        "source_type": "github_issue",
+        "metadata_json": {"source_class": "pain_signal", "evidence": {}},
+    }
+    atom_payload = {
+        "job_to_be_done": "import payout csvs into accounting without duplicate cleanup",
+        "trigger_event": "during month-end reconciliation",
+        "pain_statement": "duplicate invoices break reconciliation",
+        "failure_mode": "csv import creates duplicate invoices",
+        "current_workaround": "spreadsheet cleanup and manual matching",
+        "urgency_clues": "month-end close",
+        "frequency_clues": "every week",
+        "cost_consequence_clues": "hours lost and reconciliation risk",
+        "why_now_clues": "after import",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is True
+    assert "github_without_external_workflow_context" not in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_review_without_transferable_workflow():
+    finding_data = {
+        "source": "shopify-review/parcel-intelligence",
+        "source_url": "https://apps.shopify.com/parcel-intelligence/reviews/1",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Support ignored me and pricing is awful",
+        "body_excerpt": "The app is expensive, support never replied, and I regret paying for it.",
+        "source_type": "review",
+        "metadata_json": {"source_class": "pain_signal", "evidence": {}},
+    }
+    atom_payload = {
+        "job_to_be_done": "use the app",
+        "trigger_event": "",
+        "pain_statement": "support ignored me and pricing is awful",
+        "failure_mode": "the app is bad",
+        "current_workaround": "",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "review_without_transferable_workflow" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_keeps_review_with_transferable_workflow_failure():
+    finding_data = {
+        "source": "wordpress-review/updraftplus",
+        "source_url": "https://wordpress.org/support/topic/backup-restore-fails/",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Backup restore fails and we fall back to manual file recovery",
+        "body_excerpt": (
+            "After updates, restore jobs fail, customer sites stay down, and the team manually "
+            "downloads files to recover content."
+        ),
+        "source_type": "review",
+        "metadata_json": {"source_class": "pain_signal", "evidence": {}},
+    }
+    atom_payload = {
+        "job_to_be_done": "restore customer sites reliably after updates",
+        "trigger_event": "after updates",
+        "pain_statement": "restore jobs fail and sites stay down",
+        "failure_mode": "backup restore fails",
+        "current_workaround": "manual file recovery",
+        "urgency_clues": "sites stay down",
+        "frequency_clues": "every update",
+        "cost_consequence_clues": "downtime risk and support load",
+        "why_now_clues": "after updates",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is True
+    assert "review_without_transferable_workflow" not in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_youtube_roundup_without_concrete_comments():
+    finding_data = {
+        "source": "youtube",
+        "source_url": "https://www.youtube.com/watch?v=abc123",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Best Shopify Apps for 2026",
+        "body_excerpt": "My top tools and app recommendations for every store.",
+        "source_type": "youtube",
+        "metadata_json": {
+            "source_class": "pain_signal",
+            "evidence": {
+                "comments": [
+                    {"text": "Great list"},
+                    {"text": "Thanks for the recommendation"},
+                ]
+            },
+        },
+    }
+    atom_payload = {
+        "job_to_be_done": "pick a better app",
+        "trigger_event": "",
+        "pain_statement": "looking for recommendations",
+        "failure_mode": "shopping for a better app",
+        "current_workaround": "",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "youtube_roundup_or_recommendation_chatter" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_stackoverflow_local_implementation_issue():
+    finding_data = {
+        "source": "stackoverflow",
+        "source_url": "https://stackoverflow.com/questions/1",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "React component unit test mock failing after refactor",
+        "body_excerpt": "Need help fixing a mock setup in Jest after refactoring component props.",
+        "source_type": "stackoverflow",
+        "metadata_json": {"source_class": "pain_signal", "evidence": {}},
+    }
+    atom_payload = {
+        "job_to_be_done": "fix react tests",
+        "trigger_event": "after refactor",
+        "pain_statement": "mock setup broke",
+        "failure_mode": "unit test mock failing",
+        "current_workaround": "manual mocking",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "stackoverflow_local_implementation_issue" in screening["negative_signals"]
 
 
 def test_cluster_label_prefers_specific_trigger_or_failure():

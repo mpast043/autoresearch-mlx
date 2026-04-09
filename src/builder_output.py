@@ -346,21 +346,96 @@ def _determine_product_shape(host_platform: str, workflow: str, failure: str) ->
 
 def _is_narrow_wedge(user: str, workflow: str, failure: str, product_shape: str) -> bool:
     """Determine if wedge is narrow enough to build."""
+    user_lower = (user or "").lower()
+    workflow_lower = (workflow or "").lower()
+    failure_lower = (failure or "").lower()
 
     # Check for broad indicators
-    broad_words = ["platform", "all systems", "any csv", "universal", "everything"]
-    if any(w in workflow.lower() for w in broad_words):
+    broad_words = [
+        "platform",
+        "all systems",
+        "any csv",
+        "universal",
+        "everything",
+        "manual tasks",
+        "workflow reliability",
+        "productivity",
+        "operations automation",
+        "data sync",
+    ]
+    if any(w in workflow_lower or w in failure_lower for w in broad_words):
         return False
 
-    # Must have specific platform, workflow, or failure mode
-    specific_indicators = [
-        "shopify", "quickbooks", "woocommerce", "wordpress",
-        "inventory", "product", "vendor", "invoice", "payment",
-        "reconciliation", "import", "csv", "spreadsheet", "excel",
-        "google sheets", "formula", "budget", "commission", "handoff",
-        "bid", "campaign", "billing", "accounting",
+    generic_users = {
+        "everyone",
+        "people",
+        "users",
+        "business operators",
+        "small businesses",
+        "small business owners",
+        "operators",
+        "teams",
+    }
+    if not user_lower or user_lower in generic_users:
+        return False
+
+    platform_indicators = [
+        "shopify",
+        "quickbooks",
+        "woocommerce",
+        "wordpress",
+        "google sheets",
+        "excel",
+        "spreadsheet",
+        "csv",
+        "gmail",
+        "slack",
+        "google my business",
+        "amazon seller central",
+        "stripe",
+        "xero",
     ]
-    if not any(p in (workflow + " " + failure).lower() for p in specific_indicators):
+    if not any(p in workflow_lower or p in failure_lower for p in platform_indicators):
+        return False
+
+    workflow_indicators = [
+        "import",
+        "reconcile",
+        "close",
+        "handoff",
+        "submit",
+        "approve",
+        "restore",
+        "calculate",
+        "triage",
+        "respond",
+        "invoice",
+        "payment",
+        "review",
+    ]
+    if not any(term in workflow_lower for term in workflow_indicators):
+        return False
+
+    failure_indicators = [
+        "duplicate",
+        "mismatch",
+        "missing",
+        "corrupt",
+        "reject",
+        "late",
+        "out of sync",
+        "silently",
+        "wrong",
+        "bad row",
+        "doesn't match",
+        "fails",
+        "error",
+    ]
+    if not any(term in failure_lower for term in failure_indicators):
+        return False
+
+    # A narrow wedge should not collapse multiple workflow problems into one.
+    if (" and " in workflow_lower and "," in workflow_lower) or workflow_lower.count(" and ") >= 2:
         return False
 
     return True

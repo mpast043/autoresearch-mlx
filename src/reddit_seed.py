@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import re
@@ -116,6 +117,7 @@ class RedditSeeder:
         self.discovery_config = config.get("discovery", {}).get("reddit", {})
         relay_config = config.get("reddit_relay", {})
         self.search_limit = int(self.discovery_config.get("seed_limit", 2))
+        self.pair_concurrency = max(1, int(self.discovery_config.get("pair_concurrency", 1) or 1))
         max_pairs_value = self.discovery_config.get("seed_pairs")
         self.max_pairs = int(max_pairs_value) if max_pairs_value not in (None, "") else None
         self.cache_ttl_seconds = int(relay_config.get("seed_cache_ttl_seconds", 21600))
@@ -187,98 +189,122 @@ class RedditSeeder:
         toolkit = self.build_toolkit()
         summary = RedditSeedSummary()
         seen_urls: set[str] = set()
+        seen_urls_lock = asyncio.Lock()
         pairs = self.iter_pairs(subreddits=subreddits, queries=queries)
         summary.total_pairs = len(pairs)
-        try:
-            for subreddit, query in pairs:
-                # When bypass_cache is True, treat all searches as uncached
-                if self.bypass_cache:
-                    should_skip = False
-                else:
-                    should_skip = self.relay_store.has_search(subreddit=subreddit, query=query, sort="relevance", cursor="")
 
-                if should_skip:
-                    summary.existing_cached_pairs += 1
+        async def _process_pair(subreddit: str, query: str) -> RedditSeedSummary:
+            pair_summary = RedditSeedSummary(total_pairs=1)
+            if self.bypass_cache:
+                should_skip = False
+            else:
+                should_skip = self.relay_store.has_search(subreddit=subreddit, query=query, sort="relevance", cursor="")
 
-                if not self.bypass_cache and self.relay_store.has_fresh_search(
-                    subreddit=subreddit,
-                    query=query,
-                    sort="relevance",
-                    cursor="",
-                    max_age_seconds=self.cache_ttl_seconds,
-                ):
-                    summary.skipped_fresh_pairs += 1
-                    logger.info("reddit_seed skipping fresh cache subreddit=%s query=%r", subreddit, query)
-                    continue
+            if should_skip:
+                pair_summary.existing_cached_pairs += 1
 
-                if self.bypass_cache:
-                    logger.info("reddit_seed BYPASSING CACHE subreddit=%s query=%r", subreddit, query)
+            if not self.bypass_cache and self.relay_store.has_fresh_search(
+                subreddit=subreddit,
+                query=query,
+                sort="relevance",
+                cursor="",
+                max_age_seconds=self.cache_ttl_seconds,
+            ):
+                pair_summary.skipped_fresh_pairs += 1
+                logger.info("reddit_seed skipping fresh cache subreddit=%s query=%r", subreddit, query)
+                return pair_summary
 
-                summary.searched_pairs += 1
-                docs = await toolkit.reddit_search(subreddit, query, limit=self.search_limit)
-                if not docs:
-                    logger.info("reddit_seed no docs subreddit=%s query=%r", subreddit, query)
-                    self.relay_store.put_search(
-                        subreddit=subreddit,
-                        query=query,
-                        sort="relevance",
-                        cursor="",
-                        items=[],
-                        next_cursor="",
-                    )
-                    summary.cached_searches += 1
-                    continue
+            if self.bypass_cache:
+                logger.info("reddit_seed BYPASSING CACHE subreddit=%s query=%r", subreddit, query)
 
-                query_posts: list[dict[str, Any]] = []
-                for doc in docs:
-                    if not doc.url or doc.url in seen_urls:
-                        continue
-                    seen_urls.add(doc.url)
-                    if self.relay_store.has_thread(url=doc.url):
-                        summary.thread_cache_hits += 1
-
-                    try:
-                        context = await toolkit.reddit_thread_context(doc.url)
-                    except Exception as exc:  # pragma: no cover - network/runtime dependent
-                        logger.warning("reddit_seed thread fetch failed url=%s (%s)", doc.url, exc)
-                        context = {
-                            "title": doc.title,
-                            "description": doc.snippet,
-                            "comments": [],
-                        }
-
-                    post_item = build_post_item(doc, subreddit=subreddit, thread_context=context)
-                    comment_items = build_comment_items(post_item, list(context.get("comments", []) or []))
-
-                    self.relay_store.put_thread(url=doc.url, post=post_item, comments=comment_items)
-                    self.relay_store.put_comments(url=doc.url, items=comment_items)
-
-                    summary.cached_threads += 1
-                    summary.cached_comments += len(comment_items)
-                    summary.discovered_posts += 1
-                    query_posts.append(post_item)
-
-                if not query_posts:
-                    self.relay_store.put_search(
-                        subreddit=subreddit,
-                        query=query,
-                        sort="relevance",
-                        cursor="",
-                        items=[],
-                        next_cursor="",
-                    )
-                    summary.cached_searches += 1
-                    continue
-
+            pair_summary.searched_pairs += 1
+            docs = await toolkit.reddit_search(subreddit, query, limit=self.search_limit)
+            if not docs:
+                logger.info("reddit_seed no docs subreddit=%s query=%r", subreddit, query)
                 self.relay_store.put_search(
                     subreddit=subreddit,
                     query=query,
                     sort="relevance",
                     cursor="",
-                    items=query_posts,
+                    items=[],
                     next_cursor="",
                 )
-                summary.cached_searches += 1
+                pair_summary.cached_searches += 1
+                return pair_summary
+
+            query_posts: list[dict[str, Any]] = []
+            for doc in docs:
+                if not doc.url:
+                    continue
+                async with seen_urls_lock:
+                    if doc.url in seen_urls:
+                        continue
+                    seen_urls.add(doc.url)
+
+                if self.relay_store.has_thread(url=doc.url):
+                    pair_summary.thread_cache_hits += 1
+
+                try:
+                    context = await toolkit.reddit_thread_context(doc.url)
+                except Exception as exc:  # pragma: no cover - network/runtime dependent
+                    logger.warning("reddit_seed thread fetch failed url=%s (%s)", doc.url, exc)
+                    context = {
+                        "title": doc.title,
+                        "description": doc.snippet,
+                        "comments": [],
+                    }
+
+                post_item = build_post_item(doc, subreddit=subreddit, thread_context=context)
+                comment_items = build_comment_items(post_item, list(context.get("comments", []) or []))
+
+                self.relay_store.put_thread(url=doc.url, post=post_item, comments=comment_items)
+                self.relay_store.put_comments(url=doc.url, items=comment_items)
+
+                pair_summary.cached_threads += 1
+                pair_summary.cached_comments += len(comment_items)
+                pair_summary.discovered_posts += 1
+                query_posts.append(post_item)
+
+            if not query_posts:
+                self.relay_store.put_search(
+                    subreddit=subreddit,
+                    query=query,
+                    sort="relevance",
+                    cursor="",
+                    items=[],
+                    next_cursor="",
+                )
+                pair_summary.cached_searches += 1
+                return pair_summary
+
+            self.relay_store.put_search(
+                subreddit=subreddit,
+                query=query,
+                sort="relevance",
+                cursor="",
+                items=query_posts,
+                next_cursor="",
+            )
+            pair_summary.cached_searches += 1
+            return pair_summary
+
+        try:
+            semaphore = asyncio.Semaphore(self.pair_concurrency)
+
+            async def _run_pair(subreddit: str, query: str) -> RedditSeedSummary:
+                async with semaphore:
+                    return await _process_pair(subreddit, query)
+
+            pair_summaries = await asyncio.gather(*(_run_pair(subreddit, query) for subreddit, query in pairs))
+            for pair_summary in pair_summaries:
+                summary.searched_pairs += pair_summary.searched_pairs
+                summary.skipped_fresh_pairs += pair_summary.skipped_fresh_pairs
+                summary.existing_cached_pairs += pair_summary.existing_cached_pairs
+                summary.cached_searches += pair_summary.cached_searches
+                summary.cached_threads += pair_summary.cached_threads
+                summary.cached_comments += pair_summary.cached_comments
+                summary.discovered_posts += pair_summary.discovered_posts
+                summary.thread_cache_hits += pair_summary.thread_cache_hits
 
             summary.unique_urls = len(seen_urls)
             summary.uncovered_pairs = max(summary.total_pairs - summary.existing_cached_pairs - summary.cached_searches, 0)

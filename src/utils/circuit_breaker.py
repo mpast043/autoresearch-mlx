@@ -74,7 +74,13 @@ class CircuitBreaker:
     def failure_count(self) -> int:
         return self._failure_count
 
-    async def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def call(
+        self,
+        func: Callable[..., Any],
+        *args: Any,
+        failure_predicate: Callable[[Exception], bool] | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Execute *func* through the circuit breaker.
 
         Raises CircuitOpenError if the circuit is OPEN.
@@ -92,14 +98,22 @@ class CircuitBreaker:
 
         try:
             result = await func(*args, **kwargs)
-        except Exception:
-            await self._on_failure()
+        except Exception as exc:
+            should_count_failure = True if failure_predicate is None else bool(failure_predicate(exc))
+            if should_count_failure:
+                await self._on_failure()
             raise
         else:
             await self._on_success()
             return result
 
-    async def call_sync(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def call_sync(
+        self,
+        func: Callable[..., Any],
+        *args: Any,
+        failure_predicate: Callable[[Exception], bool] | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Execute a synchronous *func* through the circuit breaker via to_thread."""
         current_state = self.state
         if current_state == CircuitState.OPEN:
@@ -113,8 +127,10 @@ class CircuitBreaker:
 
         try:
             result = await asyncio.to_thread(func, *args, **kwargs)
-        except Exception:
-            await self._on_failure()
+        except Exception as exc:
+            should_count_failure = True if failure_predicate is None else bool(failure_predicate(exc))
+            if should_count_failure:
+                await self._on_failure()
             raise
         else:
             await self._on_success()

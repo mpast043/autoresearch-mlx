@@ -196,6 +196,7 @@ class AutoResearcher:
         """Block until queue/agents idle or deadline. Returns True if drained, False on timeout."""
         deadline = asyncio.get_running_loop().time() + max(5.0, max_wait_seconds)
         quiet_cycles = 0
+        stalled_idle_cycles = 0
         last_log_at = 0.0
         last_state: dict[str, Any] | None = None
         while asyncio.get_running_loop().time() < deadline and not self.shutdown_event.is_set():
@@ -211,6 +212,17 @@ class AutoResearcher:
                     return True
             else:
                 quiet_cycles = 0
+            if (
+                last_state == state
+                and state.get("open_qualified") == 0
+                and state.get("total_busy") == 0
+            ):
+                stalled_idle_cycles += 1
+                if stalled_idle_cycles >= 50:
+                    logger.warning("treating stable idle queue as drained: %s", state)
+                    return True
+            else:
+                stalled_idle_cycles = 0
             await asyncio.sleep(0.1)
         return bool(self.completion_state().get("drained"))
 
@@ -446,15 +458,19 @@ class AutoResearcher:
 
         evidence_busy = 0
         validation_busy = 0
+        total_busy = 0
+        busy_agents: dict[str, int] = {}
         if self.agents:
-            evidence_agent = self.agents.get("evidence")
-            validation_agent = self.agents.get("validation")
-            if evidence_agent is not None and hasattr(evidence_agent, "busy_count"):
-                evidence_busy = int(evidence_agent.busy_count())
-            if validation_agent is not None and hasattr(validation_agent, "busy_count"):
-                validation_busy = int(validation_agent.busy_count())
+            for agent_name, agent in self.agents.items():
+                if agent is None or not hasattr(agent, "busy_count"):
+                    continue
+                agent_busy = int(agent.busy_count())
+                busy_agents[agent_name] = agent_busy
+                total_busy += agent_busy
+            evidence_busy = busy_agents.get("evidence", 0)
+            validation_busy = busy_agents.get("validation", 0)
 
-        drained = queue_empty and open_qualified == 0 and evidence_busy == 0 and validation_busy == 0
+        drained = queue_empty and open_qualified == 0 and total_busy == 0
         return {
             "queue_empty": queue_empty,
             "queue_size": queue_size,
@@ -462,6 +478,8 @@ class AutoResearcher:
             "actual_open_qualified": actual_open_qualified,
             "evidence_busy": evidence_busy,
             "validation_busy": validation_busy,
+            "total_busy": total_busy,
+            "busy_agents": busy_agents,
             "drained": drained,
         }
 

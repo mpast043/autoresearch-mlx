@@ -71,7 +71,7 @@ async def test_warm_validation_queries_runs_in_bridge_with_fallback(monkeypatch)
 
         async def seed(self, *, subreddits, queries):
             captured["seed"] = (list(subreddits), list(queries))
-            return type("Summary", (), {"cached_searches": 1})()
+            return type("Summary", (), {"cached_searches": 1, "uncovered_pairs": 0})()
 
     monkeypatch.setattr("reddit_seed.RedditSeeder", FakeSeeder)
     transport = build_transport()

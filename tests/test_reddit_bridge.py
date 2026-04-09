@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from src.reddit_bridge import BridgeError, RedditBridgeClient, normalize_reddit_item
+from src.utils.circuit_breaker import CircuitState, get_breaker, reset_all
 
 
 def test_normalize_reddit_item_enforces_stable_shape():
@@ -168,3 +169,42 @@ async def test_bridge_client_reuses_single_bounded_session(monkeypatch):
     assert created_connectors[0].limit == 3
     assert len(created_sessions[0].calls) == 2
     assert created_sessions[0].closed is True
+
+
+@pytest.mark.asyncio
+async def test_bridge_live_search_failures_do_not_open_circuit():
+    reset_all()
+    client = RedditBridgeClient({"enabled": True, "base_url": "https://bridge.example.com"})
+
+    async def fake_do_post(path, payload):
+        raise BridgeError("upstream_reddit_failure", "live reddit search failed", 502)
+
+    client._do_post = fake_do_post
+
+    for _ in range(4):
+        with pytest.raises(BridgeError) as exc:
+            await client._post("/api/reddit/search-posts", {"query": "manual cleanup"})
+        assert exc.value.code == "upstream_reddit_failure"
+
+    breaker = get_breaker("reddit_bridge")
+    assert breaker.state == CircuitState.CLOSED
+    assert breaker.failure_count == 0
+
+
+@pytest.mark.asyncio
+async def test_bridge_auth_failures_still_open_circuit():
+    reset_all()
+    client = RedditBridgeClient({"enabled": True, "base_url": "https://bridge.example.com"})
+
+    async def fake_do_post(path, payload):
+        raise BridgeError("auth_failed", "reddit bridge rejected the bearer token", 401)
+
+    client._do_post = fake_do_post
+
+    for _ in range(3):
+        with pytest.raises(BridgeError) as exc:
+            await client._post("/api/reddit/search-posts", {"query": "manual cleanup"})
+        assert exc.value.code == "auth_failed"
+
+    breaker = get_breaker("reddit_bridge")
+    assert breaker.state == CircuitState.OPEN

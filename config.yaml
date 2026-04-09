@@ -106,8 +106,8 @@ discovery:
     pair_concurrency: 3
     # Prime only a small, diversified relay seed set per run.
     reddit_seed_query_limit: 8
-    # For each sub×keyword pair, run these Reddit sort modes (all/recent/top/comments).
-    search_sorts: ["relevance", "new", "top", "comments"]
+    # Favor precision and throughput over breadth in discovery.
+    search_sorts: ["relevance", "new"]
     # Per sort mode result limit and hard cap per sub×keyword pair after URL dedupe.
     per_sort_limit: 2
     max_docs_per_pair: 6
@@ -213,6 +213,10 @@ llm:
   base_url: http://localhost:11434
   max_tokens: 2000
   timeout: 180
+
+build_prep:
+  wedge_evaluation:
+    feedback_to_discovery_terms: false
 
 validation:
   promotion_threshold: 0.45

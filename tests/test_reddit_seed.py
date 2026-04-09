@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sqlite3
 import shutil
 import sys
 import tempfile
@@ -144,6 +145,38 @@ def test_seed_caches_empty_search_results_for_no_doc_pairs():
         result = store.get_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="", limit=10)
         assert result is not None
         assert result["items"] == []
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_seed_recovers_when_search_cache_table_is_missing():
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        store = RedditRelayStore(path)
+        with sqlite3.connect(path) as conn:
+            conn.execute("DROP TABLE reddit_search_cache")
+
+        seeder = RedditSeeder(
+            {"discovery": {"reddit": {"seed_limit": 1}}, "reddit_relay": {"cache_db_path": path}},
+            relay_store=store,
+        )
+
+        class StubToolkit:
+            async def reddit_search(self, subreddit, query, limit=2):
+                return []
+
+            async def reddit_thread_context(self, url):
+                raise AssertionError("thread context should not be called for empty search results")
+
+        seeder.build_toolkit = lambda: StubToolkit()
+        coverage = seeder.coverage_report(subreddits=["sysadmin"], queries=["manual reconciliation"])
+        summary = asyncio.run(seeder.seed(subreddits=["sysadmin"], queries=["manual reconciliation"]))
+
+        assert coverage.total_pairs == 1
+        assert coverage.uncovered_pairs == 1
+        assert summary.cached_searches == 1
+        assert store.has_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="")
     finally:
         if os.path.exists(path):
             os.remove(path)

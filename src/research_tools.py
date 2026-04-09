@@ -357,6 +357,73 @@ NON_PROBLEM_DISCOVERY_PATTERNS = [
     "this week's top ecommerce news stories",
 ]
 
+LOW_VALUE_REDDIT_PREFILTER_PATTERNS = [
+    "what are you using for",
+    "what's the best",
+    "what is the best",
+    "best inventory management app",
+    "best software for",
+    "best app for",
+    "unbiased review",
+    "automated software still makes us do",
+    "what's the most outdated process",
+    "what is the most outdated process",
+    "how are you guys managing",
+    "how are you reducing repetitive admin work",
+    "how do you manage inventory as you scale",
+    "how do you handle importing old data",
+    "price / competitor monitoring",
+]
+
+LOW_VALUE_REDDIT_TITLE_PREFIXES = [
+    "how do you handle",
+    "how are you",
+    "what's the one task",
+    "what is the one task",
+    "is anyone else's",
+    "anyone else",
+    "for those of you",
+    "has anyone actually",
+]
+
+REDDIT_PREFILTER_FAILURE_TERMS = [
+    "still showing",
+    "duplicate",
+    "duplicates",
+    "duplicated",
+    "mismatch",
+    "not matching",
+    "does not match",
+    "wrong",
+    "missing",
+    "break",
+    "broken",
+    "out of sync",
+    "delay",
+    "delayed",
+    "failed",
+    "fails",
+    "error",
+]
+
+REDDIT_PREFILTER_OBJECT_TERMS = [
+    "order",
+    "orders",
+    "analytics",
+    "invoice",
+    "invoices",
+    "payment",
+    "payments",
+    "csv",
+    "import",
+    "export",
+    "inventory",
+    "report",
+    "reports",
+    "spreadsheet",
+    "reconciliation",
+]
+
 WORKAROUND_SIGNAL_TERMS = [
     "manual",
     "manually",
@@ -426,6 +493,13 @@ WEB_PROBLEM_REJECT_DOMAIN_TOKENS = [
     "support.",
     "community.",
     "forum.",
+    "g2.",
+    "capterra.",
+    "getapp.",
+    "saashub.",
+    "softwareadvice.",
+    "trustradius.",
+    "slashdot.",
 ]
 
 WEB_PROBLEM_REJECT_PATH_TOKENS = [
@@ -445,12 +519,22 @@ WEB_PROBLEM_REJECT_PATH_TOKENS = [
     "/content/",
     "/discussion",
     "/discussions/",
+    "/best-",
+    "/alternatives",
+    "/compare",
+    "/comparison",
+    "/reviews/",
+    "/top-",
 ]
 
 WEB_PROBLEM_REJECT_TEXT_PATTERNS = [
     "tutorial:",
     "unlock the secrets",
+    "best software",
     "best for",
+    "alternatives to",
+    "top tools",
+    "software directory",
     "read to know",
     "discover how to",
     "discover how",
@@ -466,6 +550,43 @@ WEB_PROBLEM_REJECT_TEXT_PATTERNS = [
 WEB_PROBLEM_CONTENT_FARM_DOMAINS = {
     "fastercapital.com",
 }
+LOW_QUALITY_CORROBORATION_DOMAIN_TOKENS = [
+    "g2.",
+    "capterra.",
+    "getapp.",
+    "saashub.",
+    "softwareadvice.",
+    "trustradius.",
+    "slashdot.",
+]
+LOW_QUALITY_CORROBORATION_PATH_TOKENS = [
+    "/best-",
+    "/alternatives",
+    "/compare",
+    "/comparison",
+    "/reviews/",
+    "/top-",
+    "/list/",
+]
+LOW_QUALITY_CORROBORATION_TEXT_PATTERNS = [
+    "best software",
+    "top tools",
+    "alternatives to",
+    "software directory",
+    "compare the best",
+    "top 10",
+]
+YOUTUBE_LOW_SIGNAL_VIDEO_PATTERNS = [
+    "best shopify apps",
+    "shopify app recommendations",
+    "shopify app vs",
+    "top 10",
+    "top tools",
+    "must-have apps",
+    "must have apps",
+    "roundup",
+    "alternatives",
+]
 
 HIGH_VALUE_DISCOVERY_QUERY_TERMS = {
     "reddit-problem": {
@@ -780,7 +901,7 @@ class ResearchToolkit:
             validation_search.get("competitor_budget_seconds", 6.0)
         )
         self.search_domain_cap = max(1, int(validation_search.get("max_results_per_domain", 2)))
-        self.ddgs_backend = validation_search.get("ddgs_backend", "api")
+        self.ddgs_backend = validation_search.get("ddgs_backend", "duckduckgo")
         self.ddgs_extra_results = max(0, int(validation_search.get("ddgs_extra_results", 4)))
         self.result_title_length = max(20, int(validation_search.get("result_title_length", 180)))
         self.result_snippet_length = max(20, int(validation_search.get("result_snippet_length", 320)))
@@ -1423,6 +1544,17 @@ class ResearchToolkit:
             return True
         return False
 
+    def _is_low_quality_corroboration_page(self, *, title: str, snippet: str, domain: str, url: str) -> bool:
+        haystack = compact_text(f"{title} {snippet} {domain} {url}".lower(), 1200)
+        path = url_path(url)
+        if any(token in domain for token in LOW_QUALITY_CORROBORATION_DOMAIN_TOKENS):
+            return True
+        if any(token in path for token in LOW_QUALITY_CORROBORATION_PATH_TOKENS):
+            return True
+        if any(pattern in haystack for pattern in LOW_QUALITY_CORROBORATION_TEXT_PATTERNS):
+            return True
+        return False
+
     def _is_problem_candidate(self, title: str, body: str, *, source_url: str = "") -> bool:
         """Lightweight heuristic gate used at discovery time.
 
@@ -1463,6 +1595,85 @@ class ResearchToolkit:
                 f"pain={pain_hits} workaround={workaround_hits} freq={frequency_hits} cost={cost_hits} behavioral={behavioral}"
             )
         return score >= min_score
+
+    def _is_concrete_youtube_problem_comment(self, text: str) -> bool:
+        haystack = normalize_content(text)
+        failure_terms = [
+            "broken",
+            "fails",
+            "failed",
+            "error",
+            "missing",
+            "duplicate",
+            "duplicating",
+            "out of sync",
+            "wrong",
+            "still showing",
+            "manual workaround",
+        ]
+        artifact_terms = [
+            "csv",
+            "import",
+            "export",
+            "invoice",
+            "payment",
+            "inventory",
+            "shipment",
+            "label",
+            "order",
+            "backup",
+            "restore",
+            "sync",
+            "reconciliation",
+            "spreadsheet",
+        ]
+        consequence_terms = [
+            "hours",
+            "manual",
+            "lost",
+            "refund",
+            "risk",
+            "revenue",
+            "downtime",
+            "customers",
+        ]
+        return any(term in haystack for term in failure_terms) and (
+            any(term in haystack for term in artifact_terms)
+            or any(term in haystack for term in consequence_terms)
+        )
+
+    def _should_keep_youtube_comment_candidate(self, *, title: str, snippet: str, comments: list[dict[str, Any]]) -> bool:
+        haystack = normalize_content(f"{title} {snippet}")
+        if any(pattern in haystack for pattern in YOUTUBE_LOW_SIGNAL_VIDEO_PATTERNS):
+            return False
+        concrete_comments = [
+            comment
+            for comment in comments
+            if self._is_concrete_youtube_problem_comment(str(comment.get("text", "") or ""))
+        ]
+        return len(concrete_comments) >= 2
+
+    def _should_hydrate_reddit_problem_doc(self, doc: SearchDocument) -> bool:
+        """Cheap pre-hydration screen for Reddit problem discovery.
+
+        Uses only title/snippet/url so we can skip thread fetches for obvious
+        non-problem results like recap/news/summary posts.
+        """
+        title = getattr(doc, "title", "") or ""
+        snippet = getattr(doc, "snippet", "") or ""
+        url = getattr(doc, "url", "") or ""
+        cheap_text = compact_text(f"{title} {snippet}", 800)
+        cheap_haystack = compact_text(f"{title} {snippet} {url}".lower(), 900)
+        title_lower = compact_text(title.lower(), 240)
+        if any(pattern in cheap_haystack for pattern in LOW_VALUE_REDDIT_PREFILTER_PATTERNS):
+            return False
+        has_specific_failure = any(term in cheap_haystack for term in REDDIT_PREFILTER_FAILURE_TERMS)
+        has_specific_object = any(term in cheap_haystack for term in REDDIT_PREFILTER_OBJECT_TERMS)
+        if has_specific_failure and has_specific_object:
+            return True
+        if any(title_lower.startswith(prefix) for prefix in LOW_VALUE_REDDIT_TITLE_PREFIXES):
+            return False
+        return self._is_problem_candidate(title, cheap_text, source_url=url)
 
     @staticmethod
     def _reddit_query_matches_subreddit(subreddit: str, query: str) -> bool:
@@ -1536,6 +1747,8 @@ class ResearchToolkit:
         if intent == "validation_recurrence":
             haystack = f"{title} {snippet} {domain} {url}".lower()
             if any(pattern in haystack for pattern in BLOG_LIKE_PATTERNS):
+                return False
+            if self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
                 return False
             return overlap >= 2 and (
                 self._pain_score(haystack) >= 1
@@ -2194,6 +2407,12 @@ class ResearchToolkit:
             ]
             if not problem_comments:
                 continue
+            if not self._should_keep_youtube_comment_candidate(
+                title=doc.title,
+                snippet=doc.snippet,
+                comments=problem_comments,
+            ):
+                continue
             comment_texts = " | ".join(c["text"][:200] for c in problem_comments[:5])
             findings.append({
                 "source": "youtube",
@@ -2414,6 +2633,8 @@ class ResearchToolkit:
                         )
                         for doc in direct_docs:
                             if not doc.url or doc.url in pair_seen:
+                                continue
+                            if not self._should_hydrate_reddit_problem_doc(doc):
                                 continue
                             pair_seen.add(doc.url)
                             pair_docs.append((sort_mode, doc))
@@ -3572,7 +3793,36 @@ class ResearchToolkit:
             "error",
             "automation",
         ]
-        return any(marker in haystack for marker in technical_markers)
+        operator_transfer_markers = [
+            "import",
+            "export",
+            "csv",
+            "spreadsheet",
+            "reconciliation",
+            "invoice",
+            "payment",
+            "order",
+            "inventory",
+            "shipment",
+            "sync",
+            "backup",
+            "restore",
+        ]
+        implementation_only_markers = [
+            "unit test",
+            "mock",
+            "fixture",
+            "lint",
+            "refactor",
+            "typescript",
+            "react component",
+            "css",
+        ]
+        return (
+            any(marker in haystack for marker in technical_markers)
+            and any(marker in haystack for marker in operator_transfer_markers)
+            and not any(marker in haystack for marker in implementation_only_markers)
+        )
 
     def _family_fit_score(
         self,
@@ -3648,11 +3898,12 @@ class ResearchToolkit:
     ) -> CorroborationAction:
         meaningful = self._meaningful_candidate_snapshot(atom)
         max_attempts = max(1, corroboration_plan.max_attempts_per_family)
+        specificity_score = float(budget_profile.get("specificity_score", 0.0) or 0.0)
         remaining_beta = sum(max(0, max_attempts - int(source_attempts_by_family.get(family, 0) or 0)) for family in available_families)
         budget_snapshot = {
             "remaining_beta": remaining_beta,
             "target_sources": int(budget_profile.get("target_sources", 1) or 1),
-            "specificity_score": float(budget_profile.get("specificity_score", 0.0) or 0.0),
+            "specificity_score": specificity_score,
             "family_attempts": {family: int(source_attempts_by_family.get(family, 0) or 0) for family in available_families},
         }
         if not meaningful["meaningful_candidate"]:
@@ -3678,6 +3929,12 @@ class ResearchToolkit:
             docs_retrieved = int(family_yield.get("docs_retrieved", 0) or 0)
             strong_matches = int(family_yield.get("docs_strong_match", 0) or 0)
             partial_matches = int(family_yield.get("docs_partial_match", 0) or 0)
+            high_specificity_cross_source_retry = (
+                specificity_score >= 0.85
+                and promotion_gap_class in {"corroboration_gap", "evidence_sufficiency_gap"}
+                and family_confirmation_count >= 1
+                and attempts < max_attempts
+            )
             if attempts >= max_attempts:
                 return CorroborationAction(
                     action="STOP_FOR_BUDGET",
@@ -3705,6 +3962,17 @@ class ResearchToolkit:
                 and promotion_gap_class in {"corroboration_gap", "evidence_sufficiency_gap"}
                 and family_confirmation_count >= 1
             ):
+                if high_specificity_cross_source_retry:
+                    return CorroborationAction(
+                        action="RETRY_WITH_RESHAPED_QUERY",
+                        target_family=current_family,
+                        reason="high_specificity_cross_source_retry",
+                        expected_gain_class="medium",
+                        budget_snapshot=budget_snapshot,
+                        fallback_strategy="decomposed_query_switch",
+                        promotion_gap_class=promotion_gap_class,
+                        sufficiency_priority_reason=near_miss_action.get("sufficiency_priority_reason", ""),
+                    )
                 return CorroborationAction(
                     action="STOP_FOR_BUDGET",
                     target_family=current_family,
@@ -3733,6 +4001,17 @@ class ResearchToolkit:
                     and promotion_gap_class in {"corroboration_gap", "evidence_sufficiency_gap"}
                     and family_confirmation_count >= 1
                 ):
+                    if high_specificity_cross_source_retry:
+                        return CorroborationAction(
+                            action="RETRY_WITH_RESHAPED_QUERY",
+                            target_family=current_family,
+                            reason="high_specificity_partial_confirmation_retry",
+                            expected_gain_class="medium",
+                            budget_snapshot=budget_snapshot,
+                            fallback_strategy="tighten_match_grammar",
+                            promotion_gap_class=promotion_gap_class,
+                            sufficiency_priority_reason=near_miss_action.get("sufficiency_priority_reason", ""),
+                        )
                     return CorroborationAction(
                         action="STOP_FOR_BUDGET",
                         target_family=current_family,
@@ -3796,6 +4075,8 @@ class ResearchToolkit:
                     score += 0.12
                 if fit_score < 0.4:
                     score -= 0.18
+            if specificity_score >= 0.85 and family_confirmation_count >= 1 and family in {"web", "github", "stackoverflow"}:
+                score += 0.14
             if family == "web" and not self._atom_supports_github_recurrence(atom=atom):
                 score += 0.08
             candidates.append((score, family, fit_reason))
@@ -5146,7 +5427,7 @@ class ResearchToolkit:
         github_enabled = self._atom_supports_github_recurrence(atom=atom)
         if github_enabled:
             sites.append(("github.com", "github"))
-        if any(term in haystack for term in ["developer", "engineer", "sysadmin", "admin", "mdt", "script", "deployment", "integration", "plugin", "config", "api", "webhook", "oauth", "m365"]):
+        if self._atom_supports_stackoverflow_recurrence(atom):
             sites.append(("stackoverflow.com", "stackoverflow"))
         if "etsy" in haystack:
             sites.append(("community.etsy.com", "etsy"))
@@ -5229,10 +5510,48 @@ class ResearchToolkit:
         if any(term in haystack for term in ["backup", "restore", "recovery", "compliance", "audit", "sync", "handoff"]):
             specificity += 0.1
         specificity = min(1.0, specificity)
+        specific_context_markers = [
+            "receipt",
+            "issue",
+            "invoice",
+            "payment",
+            "reconciliation",
+            "bank",
+            "csv",
+            "import",
+            "export",
+            "order",
+            "shipment",
+            "label",
+            "stock",
+            "inventory",
+            "contract",
+            "quantity",
+            "duplicate",
+            "goods receipt",
+            "goods issue",
+            "vendor",
+        ]
+        has_specific_context = any(term in haystack for term in specific_context_markers)
         is_generic_manual = (
             any(term in haystack for term in ["manual work", "manual process", "manual task"])
             and not any(term in haystack for term in ["backup", "restore", "compliance", "sync", "shipping", "pricing", "audit"])
+            and not has_specific_context
         )
+        if specificity >= 0.85 and not is_generic_manual:
+            return {
+                "specificity_score": round(specificity, 4),
+                "query_limit": 5,
+                "subreddit_limit": 3,
+                "site_limit": 4,
+                "probe_query_limit": 1,
+                "probe_subreddit_limit": 1,
+                "probe_site_limit": 1,
+                "probe_max_results": 2,
+                "target_docs": 7,
+                "target_sources": 2,
+                "early_stop_docs": max(7, self.validation_recurrence_limit + 1),
+            }
         if specificity >= 0.72 and not is_generic_manual:
             return {
                 "specificity_score": round(specificity, 4),
