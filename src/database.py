@@ -184,6 +184,7 @@ class ProblemAtom:
     platform: str = ""
     specificity_score: float = 0.0
     consequence_score: float = 0.0
+    atom_extraction_method: str = "heuristic"
     id: Optional[int] = None
     created_at: Optional[str] = None
 
@@ -688,6 +689,7 @@ class Database:
                 current_tools TEXT DEFAULT '',
                 source_quote TEXT DEFAULT '',
                 confidence_score REAL DEFAULT 0,
+                atom_extraction_method TEXT DEFAULT 'heuristic',
                 atom_json TEXT DEFAULT '{}',
                 score_json TEXT DEFAULT '{}',
                 metadata_json TEXT DEFAULT '{}',
@@ -1101,6 +1103,7 @@ class Database:
             """,
         )
         _ensure_column(conn, "problem_atoms", "metadata_json", "TEXT DEFAULT '{}'")
+        _ensure_column(conn, "problem_atoms", "atom_extraction_method", "TEXT DEFAULT 'heuristic'")
         _ensure_column(conn, "opportunity_clusters", "metadata_json", "TEXT DEFAULT '{}'")
         _ensure_column(
             conn,
@@ -1554,6 +1557,7 @@ class Database:
             "platform": getattr(atom, 'platform', ''),
             "specificity_score": getattr(atom, 'specificity_score', 0.0),
             "consequence_score": getattr(atom, 'consequence_score', 0.0),
+            "atom_extraction_method": getattr(atom, 'atom_extraction_method', 'heuristic'),
             "metadata_json": _json_dumps(metadata),
         }
         insert_columns = [column for column in atom_payload if column in table_columns]

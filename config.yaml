@@ -61,7 +61,7 @@ discovery:
     - wordpress_reviews
     - shopify_reviews
   candidate_filter:
-    min_score: 1
+    min_score: 2
     behavioral_min_signals: 1
     behavioral_penalty: 1
   # App/plugin review lanes (1–2 star pain). Tune slugs/handles to niches you care about.
@@ -215,8 +215,8 @@ llm:
   timeout: 180
 
 validation:
-  promotion_threshold: 0.18  # v4: Calibrated to P90 of decision_score distribution
-  park_threshold: 0.15       # v4: Keep current
+  promotion_threshold: 0.45
+  park_threshold: 0.35
   # Evidence/gathering search settings
   search:
     query_terms: 14

@@ -500,6 +500,10 @@ class ValidationAgent(BaseAgent):
             cost_consequence_clues=atom_payload["cost_consequence_clues"],
             why_now_clues=atom_payload["why_now_clues"],
             confidence=atom_payload["confidence"],
+            platform=atom_payload.get("platform", ""),
+            specificity_score=atom_payload.get("specificity_score", 0.0),
+            consequence_score=atom_payload.get("consequence_score", 0.0),
+            atom_extraction_method=atom_payload.get("atom_extraction_method", "heuristic"),
             atom_json=json.dumps(atom_payload["atom_json"]),
         )
         atom.id = self.db.insert_problem_atom(atom)

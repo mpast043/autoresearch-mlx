@@ -1736,7 +1736,21 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
     # try the LLM to fill them in. This runs AFTER heuristics so the
     # LLM has context from the heuristic attempt and only fills gaps.
     _llm_atom_config = _get_llm_atom_config()
-    if _llm_atom_config and _atom_needs_llm(failure_mode, pain_statement, trigger_event):
+    _needs_llm = _atom_needs_llm(failure_mode, pain_statement, trigger_event)
+    _atom_extraction_method = "heuristic"
+    logger.debug(
+        "LLM atom extraction check: config_loaded=%s, needs_llm=%s, "
+        "pain_empty=%s, failure_empty=%s, trigger_empty=%s, "
+        "pain_eq_failure=%s, title=%.60s",
+        bool(_llm_atom_config),
+        _needs_llm,
+        not pain_statement,
+        not failure_mode,
+        not trigger_event,
+        pain_statement == failure_mode if pain_statement and failure_mode else False,
+        title_text[:60],
+    )
+    if _llm_atom_config and _needs_llm:
         try:
             from src.llm_discovery_expander import LLMAtomExtractor
             _extractor = LLMAtomExtractor(_llm_atom_config)
@@ -1750,24 +1764,40 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
                 "cost_consequence_clues": ", ".join(cost_clues),
             }
             _enhanced = _extractor.extract(text, _heuristic_atom)
-            # Merge improved fields back
-            if _enhanced.get("user_role") and len(_enhanced["user_role"]) > len(user_role):
+            # Merge improved fields back.
+            # Use LLM result when: (a) heuristic was empty, (b) heuristic
+            # was same-as-pain (indicating extraction failure), or (c) LLM
+            # result is meaningfully longer (not just slightly longer).
+            # We do NOT require the LLM result to be strictly longer than
+            # the heuristic — a shorter but more specific result is better
+            # than a longer but generic one.
+            _pain_eq_failure = (pain_statement and failure_mode
+                                and pain_statement == failure_mode)
+            if _enhanced.get("user_role") and (not user_role or len(_enhanced["user_role"]) > len(user_role)):
                 user_role = _enhanced["user_role"]
-            if _enhanced.get("job_to_be_done") and len(_enhanced["job_to_be_done"]) > len(job_to_be_done):
+            if _enhanced.get("job_to_be_done") and (not job_to_be_done or len(_enhanced["job_to_be_done"]) > len(job_to_be_done)):
                 job_to_be_done = _enhanced["job_to_be_done"]
-            if _enhanced.get("trigger_event") and len(_enhanced["trigger_event"]) > len(trigger_event):
+            if _enhanced.get("trigger_event") and (not trigger_event or len(_enhanced["trigger_event"]) > len(trigger_event)):
                 trigger_event = _enhanced["trigger_event"]
-            if _enhanced.get("pain_statement") and len(_enhanced["pain_statement"]) > len(pain_statement):
+            # Pain/failure: always prefer LLM when heuristic produced
+            # identical pain==failure (extraction failure), even if LLM
+            # result is shorter — specificity beats length.
+            if _enhanced.get("pain_statement") and (not pain_statement or _pain_eq_failure or len(_enhanced["pain_statement"]) > len(pain_statement)):
                 pain_statement = _enhanced["pain_statement"]
-            if _enhanced.get("failure_mode") and len(_enhanced["failure_mode"]) > len(failure_mode):
+            if _enhanced.get("failure_mode") and (not failure_mode or _pain_eq_failure or len(_enhanced["failure_mode"]) > len(failure_mode)):
                 failure_mode = _enhanced["failure_mode"]
-            if _enhanced.get("current_workaround") and len(_enhanced["current_workaround"]) > len(", ".join(workarounds)):
+            if _enhanced.get("current_workaround") and (not workarounds or len(_enhanced["current_workaround"]) > len(", ".join(workarounds))):
                 workarounds = _enhanced["current_workaround"].split(", ")
-            if _enhanced.get("cost_consequence_clues") and len(_enhanced["cost_consequence_clues"]) > len(", ".join(cost_clues)):
+            if _enhanced.get("cost_consequence_clues") and (not cost_clues or len(_enhanced["cost_consequence_clues"]) > len(", ".join(cost_clues))):
                 cost_clues = _enhanced["cost_consequence_clues"].split(", ")
+            _atom_extraction_method = "llm_enhanced"
             logger.info("LLM atom extraction enhanced fields for atom from: %s", title_text[:60])
         except Exception as e:
             logger.warning("LLM atom extraction failed, keeping heuristic: %s", e)
+    elif not _llm_atom_config:
+        logger.debug("LLM atom extraction skipped: config not loaded")
+    elif not _needs_llm:
+        logger.debug("LLM atom extraction skipped: heuristic quality sufficient")
 
     return {
         "cluster_key": cluster_key,
@@ -1793,6 +1823,7 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
         "specificity_score": quality_signals.get("specificity_score", 0.0),
         "consequence_score": quality_signals.get("consequence_score", 0.0),
         "quality_issues": quality_signals.get("quality_issues", []),
+        "atom_extraction_method": _atom_extraction_method,
         "atom_json": {
             "source_type": signal_payload.get("source_type", "web"),
             "workaround_terms": workarounds,
@@ -1807,6 +1838,7 @@ def build_problem_atom(signal_payload: dict[str, Any], finding_data: dict[str, A
             # Include quality signals
             "platform": platform,
             "quality_issues": quality_signals.get("quality_issues", []),
+            "atom_extraction_method": _atom_extraction_method,
         },
     }
 
