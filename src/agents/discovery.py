@@ -269,6 +269,30 @@ def _serialize_atom_json(atom_payload: dict[str, Any]) -> str:
     return json.dumps(atom_json)
 
 
+def _normalize_term_list(value: Any, *, subreddit: bool = False) -> list[str]:
+    if value is None:
+        items: list[Any] = []
+    elif isinstance(value, str):
+        items = [piece for piece in re.split(r"[\n,]+", value) if piece]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = [value]
+
+    normalized: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if subreddit:
+            text = re.sub(r"^/?r/", "", text, flags=re.IGNORECASE).strip()
+            if len(text) < 2:
+                continue
+        if text not in normalized:
+            normalized.append(text)
+    return normalized
+
+
 DISCOVERY_THEME_RULES = [
     {
         "theme_key": "workflow_fragility",
@@ -288,7 +312,6 @@ DISCOVERY_THEME_RULES = [
             "duct tape spreadsheets",
             "manual handoff workflow",
             "latest spreadsheet version confusion",
-            "which spreadsheet is latest",
             "outgrown spreadsheets operations",
         ],
     },
@@ -723,7 +746,6 @@ class DiscoveryAgent(BaseAgent):
                         "spreadsheet version confusion forum",
                         "manual reconciliation forum",
                         "manual handoff workflow forum",
-                        "which spreadsheet is latest",
                         "workflow handoff tool too expensive",
                     ],
                 ),
@@ -1841,6 +1863,8 @@ class DiscoveryAgent(BaseAgent):
 
         discovery_cfg = self.config.get("discovery", {})
         reddit_cfg = discovery_cfg.get("reddit", {})
+        base_discovery_cfg = self.base_config.setdefault("discovery", {})
+        base_reddit_cfg = base_discovery_cfg.setdefault("reddit", {})
 
         # Collect all derived terms from new spaces
         new_keywords: list[str] = []
@@ -1850,17 +1874,17 @@ class DiscoveryAgent(BaseAgent):
 
         for space in spaces:
             if space.keywords:
-                new_keywords.extend(space.keywords)
+                new_keywords.extend(_normalize_term_list(space.keywords))
             if space.subreddits:
-                new_subreddits.extend(space.subreddits)
+                new_subreddits.extend(_normalize_term_list(space.subreddits, subreddit=True))
             if space.web_queries:
-                new_web_queries.extend(space.web_queries)
+                new_web_queries.extend(_normalize_term_list(space.web_queries))
             if space.github_queries:
-                new_github_queries.extend(space.github_queries)
+                new_github_queries.extend(_normalize_term_list(space.github_queries))
 
         # Merge into config (dedup)
-        existing_keywords = reddit_cfg.get("problem_keywords", []) or []
-        existing_subreddits = reddit_cfg.get("problem_subreddits", []) or []
+        existing_keywords = _normalize_term_list(reddit_cfg.get("problem_keywords", []) or [])
+        existing_subreddits = _normalize_term_list(reddit_cfg.get("problem_subreddits", []) or [], subreddit=True)
 
         merged_keywords = list(dict.fromkeys(existing_keywords + new_keywords))
         merged_subreddits = list(dict.fromkeys(existing_subreddits + new_subreddits))
@@ -1868,17 +1892,23 @@ class DiscoveryAgent(BaseAgent):
         # Update config in-place so get_expanded_config picks them up
         reddit_cfg["problem_keywords"] = merged_keywords
         reddit_cfg["problem_subreddits"] = merged_subreddits
+        base_reddit_cfg["problem_keywords"] = list(merged_keywords)
+        base_reddit_cfg["problem_subreddits"] = list(merged_subreddits)
 
         # Also add web and github queries to their respective config sections
         web_cfg = discovery_cfg.get("web", {})
-        existing_web_keywords = web_cfg.get("keywords", []) or []
+        base_web_cfg = base_discovery_cfg.setdefault("web", {})
+        existing_web_keywords = _normalize_term_list(web_cfg.get("keywords", []) or [])
         merged_web = list(dict.fromkeys(existing_web_keywords + new_web_queries))
         web_cfg["keywords"] = merged_web
+        base_web_cfg["keywords"] = list(merged_web)
 
         github_cfg = discovery_cfg.get("github", {})
-        existing_gh_keywords = github_cfg.get("problem_keywords", []) or []
+        base_github_cfg = base_discovery_cfg.setdefault("github", {})
+        existing_gh_keywords = _normalize_term_list(github_cfg.get("problem_keywords", []) or [])
         merged_gh = list(dict.fromkeys(existing_gh_keywords + new_github_queries))
         github_cfg["problem_keywords"] = merged_gh
+        base_github_cfg["problem_keywords"] = list(merged_gh)
 
         logger.info(
             "Merged problem space queries: +%d keywords, +%d subreddits, +%d web, +%d github",

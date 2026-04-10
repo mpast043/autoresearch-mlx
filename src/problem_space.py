@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+import json
 
 
 # Lifecycle states
@@ -33,6 +34,33 @@ TERM_WEB_QUERY = "web_query"
 TERM_GITHUB_QUERY = "github_query"
 
 VALID_TERM_TYPES = {TERM_KEYWORD, TERM_SUBREDDIT, TERM_WEB_QUERY, TERM_GITHUB_QUERY}
+
+
+def _coerce_json_list(raw: str, *, subreddit: bool = False) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except Exception:
+        data = raw
+    if isinstance(data, str):
+        items = [piece for piece in data.replace("\n", ",").split(",") if piece]
+    elif isinstance(data, (list, tuple, set)):
+        items = list(data)
+    else:
+        items = [data]
+    normalized: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if subreddit:
+            text = text.removeprefix("r/").removeprefix("/r/").strip()
+            if len(text) < 2:
+                continue
+        if text not in normalized:
+            normalized.append(text)
+    return normalized
 
 
 @dataclass
@@ -77,56 +105,57 @@ class ProblemSpace:
     def __post_init__(self) -> None:
         if self.status not in VALID_STATES:
             raise ValueError(f"Invalid status: {self.status}")
+        self.keywords_json = json.dumps(_coerce_json_list(self.keywords_json))
+        self.subreddits_json = json.dumps(_coerce_json_list(self.subreddits_json, subreddit=True))
+        self.web_queries_json = json.dumps(_coerce_json_list(self.web_queries_json))
+        self.github_queries_json = json.dumps(_coerce_json_list(self.github_queries_json))
+        self.adjacent_spaces_json = json.dumps(_coerce_json_list(self.adjacent_spaces_json))
 
     @property
     def keywords(self) -> list[str]:
-        import json
-        return json.loads(self.keywords_json) if self.keywords_json else []
+        return _coerce_json_list(self.keywords_json)
 
     @keywords.setter
     def keywords(self, value: list[str]) -> None:
-        import json
-        self.keywords_json = json.dumps(value)
+        self.keywords_json = json.dumps(_coerce_json_list(json.dumps(value) if not isinstance(value, str) else value))
 
     @property
     def subreddits(self) -> list[str]:
-        import json
-        return json.loads(self.subreddits_json) if self.subreddits_json else []
+        return _coerce_json_list(self.subreddits_json, subreddit=True)
 
     @subreddits.setter
     def subreddits(self, value: list[str]) -> None:
-        import json
-        self.subreddits_json = json.dumps(value)
+        self.subreddits_json = json.dumps(
+            _coerce_json_list(json.dumps(value) if not isinstance(value, str) else value, subreddit=True)
+        )
 
     @property
     def web_queries(self) -> list[str]:
-        import json
-        return json.loads(self.web_queries_json) if self.web_queries_json else []
+        return _coerce_json_list(self.web_queries_json)
 
     @web_queries.setter
     def web_queries(self, value: list[str]) -> None:
-        import json
-        self.web_queries_json = json.dumps(value)
+        self.web_queries_json = json.dumps(_coerce_json_list(json.dumps(value) if not isinstance(value, str) else value))
 
     @property
     def github_queries(self) -> list[str]:
-        import json
-        return json.loads(self.github_queries_json) if self.github_queries_json else []
+        return _coerce_json_list(self.github_queries_json)
 
     @github_queries.setter
     def github_queries(self, value: list[str]) -> None:
-        import json
-        self.github_queries_json = json.dumps(value)
+        self.github_queries_json = json.dumps(
+            _coerce_json_list(json.dumps(value) if not isinstance(value, str) else value)
+        )
 
     @property
     def adjacent_spaces(self) -> list[str]:
-        import json
-        return json.loads(self.adjacent_spaces_json) if self.adjacent_spaces_json else []
+        return _coerce_json_list(self.adjacent_spaces_json)
 
     @adjacent_spaces.setter
     def adjacent_spaces(self, value: list[str]) -> None:
-        import json
-        self.adjacent_spaces_json = json.dumps(value)
+        self.adjacent_spaces_json = json.dumps(
+            _coerce_json_list(json.dumps(value) if not isinstance(value, str) else value)
+        )
 
 
 @dataclass

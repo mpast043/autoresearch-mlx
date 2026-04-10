@@ -31,6 +31,35 @@ from src.problem_space_lifecycle import ProblemSpaceLifecycleManager
 logger = logging.getLogger(__name__)
 
 
+_SUBREDDIT_NAME_RE = re.compile(r"^[A-Za-z0-9_]{2,32}$")
+
+
+def _normalize_string_list(value: Any, *, kind: str = "term", limit: int | None = None) -> list[str]:
+    if value is None:
+        items: list[Any] = []
+    elif isinstance(value, str):
+        items = [piece for piece in re.split(r"[\n,]+", value) if piece]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = [value]
+
+    normalized: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if kind == "subreddit":
+            text = re.sub(r"^/?r/", "", text, flags=re.IGNORECASE).strip()
+            if not _SUBREDDIT_NAME_RE.fullmatch(text):
+                continue
+        if text not in normalized:
+            normalized.append(text)
+        if limit is not None and len(normalized) >= limit:
+            break
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # System and user prompts
 # ---------------------------------------------------------------------------
@@ -449,11 +478,11 @@ class LLMDiscoveryExpander:
                 label=proposal.get("label", space_key),
                 description=proposal.get("description", ""),
                 semantic_summary=proposal.get("semantic_summary", ""),
-                adjacent_spaces_json=json.dumps(proposal.get("adjacent_spaces", [])),
-                keywords_json=json.dumps(proposal.get("keywords", [])),
-                subreddits_json=json.dumps(proposal.get("subreddits", [])),
-                web_queries_json=json.dumps(proposal.get("web_queries", [])),
-                github_queries_json=json.dumps(proposal.get("github_queries", [])),
+                adjacent_spaces_json=json.dumps(_normalize_string_list(proposal.get("adjacent_spaces", []))),
+                keywords_json=json.dumps(_normalize_string_list(proposal.get("keywords", []))),
+                subreddits_json=json.dumps(_normalize_string_list(proposal.get("subreddits", []), kind="subreddit")),
+                web_queries_json=json.dumps(_normalize_string_list(proposal.get("web_queries", []))),
+                github_queries_json=json.dumps(_normalize_string_list(proposal.get("github_queries", []))),
                 source="llm",
                 llm_provider=self.client.provider,
                 llm_model=self.client.model,
@@ -493,10 +522,10 @@ class LLMDiscoveryExpander:
         if raw:
             data = _extract_json(raw)
             if data:
-                space.keywords = data.get("keywords", [])[:max_kw]
-                space.subreddits = data.get("subreddits", [])[:max_sub]
-                space.web_queries = data.get("web_queries", [])[:max_web]
-                space.github_queries = data.get("github_queries", [])[:max_gh]
+                space.keywords = _normalize_string_list(data.get("keywords", []), limit=max_kw)
+                space.subreddits = _normalize_string_list(data.get("subreddits", []), kind="subreddit", limit=max_sub)
+                space.web_queries = _normalize_string_list(data.get("web_queries", []), limit=max_web)
+                space.github_queries = _normalize_string_list(data.get("github_queries", []), limit=max_gh)
                 return space
 
         # Fallback: derive minimal queries from the label/description
@@ -615,6 +644,10 @@ class LLMDiscoveryExpander:
         for space in proposed_spaces:
             # Skip if space already exists with same hash
             space.generation_prompt_hash = prompt_hash
+            existing = self.db.get_problem_space(space.space_key)
+            if existing and existing.generation_prompt_hash == prompt_hash:
+                logger.info(f"ProblemSpace '{space.space_key}' already exists with same prompt hash, skipping")
+                continue
 
             # Generate derived queries via LLM
             space = await self.generate_derived_queries(space)

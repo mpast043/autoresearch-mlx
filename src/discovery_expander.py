@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,31 @@ from src.runtime.paths import resolve_project_path
 logger = logging.getLogger(__name__)
 
 DEFAULT_EXPANSION_PATH = Path("data/discovery_expansion.json")
+_SUBREDDIT_NAME_RE = re.compile(r"^[A-Za-z0-9_]{2,32}$")
+
+
+def _normalize_term_list(value: Any, *, subreddit: bool = False) -> list[str]:
+    if value is None:
+        items: list[Any] = []
+    elif isinstance(value, str):
+        items = [piece for piece in re.split(r"[\n,]+", value) if piece]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = [value]
+
+    normalized: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if subreddit:
+            text = re.sub(r"^/?r/", "", text, flags=re.IGNORECASE).strip()
+            if not _SUBREDDIT_NAME_RE.fullmatch(text):
+                continue
+        if text not in normalized:
+            normalized.append(text)
+    return normalized
 
 
 def _expansion_file(config: dict[str, Any] | None = None, *, path: str | Path | None = None) -> Path:
@@ -34,7 +60,13 @@ def load_expansion_state(
     expansion_file = _expansion_file(config, path=path)
     if expansion_file.exists():
         try:
-            return json.loads(expansion_file.read_text())
+            state = json.loads(expansion_file.read_text())
+            if isinstance(state, dict):
+                return {
+                    "keywords": _normalize_term_list(state.get("keywords", [])),
+                    "subreddits": _normalize_term_list(state.get("subreddits", []), subreddit=True),
+                    "last_expansion_ts": state.get("last_expansion_ts", 0),
+                }
         except json.JSONDecodeError:
             pass
     return {
@@ -349,8 +381,8 @@ def get_expanded_config(config: dict[str, Any]) -> dict[str, Any]:
     Returns a modified config dict with expanded discovery scope.
     """
     state = load_expansion_state(config)
-    expanded_keywords = state.get("keywords", [])
-    expanded_subreddits = state.get("subreddits", [])
+    expanded_keywords = _normalize_term_list(state.get("keywords", []))
+    expanded_subreddits = _normalize_term_list(state.get("subreddits", []), subreddit=True)
 
     if not expanded_keywords and not expanded_subreddits:
         return config
@@ -360,8 +392,10 @@ def get_expanded_config(config: dict[str, Any]) -> dict[str, Any]:
     merged = copy.deepcopy(config)
 
     reddit_config = merged.get("discovery", {}).get("reddit", {})
-    base_keywords = reddit_config.get("problem_keywords", [])
-    base_subreddits = reddit_config.get("problem_subreddits", [])
+    base_keywords = _normalize_term_list(reddit_config.get("problem_keywords", []))
+    base_subreddits = _normalize_term_list(reddit_config.get("problem_subreddits", []), subreddit=True)
+    if not bool(reddit_config.get("use_r_all")):
+        expanded_subreddits = [sub for sub in expanded_subreddits if sub.lower() != "all"]
 
     # Merge
     all_keywords = _merge_unique(base_keywords, expanded_keywords)

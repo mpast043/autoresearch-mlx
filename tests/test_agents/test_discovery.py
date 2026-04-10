@@ -106,6 +106,34 @@ def test_discover_once_refreshes_config_after_expansion(temp_db, tmp_path, monke
     assert captured["subreddits"] == ["basesub", "freshsub"]
 
 
+def test_merge_problem_space_queries_normalizes_string_subreddit_payloads(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["reddit"],
+        config={
+            "discovery": {
+                "reddit": {"problem_keywords": ["base keyword"], "problem_subreddits": ["accounting"]},
+                "web": {"keywords": []},
+                "github": {"problem_keywords": []},
+            }
+        },
+    )
+
+    class DummySpace:
+        keywords = ["fresh keyword"]
+        subreddits = "r/automation, notion, n"
+        web_queries = []
+        github_queries = []
+
+    asyncio.run(agent._merge_problem_space_queries([DummySpace()]))
+
+    reddit_cfg = agent.config["discovery"]["reddit"]
+    assert "fresh keyword" in reddit_cfg["problem_keywords"]
+    assert "automation" in reddit_cfg["problem_subreddits"]
+    assert "notion" in reddit_cfg["problem_subreddits"]
+    assert "n" not in reddit_cfg["problem_subreddits"]
+
+
 def test_discover_once_closes_old_toolkit_when_refreshing_config(temp_db, tmp_path, monkeypatch):
     state_path = tmp_path / "discovery_expansion.json"
     toolkits = []

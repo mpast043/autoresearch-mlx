@@ -144,7 +144,6 @@ discovery:
       - "returns workflow spreadsheet"
       - "supplier data spreadsheet workflow"
       - '"order received" "label printed" whatsapp spreadsheet'
-      - "which spreadsheet is latest"
       - "held together by spreadsheets"
       - "copy paste workflow"
     # Optional buckets for suggest-discovery to return per-theme keyword hints.

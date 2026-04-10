@@ -1714,6 +1714,28 @@ def test_should_hydrate_reddit_problem_doc_keeps_specific_failure_question():
     assert should_hydrate is True
 
 
+def test_should_hydrate_reddit_problem_doc_rejects_generic_tooling_questions_without_failure_shape():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="Which accounting reconciliation tools do you rely on?",
+            url="https://reddit.com/r/Accounting/comments/example-7",
+            snippet="Curious how teams handle reconciliation tooling today",
+            source="reddit/accounting",
+        )
+    ) is False
+
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="Curious how people handle Shopify NetSuite reconciliation",
+            url="https://reddit.com/r/Netsuite/comments/example-8",
+            snippet="Looking for workflow advice and recommendations",
+            source="reddit/netsuite",
+        )
+    ) is False
+
+
 def test_stackoverflow_recurrence_requires_transferable_operational_shape():
     toolkit = ResearchToolkit()
 

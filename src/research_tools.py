@@ -367,6 +367,9 @@ LOW_VALUE_REDDIT_TITLE_PREFIXES = [
     "anyone else",
     "for those of you",
     "has anyone actually",
+    "which ",
+    "curious how",
+    "looking for ",
 ]
 
 REDDIT_PREFILTER_FAILURE_TERMS = [
@@ -612,7 +615,6 @@ HIGH_VALUE_DISCOVERY_QUERY_TERMS = {
         "returns workflow": 0.65,
         "supplier data": 0.6,
         "label printed": 0.65,
-        "which spreadsheet is latest": 0.55,
     },
     "web-problem": {
         "spreadsheet version confusion": 0.7,
@@ -625,7 +627,6 @@ HIGH_VALUE_DISCOVERY_QUERY_TERMS = {
         "invoice reminder spreadsheet": 0.6,
         "pdf collaboration version": 0.6,
         "returns workflow spreadsheet": 0.6,
-        "which spreadsheet is latest": 0.55,
     },
 }
 
@@ -635,10 +636,14 @@ LOW_SIGNAL_DISCOVERY_QUERY_TERMS = {
         "manual process": 0.3,
         "workaround": 0.25,
         "wish there was a tool": 0.4,
+        "which spreadsheet is latest": 0.8,
+        "which spreadsheet is latest version": 0.8,
     },
     "web-problem": {
         '"manual process" every day': 0.35,
         '"too expensive" current tool': 0.25,
+        "which spreadsheet is latest": 0.8,
+        "which spreadsheet is latest version": 0.8,
     },
 }
 
@@ -1708,9 +1713,13 @@ class ResearchToolkit:
             return False
         has_specific_failure = any(term in cheap_haystack for term in REDDIT_PREFILTER_FAILURE_TERMS)
         has_specific_object = any(term in cheap_haystack for term in REDDIT_PREFILTER_OBJECT_TERMS)
+        has_workaround_signal = any(term in cheap_haystack for term in WORKAROUND_SIGNAL_TERMS)
+        has_cost_signal = any(term in cheap_haystack for term in COST_SIGNAL_TERMS)
         if has_specific_failure and has_specific_object:
             return True
         if any(title_lower.startswith(prefix) for prefix in LOW_VALUE_REDDIT_TITLE_PREFIXES):
+            if has_workaround_signal and has_cost_signal and has_specific_object:
+                return True
             return False
         return self._is_problem_candidate(title, cheap_text, source_url=url)
 

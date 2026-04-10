@@ -218,6 +218,30 @@ class TestLLMDiscoveryExpander(unittest.TestCase):
         assert spaces[0].label == "Tax Compliance Automation"
         assert "tax filing error" in spaces[0].keywords
 
+    def test_parse_proposals_normalizes_string_subreddit_payloads(self) -> None:
+        raw = json.dumps(
+            {
+                "proposed_spaces": [
+                    {
+                        "space_key": "spreadsheet_handoff_drift",
+                        "label": "Spreadsheet handoff drift",
+                        "description": "Workflow drift across spreadsheet handoffs",
+                        "semantic_summary": "Operators lose track of the latest sheet",
+                        "keywords": "latest spreadsheet version confusion, manual handoff workflow",
+                        "subreddits": "r/automation, notion, n",
+                        "web_queries": "latest spreadsheet version confusion",
+                        "github_queries": [],
+                        "adjacent_spaces": [],
+                    }
+                ]
+            }
+        )
+
+        spaces = self.expander.parse_proposals(raw)
+
+        assert spaces[0].keywords == ["latest spreadsheet version confusion", "manual handoff workflow"]
+        assert spaces[0].subreddits == ["automation", "notion"]
+
     def test_parse_proposals_with_markdown(self) -> None:
         raw = '```json\n{"proposed_spaces": [{"space_key": "test", "label": "Test", "description": "A test", "keywords": ["kw1"], "subreddits": ["sub1"]}]}\n```'
         spaces = self.expander.parse_proposals(raw)
@@ -357,6 +381,59 @@ async def test_expand_after_validation_with_llm(expander_with_db):
         new_spaces = await expander.expand_after_validation()
         assert len(new_spaces) >= 1
         assert new_spaces[0].space_key == "inventory_sync"
+
+
+@pytest.mark.asyncio
+async def test_expand_after_validation_skips_existing_space_with_same_prompt_hash(expander_with_db):
+    db, expander = expander_with_db
+    with patch.object(LLMClient, "agenerate", new_callable=AsyncMock) as mock_agenerate:
+        mock_agenerate.return_value = json.dumps(
+            {
+                "proposed_spaces": [
+                    {
+                        "space_key": "inventory_sync",
+                        "label": "Inventory Sync Errors",
+                        "description": "Pain around multi-channel inventory sync",
+                        "semantic_summary": "E-commerce sellers struggle with inventory sync",
+                        "keywords": ["inventory sync error"],
+                        "subreddits": ["ecommerce"],
+                        "web_queries": ["inventory sync automation"],
+                        "github_queries": ["inventory sync bug"],
+                        "adjacent_spaces": [],
+                    }
+                ]
+            }
+        )
+
+        from src.database import Opportunity, OpportunityCluster
+        cluster = OpportunityCluster(label="Test Cluster", cluster_key="test_1")
+        db.upsert_cluster(cluster)
+        opp = Opportunity(cluster_id=1, title="Test", composite_score=0.8, selection_status="prototype_candidate", market_gap="gap", recommendation="promote", status="active")
+        db.upsert_opportunity(opp)
+
+        db.upsert_problem_space(
+            ProblemSpace(
+                space_key="inventory_sync",
+                label="Inventory Sync Errors",
+                generation_prompt_hash="placeholder",
+                keywords_json=json.dumps(["inventory sync error"]),
+                subreddits_json=json.dumps(["ecommerce"]),
+            )
+        )
+        prompt_hash = expander._compute_prompt_hash(expander.gather_context())
+        db.upsert_problem_space(
+            ProblemSpace(
+                space_key="inventory_sync",
+                label="Inventory Sync Errors",
+                generation_prompt_hash=prompt_hash,
+                keywords_json=json.dumps(["inventory sync error"]),
+                subreddits_json=json.dumps(["ecommerce"]),
+            )
+        )
+
+        new_spaces = await expander.expand_after_validation()
+
+        assert new_spaces == []
 
 
 @pytest.mark.asyncio
