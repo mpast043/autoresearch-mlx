@@ -1502,6 +1502,21 @@ class Database:
             "SELECT * FROM raw_signals WHERE finding_id = ? ORDER BY id ASC", (finding_id,)
         ).fetchall()]
 
+    def get_raw_signals_for_findings(self, finding_ids: list[int]) -> dict[int, list[RawSignal]]:
+        if not finding_ids:
+            return {}
+        conn = self._get_connection()
+        placeholders = ",".join("?" for _ in finding_ids)
+        rows = conn.execute(
+            f"SELECT * FROM raw_signals WHERE finding_id IN ({placeholders}) ORDER BY finding_id ASC, id ASC",
+            finding_ids,
+        ).fetchall()
+        grouped: dict[int, list[RawSignal]] = {finding_id: [] for finding_id in finding_ids}
+        for row in rows:
+            signal = self._row_to_raw_signal(row)
+            grouped.setdefault(signal.finding_id, []).append(signal)
+        return grouped
+
     def update_raw_signal_metadata(self, signal_id: int, metadata: dict[str, Any]) -> None:
         conn = self._get_connection()
         conn.execute(
@@ -1593,6 +1608,21 @@ class Database:
         rows = conn.execute("SELECT * FROM problem_atoms WHERE finding_id = ? ORDER BY id ASC", (finding_id,)).fetchall()
         return [self._row_to_problem_atom(row) for row in rows]
 
+    def get_problem_atoms_for_findings(self, finding_ids: list[int]) -> dict[int, list[ProblemAtom]]:
+        if not finding_ids:
+            return {}
+        conn = self._get_connection()
+        placeholders = ",".join("?" for _ in finding_ids)
+        rows = conn.execute(
+            f"SELECT * FROM problem_atoms WHERE finding_id IN ({placeholders}) ORDER BY finding_id ASC, id ASC",
+            finding_ids,
+        ).fetchall()
+        grouped: dict[int, list[ProblemAtom]] = {finding_id: [] for finding_id in finding_ids}
+        for row in rows:
+            atom = self._row_to_problem_atom(row)
+            grouped.setdefault(atom.finding_id, []).append(atom)
+        return grouped
+
     def get_problem_atoms_by_cluster_key(self, cluster_key: str) -> list[ProblemAtom]:
         conn = self._get_connection()
         table_columns = _table_columns(conn, "problem_atoms")
@@ -1644,6 +1674,34 @@ class Database:
             if row:
                 return self._row_to_cluster(row)
         return None
+
+    def get_clusters_by_keys(self, cluster_keys: list[str]) -> dict[str, OpportunityCluster]:
+        keys = [cluster_key for cluster_key in cluster_keys if cluster_key]
+        if not keys:
+            return {}
+        conn = self._get_connection()
+        placeholders = ",".join("?" for _ in keys)
+        results: dict[str, OpportunityCluster] = {}
+        for table in ("opportunity_clusters", "clusters"):
+            try:
+                columns = _table_columns(conn, table)
+                if "cluster_key" in columns:
+                    rows = conn.execute(
+                        f"SELECT * FROM {table} WHERE cluster_key IN ({placeholders}) ORDER BY id DESC",
+                        keys,
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT * FROM {table} WHERE json_extract(metadata_json, '$.cluster_key') IN ({placeholders}) ORDER BY id DESC",
+                        keys,
+                    ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            for row in rows:
+                cluster = self._row_to_cluster(row)
+                if cluster.cluster_key and cluster.cluster_key not in results:
+                    results[cluster.cluster_key] = cluster
+        return results
 
     def upsert_cluster(self, cluster: OpportunityCluster) -> int:
         cluster.__post_init__()
@@ -3120,6 +3178,28 @@ class Database:
         if not row:
             return None
         return Opportunity(**dict(row))
+
+    def get_opportunities_by_cluster_ids(self, cluster_ids: list[int]) -> dict[int, Opportunity]:
+        ids = [cluster_id for cluster_id in cluster_ids if cluster_id]
+        if not ids:
+            return {}
+        conn = self._get_connection()
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM opportunities
+            WHERE cluster_id IN ({placeholders})
+            ORDER BY updated_at DESC, id DESC
+            """,
+            ids,
+        ).fetchall()
+        opportunities: dict[int, Opportunity] = {}
+        for row in rows:
+            opportunity = Opportunity(**dict(row))
+            if opportunity.cluster_id not in opportunities:
+                opportunities[opportunity.cluster_id] = opportunity
+        return opportunities
 
     def get_opportunities(self, limit: int = 25, status: Optional[str] = None, status_filter: Optional[list[str]] = None) -> list[Opportunity]:
         conn = self._get_connection()

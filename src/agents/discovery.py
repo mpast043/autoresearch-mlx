@@ -237,6 +237,38 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
 logger = logging.getLogger(__name__)
 
 
+def _serialize_atom_json(atom_payload: dict[str, Any]) -> str:
+    atom_json = atom_payload.get("atom_json")
+    if isinstance(atom_json, str):
+        return atom_json or "{}"
+    if atom_json is None:
+        atom_json = {
+            key: atom_payload.get(key)
+            for key in (
+                "cluster_key",
+                "segment",
+                "user_role",
+                "job_to_be_done",
+                "trigger_event",
+                "pain_statement",
+                "failure_mode",
+                "current_workaround",
+                "current_tools",
+                "urgency_clues",
+                "frequency_clues",
+                "emotional_intensity",
+                "cost_consequence_clues",
+                "why_now_clues",
+                "confidence",
+                "platform",
+                "specificity_score",
+                "consequence_score",
+                "atom_extraction_method",
+            )
+        }
+    return json.dumps(atom_json)
+
+
 DISCOVERY_THEME_RULES = [
     {
         "theme_key": "workflow_fragility",
@@ -969,7 +1001,7 @@ class DiscoveryAgent(BaseAgent):
             specificity_score=atom_payload.get("specificity_score", 0.0),
             consequence_score=atom_payload.get("consequence_score", 0.0),
             atom_extraction_method=atom_payload.get("atom_extraction_method", "heuristic"),
-            atom_json=json.dumps(atom_payload["atom_json"]),
+            atom_json=_serialize_atom_json(atom_payload),
         )
         high_leverage = score_high_leverage_finding(finding, temp_signal, temp_atom, evidence)
         evidence["high_leverage"] = high_leverage
@@ -1042,7 +1074,7 @@ class DiscoveryAgent(BaseAgent):
             specificity_score=atom_payload.get("specificity_score", 0.0),
             consequence_score=atom_payload.get("consequence_score", 0.0),
             atom_extraction_method=atom_payload.get("atom_extraction_method", "heuristic"),
-            atom_json=json.dumps(atom_payload["atom_json"]),
+            atom_json=_serialize_atom_json(atom_payload),
         )
         atom_id = self.db.insert_problem_atom(atom)
 

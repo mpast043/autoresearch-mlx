@@ -3386,7 +3386,6 @@ def stage_decision(
     cost_of_inaction = float(opportunity_scores.get("cost_of_inaction", 0.0) or 0.0)
     buildability = float(opportunity_scores.get("buildability", 0.0) or 0.0)
     sharp_thresholds = _sharp_research_thresholds()
-    sharp_thresholds = _sharp_research_thresholds()
 
     # Hard kill conditions
     hard_kill = (

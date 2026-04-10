@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Iterable
 
 
@@ -106,14 +107,28 @@ DATA_TOUCHPOINT_TERMS = [
 ]
 
 
+@lru_cache(maxsize=512)
+def _compiled_phrase_pattern(phrase: str) -> re.Pattern[str] | None:
+    needle = (phrase or "").lower().strip()
+    if not needle:
+        return None
+    try:
+        if re.fullmatch(r"[\w\s'-]+", needle):
+            pattern = re.escape(needle).replace(r"\ ", r"\s+")
+            return re.compile(rf"(?<!\w){pattern}(?!\w)")
+    except re.error:
+        return None
+    return None
+
+
 def contains_phrase(text: str, phrase: str) -> bool:
     lowered = (text or "").lower()
     needle = (phrase or "").lower().strip()
     if not needle:
         return False
-    if re.fullmatch(r"[\w\s'-]+", needle):
-        pattern = re.escape(needle).replace(r"\ ", r"\s+")
-        return re.search(rf"(?<!\w){pattern}(?!\w)", lowered) is not None
+    compiled = _compiled_phrase_pattern(needle)
+    if compiled is not None:
+        return compiled.search(lowered) is not None
     return needle in lowered
 
 

@@ -277,6 +277,64 @@ def test_process_finding_persists_qualified_problem_and_emits_message(temp_db):
     assert queued.payload["finding_id"] == finding_id
 
 
+def test_process_finding_tolerates_missing_atom_json(temp_db, monkeypatch):
+    agent = DiscoveryAgent(temp_db)
+
+    def _build_atom(_signal_payload, _finding_data):
+        return {
+            "cluster_key": "stripe_qbo_mismatch",
+            "segment": "finance operations",
+            "user_role": "ops lead",
+            "job_to_be_done": "reconcile Stripe payouts to QuickBooks",
+            "trigger_event": "weekly close",
+            "pain_statement": "exports do not match",
+            "failure_mode": "stripe payouts do not match quickbooks exports",
+            "current_workaround": "manually rebuild in spreadsheets",
+            "current_tools": "Stripe, QuickBooks, spreadsheets",
+            "urgency_clues": "close deadline",
+            "frequency_clues": "weekly",
+            "emotional_intensity": 0.4,
+            "cost_consequence_clues": "hours of cleanup",
+            "why_now_clues": "refund volume increased",
+            "confidence": 0.75,
+            "platform": "QuickBooks",
+            "specificity_score": 0.84,
+            "consequence_score": 0.7,
+            "atom_extraction_method": "heuristic",
+        }
+
+    monkeypatch.setattr("src.agents.discovery.build_problem_atom", _build_atom)
+    monkeypatch.setattr("src.agents.discovery.is_wedge_ready_signal", lambda *_args, **_kwargs: (True, "passed"))
+    monkeypatch.setattr(
+        "src.agents.discovery.classify_source_signal",
+        lambda *_args, **_kwargs: {"source_class": "pain_signal", "reasons": []},
+    )
+    monkeypatch.setattr(
+        "src.agents.discovery.qualify_problem_signal",
+        lambda *_args, **_kwargs: {"accepted": True, "positive_signals": ["specific_failure"], "negative_signals": []},
+    )
+
+    finding_id = asyncio.run(
+        agent._process_finding(
+            {
+                "source": "reddit-problem",
+                "source_url": "https://reddit.com/r/smallbusiness/comments/2",
+                "entrepreneur": "ops lead",
+                "product_built": "Spreadsheet-heavy reconciliation workflow",
+                "outcome_summary": (
+                    "Stripe payouts do not match QuickBooks exports and the team rebuilds the ledger "
+                    "manually in spreadsheets every week."
+                ),
+                "finding_kind": "pain_point",
+            }
+        )
+    )
+
+    assert finding_id is not None
+    atom = temp_db.get_problem_atoms_by_finding(finding_id)[0]
+    assert atom.atom_json
+
+
 def test_process_finding_screens_out_generic_review_without_atom(temp_db):
     agent = DiscoveryAgent(temp_db)
     finding_data = {

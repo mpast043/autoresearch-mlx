@@ -225,8 +225,8 @@ build_prep:
     model: gemma4:latest
 
 validation:
-  promotion_threshold: 0.45
-  park_threshold: 0.35
+  promotion_threshold: 0.18
+  park_threshold: 0.15
   sharp_research:
     decision_margin_below_park: 0.035
     decision_floor_min: 0.10

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import math
 import re
 from typing import Any
 
 from src.database import Finding, ProblemAtom, RawSignal
+from src.source_patterns import (
+    TRANSFERABLE_FAILURE_TERMS,
+    TRANSFERABLE_WORKFLOW_TERMS,
+    contains_any_phrase,
+)
 
 HIGH_LEVERAGE_VERSION = "high_leverage_v1"
 HIGH_LEVERAGE_WEIGHTS = {
@@ -18,27 +22,19 @@ HIGH_LEVERAGE_WEIGHTS = {
     "first_customer_clarity": 0.10,
 }
 
-HIGH_LEVERAGE_PRIOR_PATTERNS = [
-    "reconcile",
-    "reconciliation",
-    "mismatch",
-    "out of sync",
-    "state drift",
-    "restore",
-    "recovery",
-    "migration",
-    "import",
-    "export",
-    "csv",
-    "duplicate",
-    "deleted order",
-    "inventory",
-    "fulfillment",
-    "handoff",
-    "version",
-    "rollback",
-    "unreachable",
-]
+HIGH_LEVERAGE_PRIOR_PATTERNS = list(
+    dict.fromkeys(
+        [
+            *TRANSFERABLE_WORKFLOW_TERMS,
+            *TRANSFERABLE_FAILURE_TERMS,
+            "reconcile",
+            "state drift",
+            "deleted order",
+            "version",
+            "rollback",
+        ]
+    )
+)
 
 REJECT_REASON_MARKERS = [
     "broad_buying_prompt_without_wedge_slice",
@@ -65,20 +61,19 @@ EDITORIAL_NOISE_PATTERNS = [
     "beginner guide",
     "ultimate guide",
 ]
-FAILURE_SIGNAL_PATTERNS = [
-    "mismatch",
-    "reconcile",
-    "restore",
-    "recovery",
-    "duplicate",
-    "broken",
-    "breaks",
-    "out of sync",
-    "unreachable",
-    "deleted order",
-    "inventory error",
-    "import failure",
-]
+FAILURE_SIGNAL_PATTERNS = list(
+    dict.fromkeys(
+        [
+            *TRANSFERABLE_FAILURE_TERMS,
+            "reconcile",
+            "recovery",
+            "breaks",
+            "deleted order",
+            "inventory error",
+            "import failure",
+        ]
+    )
+)
 
 GENERIC_SEGMENTS = {
     "",
@@ -274,11 +269,11 @@ def _asymmetry_component(
             ]
         )
     )
-    prior_hits = [pattern for pattern in HIGH_LEVERAGE_PRIOR_PATTERNS if pattern in haystack]
+    prior_hits = [pattern for pattern in HIGH_LEVERAGE_PRIOR_PATTERNS if contains_any_phrase(haystack, [pattern])]
     score = 0.18 + min(0.55, 0.09 * len(prior_hits))
-    if any(pattern in haystack for pattern in ["reconcile", "mismatch", "out of sync", "restore", "migration"]):
+    if contains_any_phrase(haystack, ["reconcile", "mismatch", "out of sync", "restore", "migration"]):
         score += 0.1
-    if any(pattern in haystack for pattern in ["duplicate", "deleted order", "inventory", "fulfillment"]):
+    if contains_any_phrase(haystack, ["duplicate", "deleted order", "inventory", "fulfillment"]):
         score += 0.08
     reasons = ["high_tension_operational_failure"] if score >= 0.45 else []
     if len(prior_hits) >= 2:
@@ -372,9 +367,7 @@ def _reject_reasons(finding: Finding, evidence: dict[str, Any]) -> list[str]:
             ]
         )
     )
-    if any(pattern in text for pattern in EDITORIAL_NOISE_PATTERNS) and not any(
-        pattern in text for pattern in FAILURE_SIGNAL_PATTERNS
-    ):
+    if contains_any_phrase(text, EDITORIAL_NOISE_PATTERNS) and not contains_any_phrase(text, FAILURE_SIGNAL_PATTERNS):
         reasons.append("editorial_or_overview_content")
     return reasons
 
@@ -493,25 +486,36 @@ def _build_recent_shape_records(
     segment: str,
     exclude_finding_id: int | None = None,
     limit: int = 120,
+    findings: list[Finding] | None = None,
+    signal_map: dict[int, list[RawSignal]] | None = None,
+    atom_map: dict[int, list[ProblemAtom]] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for finding in db.get_findings(limit=max(limit * 2, 100)):
+    candidate_findings = findings or db.get_findings(limit=max(limit * 2, 100))
+    signal_map = signal_map or {}
+    atom_map = atom_map or {}
+    for finding in candidate_findings:
         if exclude_finding_id and getattr(finding, "id", None) == exclude_finding_id:
             continue
         if finding.source_class != "pain_signal" or finding.status == "screened_out":
             continue
-        atoms = db.get_problem_atoms_by_finding(int(finding.id or 0))
+        finding_id = int(finding.id or 0)
+        atoms = atom_map.get(finding_id)
+        if atoms is None:
+            atoms = db.get_problem_atoms_by_finding(finding_id)
         if not atoms:
             continue
         atom = atoms[0]
         if segment and _normalized(atom.segment) != _normalized(segment):
             continue
-        signals = db.get_raw_signals_by_finding(int(finding.id or 0))
+        signals = signal_map.get(finding_id)
+        if signals is None:
+            signals = db.get_raw_signals_by_finding(finding_id)
         signal = signals[0] if signals else None
         family = _source_family(finding, signal, finding.evidence or {})
         rows.append(
             {
-                "finding_id": int(finding.id or 0),
+                "finding_id": finding_id,
                 "cluster_key": getattr(atom, "cluster_key", ""),
                 "shape_tokens": sorted(_shape_tokens(finding, signal, atom, family)),
             }
@@ -521,19 +525,43 @@ def _build_recent_shape_records(
     return rows
 
 
-def build_high_leverage_cluster_context(db: Any, finding: Finding, atom: ProblemAtom | None) -> dict[str, Any]:
+def build_high_leverage_cluster_context(
+    db: Any,
+    finding: Finding,
+    atom: ProblemAtom | None,
+    *,
+    findings: list[Finding] | None = None,
+    signal_map: dict[int, list[RawSignal]] | None = None,
+    atom_map: dict[int, list[ProblemAtom]] | None = None,
+    cluster_map: dict[str, Any] | None = None,
+    opportunity_map: dict[int, Any] | None = None,
+    recent_shapes: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     if atom is None:
         return {"recent_shapes": []}
-    cluster_context: dict[str, Any] = {
-        "recent_shapes": _build_recent_shape_records(
+    finding_id = int(getattr(finding, "id", 0) or 0) or None
+    if recent_shapes is None:
+        recent_shapes = _build_recent_shape_records(
             db,
             segment=getattr(atom, "segment", ""),
-            exclude_finding_id=int(getattr(finding, "id", 0) or 0) or None,
+            exclude_finding_id=finding_id,
+            findings=findings,
+            signal_map=signal_map,
+            atom_map=atom_map,
         )
+    else:
+        recent_shapes = [
+            row for row in recent_shapes
+            if not finding_id or int(row.get("finding_id", 0) or 0) != finding_id
+        ]
+    cluster_context: dict[str, Any] = {
+        "recent_shapes": recent_shapes
     }
     cluster = None
     if getattr(atom, "cluster_key", ""):
-        cluster = db.get_cluster_by_key(atom.cluster_key)
+        cluster = (cluster_map or {}).get(atom.cluster_key)
+        if cluster is None:
+            cluster = db.get_cluster_by_key(atom.cluster_key)
     if cluster is not None:
         cluster_context.update(
             {
@@ -542,7 +570,10 @@ def build_high_leverage_cluster_context(db: Any, finding: Finding, atom: Problem
                 "cluster_key": cluster.cluster_key,
             }
         )
-        opportunity = db.get_opportunity_by_cluster_id(int(cluster.id or 0))
+        cluster_id = int(cluster.id or 0)
+        opportunity = (opportunity_map or {}).get(cluster_id)
+        if opportunity is None:
+            opportunity = db.get_opportunity_by_cluster_id(cluster_id)
         if opportunity is not None:
             cluster_context.update(
                 {
@@ -556,20 +587,55 @@ def build_high_leverage_cluster_context(db: Any, finding: Finding, atom: Problem
 
 def build_high_leverage_report(db: Any, *, run_id: str | None = None, limit: int = 10) -> dict[str, Any]:
     findings = db.get_findings(limit=max(limit * 8, 100))
+    finding_ids = [int(finding.id or 0) for finding in findings if int(finding.id or 0) > 0]
+    signal_map = db.get_raw_signals_for_findings(finding_ids)
+    atom_map = db.get_problem_atoms_for_findings(finding_ids)
+    cluster_keys = list(
+        {
+            atoms[0].cluster_key
+            for atoms in atom_map.values()
+            if atoms and getattr(atoms[0], "cluster_key", "")
+        }
+    )
+    cluster_map = db.get_clusters_by_keys(cluster_keys)
+    opportunity_map = db.get_opportunities_by_cluster_ids(
+        [int(cluster.id or 0) for cluster in cluster_map.values() if int(cluster.id or 0) > 0]
+    )
+    recent_shapes_cache: dict[str, list[dict[str, Any]]] = {}
     rows: list[dict[str, Any]] = []
     for finding in findings:
         if run_id and (finding.evidence or {}).get("run_id") != run_id:
             continue
-        signals = db.get_raw_signals_by_finding(int(finding.id or 0))
+        finding_id = int(finding.id or 0)
+        signals = signal_map.get(finding_id, [])
         signal = signals[0] if signals else None
-        atoms = db.get_problem_atoms_by_finding(int(finding.id or 0))
+        atoms = atom_map.get(finding_id, [])
         atom = atoms[0] if atoms else None
-        cluster_context = build_high_leverage_cluster_context(db, finding, atom)
+        segment_key = _normalized(getattr(atom, "segment", "") if atom else "")
+        if atom is not None and segment_key not in recent_shapes_cache:
+            recent_shapes_cache[segment_key] = _build_recent_shape_records(
+                db,
+                segment=getattr(atom, "segment", "") if atom else "",
+                findings=findings,
+                signal_map=signal_map,
+                atom_map=atom_map,
+            )
+        cluster_context = build_high_leverage_cluster_context(
+            db,
+            finding,
+            atom,
+            findings=findings,
+            signal_map=signal_map,
+            atom_map=atom_map,
+            cluster_map=cluster_map,
+            opportunity_map=opportunity_map,
+            recent_shapes=recent_shapes_cache.get(segment_key, []),
+        )
         assessment = dict((finding.evidence or {}).get("high_leverage") or {})
         if not assessment:
             assessment = score_high_leverage_finding(finding, signal, atom, finding.evidence or {}, cluster_context)
         row = {
-            "finding_id": int(finding.id or 0),
+            "finding_id": finding_id,
             "source": finding.source,
             "title": finding.product_built or finding.outcome_summary or finding.source_url,
             "source_url": finding.source_url,
