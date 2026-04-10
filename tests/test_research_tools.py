@@ -1405,6 +1405,23 @@ def test_web_problem_filter_rejects_download_and_editorial_excel_pages():
     )
 
 
+def test_web_problem_filter_rejects_excel_gallery_and_editorial_review_pages():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Microsoft Excel Templates Gallery",
+        snippet="Browse spreadsheet templates and template gallery picks.",
+        body="Find the best Excel templates for budgets, invoices, and scheduling.",
+        url="https://example.com/excel/templates/gallery",
+    )
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Microsoft Excel Review",
+        snippet="Features and pricing, pros and cons, and editor's rating.",
+        body="A product review of Microsoft Excel with pricing, features, and pros and cons.",
+        url="https://example.com/reviews/microsoft-excel-review",
+    )
+
+
 def test_validation_recurrence_filter_rejects_generic_comparison_listicles():
     toolkit = ResearchToolkit()
 

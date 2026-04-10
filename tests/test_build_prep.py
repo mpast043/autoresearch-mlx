@@ -699,6 +699,7 @@ class TestBuildReadySharpness(unittest.TestCase):
                 },
                 "source_family_corroboration": {
                     "source_family_diversity": 2,
+                    "evidence_quality": 0.7,
                 },
             }
         )
@@ -749,6 +750,28 @@ class TestBuildReadySharpness(unittest.TestCase):
         self.assertFalse(gate["passes"])
         self.assertIn("vague_product_name", gate["reasons"])
         self.assertIn("generic_job_to_be_done", gate["reasons"])
+
+    def test_sharpness_gate_rejects_thin_evidence_quality(self):
+        gate = evaluate_build_ready_sharpness(
+            {
+                "platform_fit": {
+                    "host_platform": "Google Docs",
+                    "product_format": "Google Docs add-on",
+                    "product_name": "Contract Guard",
+                },
+                "job_to_be_done": "Review Google Docs contracts before sending them to clients",
+                "pain_workaround": {
+                    "failure_mode": "Template reuse leaves the wrong legal entity on client contracts",
+                    "trigger_event": "Right before sending a renewal contract for signature",
+                },
+                "source_family_corroboration": {
+                    "source_family_diversity": 2,
+                    "evidence_quality": 0.12,
+                },
+            }
+        )
+        self.assertFalse(gate["passes"])
+        self.assertIn("insufficient_evidence_quality", gate["reasons"])
 
     def test_build_brief_payload_includes_platform_fit(self):
         """Test that build_brief_payload includes platform_fit."""

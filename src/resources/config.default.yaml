@@ -200,7 +200,7 @@ llm:
   max_tokens: 12000
 
 validation:
-  promotion_threshold: 0.18  # v4: Calibrated to P90 of decision_score distribution
+  promotion_threshold: 0.42  # tightened to reduce premature promotion from thin web-heavy evidence
   park_threshold: 0.15       # v4: Keep current
   sharp_research:
     decision_margin_below_park: 0.035

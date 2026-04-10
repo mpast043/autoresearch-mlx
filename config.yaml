@@ -225,7 +225,7 @@ build_prep:
     timeout_seconds: 60
 
 validation:
-  promotion_threshold: 0.18
+  promotion_threshold: 0.42
   park_threshold: 0.15
   sharp_research:
     decision_margin_below_park: 0.035

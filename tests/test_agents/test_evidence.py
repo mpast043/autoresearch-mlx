@@ -920,10 +920,10 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
 
         corroboration = self.db.get_corroboration(finding_id)
         market = self.db.get_market_enrichment(finding_id)
-        self.assertEqual(corroboration.evidence["source_family_diversity"], 3)
+        self.assertEqual(corroboration.evidence["source_family_diversity"], 2)
         self.assertEqual(corroboration.evidence["source_family_match_counts"]["reddit"], 1)
         self.assertEqual(corroboration.evidence["source_family_match_counts"]["wordpress_review"], 1)
-        self.assertEqual(corroboration.evidence["core_source_family_diversity"], 3)
+        self.assertEqual(corroboration.evidence["core_source_family_diversity"], 2)
         self.assertEqual(corroboration.evidence["source_group_diversity"], 2)
         self.assertGreater(corroboration.evidence["cross_source_match_score"], 0.3)
         self.assertGreater(corroboration.evidence["core_source_family_bonus"], 0.0)
@@ -1033,6 +1033,94 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(corroboration.evidence["source_group_diversity"], 2)
         self.assertIn("reddit", corroboration.evidence["source_families"])
         self.assertGreater(corroboration.evidence["cross_source_bonus"], 0.0)
+
+    async def test_source_families_report_only_corroborating_families_not_origin_provenance(self):
+        async def fake_validate_problem(**_kwargs):
+            return {
+                "problem_score": 0.58,
+                "value_score": 0.47,
+                "feasibility_score": 0.61,
+                "solution_gap_score": 0.57,
+                "saturation_score": 0.43,
+                "evidence": {
+                    "query": '"contract mismatch" billing workflow',
+                    "competitor_query": '"contract mismatch" billing software',
+                    "recurrence_queries": ['"contract mismatch" billing workflow'],
+                    "recurrence_state": "supported",
+                    "recurrence_query_coverage": 1.0,
+                    "recurrence_doc_count": 2,
+                    "recurrence_domain_count": 1,
+                    "recurrence_results_by_source": {"reddit": 2, "web": 0},
+                    "recurrence_results_by_query": {'"contract mismatch" billing workflow': 2},
+                    "recurrence_docs": [
+                        {
+                            "title": "Billing workflow mismatch forces manual contract checks",
+                            "snippet": "Operators manually compare invoices against contract terms after renewals.",
+                            "url": "https://reddit.com/r/accounting/comments/example1",
+                            "source": "reddit/accounting",
+                        },
+                        {
+                            "title": "Manual contract reconciliation after billing drift",
+                            "snippet": "Accounting teams keep spreadsheet checklists to catch contract mismatches.",
+                            "url": "https://reddit.com/r/smallbusiness/comments/example2",
+                            "source": "reddit/smallbusiness",
+                        },
+                    ],
+                },
+            }
+
+        self.agent.toolkit.validate_problem = fake_validate_problem
+        finding_id = self.db.insert_finding(
+            Finding(
+                source="web-problem",
+                source_url="https://example.com/contracts/billing-mismatch",
+                product_built="Contract mismatch after billing renewals",
+                outcome_summary="Operators manually compare invoices against contract terms after renewals.",
+                finding_kind="problem_signal",
+                source_class="pain_signal",
+                evidence_json=json.dumps({}),
+            )
+        )
+        self.db.insert_raw_signal(
+            RawSignal(
+                finding_id=finding_id,
+                source_name="web-problem",
+                source_url="https://example.com/contracts/billing-mismatch",
+                title="Contract mismatch after billing renewals",
+                body_excerpt="Operators manually compare invoices against contract terms after renewals.",
+                source_type="web",
+                content_hash="web-origin-no-family-credit",
+                metadata_json="{}",
+            )
+        )
+        self.db.insert_problem_atom(
+            ProblemAtom(
+                finding_id=finding_id,
+                cluster_key="contract-billing-mismatch",
+                segment="billing operators",
+                user_role="billing lead",
+                job_to_be_done="keep invoice and contract terms aligned",
+                trigger_event="after renewals and contract changes",
+                pain_statement="Operators manually compare invoices against contract terms after renewals.",
+                failure_mode="billing workflow mismatch forces manual contract checks",
+                current_workaround="spreadsheet checklist",
+                current_tools="excel billing export",
+                urgency_clues="",
+                frequency_clues="recurring",
+                emotional_intensity=0.55,
+                cost_consequence_clues="time, write-offs",
+                why_now_clues="renewals",
+                confidence=0.79,
+                atom_json="{}",
+            )
+        )
+
+        await self.agent._enrich_finding({"finding_id": finding_id})
+
+        corroboration = self.db.get_corroboration(finding_id)
+        self.assertEqual(corroboration.evidence["origin_source_family"], "web")
+        self.assertEqual(corroboration.evidence["source_families"], ["reddit"])
+        self.assertEqual(corroboration.evidence["source_family_diversity"], 1)
 
     async def test_product_specific_review_gets_generalizability_penalty(self):
         async def fake_validate_problem(**_kwargs):

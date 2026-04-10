@@ -626,6 +626,14 @@ WEB_PROBLEM_REJECT_TEXT_PATTERNS = [
     "download hvac duct measurement excel sheet",
     "free download",
     "download now",
+    "template gallery",
+    "excel templates",
+    "spreadsheet templates",
+    "product review",
+    "editor's rating",
+    "editors' rating",
+    "features and pricing",
+    "pros and cons",
 ]
 
 WEB_PROBLEM_REFERENCE_TEXT_PATTERNS = [
@@ -1663,6 +1671,16 @@ class ResearchToolkit:
             and ("excel" in haystack or "microsoft 365" in haystack)
             and not has_practitioner_context
         )
+        looks_like_template_gallery = (
+            ("template" in title_lower or "templates" in title_lower or "gallery" in title_lower)
+            and ("excel" in haystack or "spreadsheet" in haystack)
+            and not has_practitioner_context
+        )
+        looks_like_editorial_review = (
+            ("review" in title_lower or "rating" in haystack or "pros and cons" in haystack)
+            and ("excel" in haystack or "microsoft 365" in haystack or "spreadsheet" in haystack)
+            and not has_practitioner_context
+        )
         if looks_like_reference and not has_practitioner_context and not discussion_surface:
             return True
         if looks_like_download and not has_practitioner_context and not discussion_surface:
@@ -1670,6 +1688,10 @@ class ResearchToolkit:
         if looks_like_release_editorial and not has_practitioner_context:
             return True
         if looks_like_vendor_product_page:
+            return True
+        if looks_like_template_gallery:
+            return True
+        if looks_like_editorial_review:
             return True
         if title_lower.startswith("why ") and ("tutorial" in haystack or "compatibility version" in haystack):
             return True

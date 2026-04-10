@@ -136,6 +136,7 @@ def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, A
     platform_fit = PlatformFit(**(brief_payload.get("platform_fit") or {}))
     pain = brief_payload.get("pain_workaround", {}) or {}
     corroboration = brief_payload.get("source_family_corroboration", {}) or {}
+    evidence_quality = float(corroboration.get("evidence_quality", 0.0) or 0.0)
 
     reasons: list[str] = []
 
@@ -165,6 +166,8 @@ def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, A
     )
     if source_family_diversity < 2:
         reasons.append("insufficient_source_family_diversity")
+    if evidence_quality < 0.4:
+        reasons.append("insufficient_evidence_quality")
 
     return {
         "passes": not reasons,
@@ -172,6 +175,7 @@ def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, A
         "host_platform": host_platform or "Unknown",
         "product_name": platform_fit.product_name or "",
         "source_family_diversity": source_family_diversity,
+        "evidence_quality": round(evidence_quality, 4),
     }
 
 
@@ -1449,6 +1453,7 @@ def build_brief_payload(
             "corroboration_score": corroboration.get("corroboration_score", 0.0),
             "generalizability_class": corroboration.get("generalizability_class", ""),
             "generalizability_score": corroboration.get("generalizability_score", 0.0),
+            "evidence_quality": evidence_payload.get("evidence_assessment", {}).get("evidence_quality", 0.0),
         },
         "screening_summary": {
             "source_class": source_classification.get("source_class", getattr(finding, "source_class", "")),

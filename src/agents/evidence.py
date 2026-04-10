@@ -852,8 +852,8 @@ class EvidenceAgent(BaseAgent):
             matched_doc_families.append(doc_family)
             matched_doc_groups.append(_source_family_group(doc_family))
             matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
-        source_families = sorted({origin_source_family, *matched_doc_families})
-        source_groups = sorted({origin_source_group, *matched_doc_groups})
+        source_families = sorted(set(matched_doc_families))
+        source_groups = sorted(set(matched_doc_groups))
         source_family_diversity = len(source_families)
         source_group_diversity = len(source_groups)
         source_family_diversity_score = min(source_family_diversity, 4) / 4.0
