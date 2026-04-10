@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
+from src.source_patterns import DATA_TOUCHPOINT_TERMS
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +88,7 @@ def evaluate_software_fit(wedge_data: dict[str, Any]) -> float:
         score += SOFTWARE_FIT_WEIGHTS["repeat_usage"]
 
     # Data touchpoint
-    data_words = ["import", "export", "csv", "file", "data", "record", "transaction"]
-    if any(w in failure for w in data_words):
+    if any(w in failure for w in DATA_TOUCHPOINT_TERMS):
         score += SOFTWARE_FIT_WEIGHTS["data_touchpoint"]
 
     # Error prevention

@@ -8,6 +8,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from src.database import ProblemAtom, RawSignal
 from src.opportunity_engine import (
+    _github_generalizability,
+    _has_phrase,
+    _review_generalizability,
     OpportunityEngine,
     build_cluster_summary,
     build_problem_atom,
@@ -16,6 +19,75 @@ from src.opportunity_engine import (
     qualify_problem_signal,
     score_opportunity,
 )
+
+
+def test_has_phrase_uses_word_boundaries():
+    assert _has_phrase("csv import broke reconciliation", ["import"])
+    assert not _has_phrase("this seems important to fix", ["import"])
+
+
+def test_review_generalizability_distinguishes_transferable_vs_vendor_only():
+    transferable = _review_generalizability(
+        "Backup restore failures leave client sites unreachable after migration",
+        "wordpress-review/updraftplus",
+        "https://wordpress.org/plugins/updraftplus/reviews/",
+    )
+    vendor_only = _review_generalizability(
+        "Support ignored me and this plugin is too expensive now",
+        "wordpress-review/updraftplus",
+        "https://wordpress.org/plugins/updraftplus/reviews/",
+    )
+    assert transferable["review_issue_type"] == "reusable_workflow_pain"
+    assert vendor_only["review_issue_type"] == "product_specific_issue"
+    assert "review_generalizability_version" in transferable
+    assert "review_generalizability_weights" in transferable
+
+
+def test_github_generalizability_rejects_internal_maintenance_issue():
+    profile = _github_generalizability(
+        "Add missing coverage for nightly QA regression file and backlog parity work"
+    )
+    assert profile["github_issue_type"] == "product_specific_issue"
+    assert "github_generalizability_version" in profile
+    assert "github_generalizability_weights" in profile
+
+
+def test_classify_source_signal_drops_issue_type_fields_for_promoted_pain_signal():
+    finding_data = {
+        "source": "wordpress-review/updraftplus",
+        "source_url": "https://wordpress.org/plugins/updraftplus/reviews/",
+        "product_built": "Restore leaves sites unreachable after migration",
+        "outcome_summary": "Backup restore failures leave client sites unreachable after migration.",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+        "tool_used": "wordpress_reviews",
+        "evidence": {"review_text": "Backup restore failures leave client sites unreachable after migration."},
+    }
+    signal_payload = {
+        "source_name": "wordpress-review/updraftplus",
+        "source_type": "review",
+        "source_url": "https://wordpress.org/plugins/updraftplus/reviews/",
+        "title": "Restore leaves sites unreachable after migration",
+        "body_excerpt": "Backup restore failures leave client sites unreachable after migration.",
+        "quote_text": "Backup restore failures leave client sites unreachable after migration.",
+        "role_hint": "site operator",
+        "metadata_json": {},
+    }
+    atom_payload = {
+        "user_role": "site operator",
+        "segment": "wordpress operators",
+        "job_to_be_done": "restore client site backup after migration",
+        "failure_mode": "site remains unreachable after restore",
+        "current_workaround": "manual rollback and restore retries",
+        "trigger_event": "site migration",
+        "cost_consequence_clues": "downtime for client sites",
+        "frequency_clues": "after each migration",
+    }
+
+    classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    assert classification["source_class"] == "pain_signal"
+    assert "review_issue_type" not in classification
 
 
 def test_reddit_cluster_key_matches_across_subreddits_for_same_text():

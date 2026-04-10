@@ -99,7 +99,16 @@ class CircuitBreaker:
         try:
             result = await func(*args, **kwargs)
         except Exception as exc:
-            should_count_failure = True if failure_predicate is None else bool(failure_predicate(exc))
+            try:
+                should_count_failure = True if failure_predicate is None else bool(failure_predicate(exc))
+            except Exception as predicate_exc:
+                logger.warning(
+                    "Circuit %s failure_predicate errored for %s: %s; counting original failure",
+                    self.name,
+                    type(exc).__name__,
+                    predicate_exc,
+                )
+                should_count_failure = True
             if should_count_failure:
                 await self._on_failure()
             raise
@@ -128,7 +137,16 @@ class CircuitBreaker:
         try:
             result = await asyncio.to_thread(func, *args, **kwargs)
         except Exception as exc:
-            should_count_failure = True if failure_predicate is None else bool(failure_predicate(exc))
+            try:
+                should_count_failure = True if failure_predicate is None else bool(failure_predicate(exc))
+            except Exception as predicate_exc:
+                logger.warning(
+                    "Circuit %s failure_predicate errored for %s: %s; counting original failure",
+                    self.name,
+                    type(exc).__name__,
+                    predicate_exc,
+                )
+                should_count_failure = True
             if should_count_failure:
                 await self._on_failure()
             raise

@@ -144,6 +144,7 @@ discovery:
 orchestration:
   evidence_concurrency: 3
   run_once_max_wait_seconds: 180
+  stalled_idle_cycles_threshold: 50
   evidence_timeout_seconds: 120
   # After validation: generate SaaS/product ideas when decision is promote OR selection_status is prototype_candidate.
   auto_ideate_after_validation: true
@@ -167,6 +168,15 @@ orchestration:
 builder:
   auto_build: true
 
+build_prep:
+  wedge_evaluation:
+    feedback_to_discovery_terms: false
+  platform_classification:
+    provider: ollama
+    base_url: http://127.0.0.1:11434/v1
+    api_key: ollama
+    model: gemma4:latest
+
 # LLM config for builder_v2 code generation
 llm:
   provider: ollama
@@ -177,6 +187,17 @@ llm:
 validation:
   promotion_threshold: 0.18  # v4: Calibrated to P90 of decision_score distribution
   park_threshold: 0.15       # v4: Keep current
+  sharp_research:
+    decision_margin_below_park: 0.035
+    decision_floor_min: 0.10
+    problem_truth_score: 0.115
+    revenue_readiness_score: 0.18
+    evidence_quality: 0.42
+    value_support: 0.38
+    frequency_score: 0.25
+    workaround_density: 0.34
+    cost_of_inaction: 0.40
+    buildability: 0.52
   # Evidence/gathering search settings
   search:
     query_terms: 14

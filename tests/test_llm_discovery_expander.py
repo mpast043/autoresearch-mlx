@@ -1,5 +1,6 @@
 """Tests for LLMClient and LLMDiscoveryExpander."""
 
+import asyncio
 import json
 import os
 import tempfile
@@ -28,7 +29,7 @@ class TestLLMClient(unittest.TestCase):
         config = {"llm": {}}
         client = LLMClient(config)
         assert client.provider == "ollama"
-        assert client.model == "llama3.1:8b"
+        assert client.model == "gemma4:latest"
         assert client.base_url == "http://localhost:11434"
 
     def test_anthropic_config(self) -> None:
@@ -73,6 +74,14 @@ class TestLLMClient(unittest.TestCase):
             with patch.object(client, "_anthropic_generate", return_value="anthropic output"):
                 result = client.generate("system", "user")
         assert result == "anthropic output"
+
+    def test_agenerate_anthropic_uses_to_thread(self) -> None:
+        config = {"llm": {"provider": "anthropic", "api_key": "test-key"}}
+        client = LLMClient(config)
+        with patch.object(client, "_anthropic_generate", return_value="anthropic output") as mock_generate:
+            result = asyncio.run(client.agenerate("system", "user"))
+        assert result == "anthropic output"
+        mock_generate.assert_called_once_with("system", "user")
 
 
 class TestExtractJson(unittest.TestCase):

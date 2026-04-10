@@ -1,0 +1,26 @@
+[
+  {
+    "name": "stripe_quickbooks_reconciliation_mismatch",
+    "kind": "positive",
+    "expectation": "candidate_or_confirmed",
+    "summary": "Stripe payouts do not match QuickBooks invoices during weekly reconciliation, forcing finance ops to manually rebuild the ledger in spreadsheets."
+  },
+  {
+    "name": "deleted_orders_still_showing_in_analytics",
+    "kind": "positive",
+    "expectation": "candidate_or_confirmed",
+    "summary": "Deleted Shopify orders still appear in analytics exports, so operators manually clean reports before weekly inventory and finance review."
+  },
+  {
+    "name": "manual_work_is_painful_generic",
+    "kind": "negative",
+    "expectation": "ordinary_or_reject",
+    "summary": "Small businesses waste hours on manual work, repetitive tasks, and follow-ups every week."
+  },
+  {
+    "name": "plugin_support_is_bad",
+    "kind": "negative",
+    "expectation": "reject",
+    "summary": "Support ignored me, the plugin is overpriced, and the product is bad now."
+  }
+]

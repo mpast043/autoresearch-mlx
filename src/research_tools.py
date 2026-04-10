@@ -22,6 +22,11 @@ from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 import requests
 import aiohttp
 from bs4 import BeautifulSoup
+from src.source_patterns import (
+    PAIN_KEYWORDS as CANONICAL_PAIN_KEYWORDS,
+    YOUTUBE_LOW_SIGNAL_PATTERNS as CANONICAL_YOUTUBE_LOW_SIGNAL_PATTERNS,
+    contains_any_phrase,
+)
 
 try:
     from mcp_fetcher import MCPFetcher
@@ -114,29 +119,7 @@ AI_TOOL_KEYWORDS = [
     "bolt",
 ]
 
-PAIN_KEYWORDS = [
-    "manual",
-    "frustrating",
-    "annoying",
-    "takes too long",
-    "waste time",
-    "repetitive",
-    "error-prone",
-    "wish there was",
-    "need a way",
-    "need a better way",
-    "hate that",
-    "struggle",
-    "can't find",
-    "too expensive",
-    "overkill",
-    "problem",
-    "issue",
-    "worried",
-    "time consuming",
-    "negative review",
-    "destroyed my",
-]
+PAIN_KEYWORDS = list(CANONICAL_PAIN_KEYWORDS)
 
 VALUE_KEYWORDS = [
     "daily",
@@ -576,17 +559,7 @@ LOW_QUALITY_CORROBORATION_TEXT_PATTERNS = [
     "compare the best",
     "top 10",
 ]
-YOUTUBE_LOW_SIGNAL_VIDEO_PATTERNS = [
-    "best shopify apps",
-    "shopify app recommendations",
-    "shopify app vs",
-    "top 10",
-    "top tools",
-    "must-have apps",
-    "must have apps",
-    "roundup",
-    "alternatives",
-]
+YOUTUBE_LOW_SIGNAL_VIDEO_PATTERNS = list(CANONICAL_YOUTUBE_LOW_SIGNAL_PATTERNS)
 
 HIGH_VALUE_DISCOVERY_QUERY_TERMS = {
     "reddit-problem": {
@@ -1644,7 +1617,7 @@ class ResearchToolkit:
 
     def _should_keep_youtube_comment_candidate(self, *, title: str, snippet: str, comments: list[dict[str, Any]]) -> bool:
         haystack = normalize_content(f"{title} {snippet}")
-        if any(pattern in haystack for pattern in YOUTUBE_LOW_SIGNAL_VIDEO_PATTERNS):
+        if contains_any_phrase(haystack, YOUTUBE_LOW_SIGNAL_VIDEO_PATTERNS):
             return False
         concrete_comments = [
             comment

@@ -19,6 +19,7 @@ from src.runtime.env import load_local_env  # noqa: E402
 from src.runtime.paths import DEFAULT_CONFIG_PATH, build_runtime_paths, resolve_project_path  # noqa: E402
 from src.utils.logging_utils import set_run_id, StructuredJsonFormatter, StructuredTextFormatter
 from src.database import Database  # noqa: E402
+from src.high_leverage import build_high_leverage_report  # noqa: E402
 from src.orchestrator import Orchestrator  # noqa: E402
 from src.messaging import MessageType  # noqa: E402
 from src.agents.discovery import DiscoveryAgent  # noqa: E402
@@ -31,6 +32,7 @@ from src.status_tracker import StatusTracker  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_STALLED_IDLE_CYCLES_THRESHOLD = 50
 
 
 def _distribution(values: list[float]) -> dict[str, float]:
@@ -201,6 +203,13 @@ class AutoResearcher:
         stalled_idle_cycles = 0
         last_log_at = 0.0
         last_state: dict[str, Any] | None = None
+        stalled_idle_threshold = int(
+            (self.config.get("orchestration", {}) or {}).get(
+                "stalled_idle_cycles_threshold",
+                DEFAULT_STALLED_IDLE_CYCLES_THRESHOLD,
+            )
+            or DEFAULT_STALLED_IDLE_CYCLES_THRESHOLD
+        )
         while asyncio.get_running_loop().time() < deadline and not self.shutdown_event.is_set():
             state = self.completion_state()
             loop_now = asyncio.get_running_loop().time()
@@ -220,7 +229,7 @@ class AutoResearcher:
                 and state.get("total_busy") == 0
             ):
                 stalled_idle_cycles += 1
-                if stalled_idle_cycles >= 50:
+                if stalled_idle_cycles >= stalled_idle_threshold:
                     logger.warning("treating stable idle queue as drained: %s", state)
                     return True
             else:
@@ -402,52 +411,6 @@ class AutoResearcher:
             max_findings=max_findings,
         )
         return summary
-        assert self.db is not None
-        assert self.orchestrator is not None
-
-        backlog_ids: list[int] = []
-        for finding in self.db.get_findings(limit=500):
-            if finding.status != "qualified" or finding.source_class != "pain_signal":
-                continue
-            signal_rows = self.db.get_raw_signals_by_finding(finding.id or 0)
-            atom_rows = self.db.get_problem_atoms_by_finding(finding.id or 0)
-            if not signal_rows or not atom_rows:
-                continue
-            backlog_ids.append(int(finding.id))
-            await self.orchestrator.send_message(
-                to_agent="orchestrator",
-                msg_type=MessageType.FINDING,
-                payload={
-                    "finding_id": int(finding.id),
-                    "source": finding.source,
-                    "source_url": finding.source_url,
-                    "content_hash": finding.content_hash,
-                    "finding_kind": finding.finding_kind,
-                    "source_class": finding.source_class,
-                    "title": finding.product_built,
-                    "summary": finding.outcome_summary,
-                    "signal_id": int(signal_rows[0].id),
-                    "problem_atom_ids": [int(atom.id) for atom in atom_rows if atom.id is not None],
-                    "backlog_requeue": True,
-                },
-                priority=2,
-            )
-        if backlog_ids:
-            logger.info("requeued %s qualified findings for evidence", len(backlog_ids))
-            self.status_tracker.log(f"requeued_qualified findings={len(backlog_ids)}")
-        return backlog_ids
-
-    def _count_actionable_qualified_findings(self) -> int:
-        assert self.db is not None
-        count = 0
-        for finding in self.db.get_findings(limit=500):
-            if finding.status != "qualified" or finding.source_class != "pain_signal":
-                continue
-            signal_rows = self.db.get_raw_signals_by_finding(finding.id or 0)
-            atom_rows = self.db.get_problem_atoms_by_finding(finding.id or 0)
-            if signal_rows and atom_rows:
-                count += 1
-        return count
 
     def completion_state(self) -> dict[str, Any]:
         queue_empty = True
@@ -628,6 +591,11 @@ class AutoResearcher:
             return []
         rows = self.db.get_validation_review(limit=limit, run_id=self.current_run_id)
         return rows
+
+    def high_leverage_report(self, limit: int = 25) -> dict[str, Any]:
+        if not self.db:
+            return {"run_id": self.current_run_id, "count": 0, "band_mix": {}, "status_mix": {}, "findings": []}
+        return build_high_leverage_report(self.db, run_id=self.current_run_id, limit=limit)
 
     def run_diff(self, limit: int = 25) -> dict[str, Any]:
         if not self.db:

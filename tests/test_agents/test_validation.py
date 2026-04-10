@@ -144,6 +144,12 @@ def test_process_validation_message_sends_orchestrator_result(temp_db):
     assert result["success"] is True
     assert result["validation_id"] > 0
     assert result["decision"] in {"park", "kill", "promote"}
+    persisted = temp_db.get_finding(finding_id)
+    assert persisted is not None
+    assert "high_leverage" in (persisted.evidence or {})
+    signals = temp_db.get_raw_signals_by_finding(finding_id)
+    assert signals
+    assert "high_leverage" in (signals[0].metadata or {})
 
     queued = asyncio.run(queue.get_for_agent("orchestrator"))
     assert queued is not None

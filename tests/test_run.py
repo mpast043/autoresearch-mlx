@@ -799,6 +799,43 @@ def test_wait_for_pipeline_drained_treats_stable_idle_queue_as_drained():
     assert drained is True
 
 
+def test_wait_for_pipeline_drained_uses_configured_stalled_idle_threshold():
+    app = AutoResearcher(config_path=str(Path(__file__).resolve().parents[1] / "config.yaml"))
+    app.config.setdefault("orchestration", {})["stalled_idle_cycles_threshold"] = 3
+    app.shutdown_event = asyncio.Event()
+    state = {
+        "queue_empty": False,
+        "queue_size": 2,
+        "open_qualified": 0,
+        "actual_open_qualified": 0,
+        "evidence_busy": 0,
+        "validation_busy": 0,
+        "total_busy": 0,
+        "busy_agents": {},
+        "drained": False,
+    }
+    app.completion_state = lambda: state
+
+    async def _run() -> tuple[bool, list[float]]:
+        sleep_calls: list[float] = []
+        original_sleep = asyncio.sleep
+
+        async def fake_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+            await original_sleep(0)
+
+        from unittest.mock import patch
+
+        with patch("asyncio.sleep", fake_sleep):
+            drained = await app._wait_for_pipeline_drained(6)
+        return drained, sleep_calls
+
+    drained, sleep_calls = asyncio.run(_run())
+
+    assert drained is True
+    assert len(sleep_calls) == 2
+
+
 def test_snapshot_screening_uses_current_run_counts():
     temp_dir = tempfile.mkdtemp()
     try:

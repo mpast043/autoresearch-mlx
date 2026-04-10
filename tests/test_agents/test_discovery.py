@@ -265,8 +265,11 @@ def test_process_finding_persists_qualified_problem_and_emits_message(temp_db):
     finding = temp_db.get_finding(finding_id)
     assert finding is not None
     assert finding.status == "qualified"
-    assert temp_db.get_raw_signals_by_finding(finding_id)
+    signals = temp_db.get_raw_signals_by_finding(finding_id)
+    assert signals
     assert temp_db.get_problem_atoms_by_finding(finding_id)
+    assert finding.evidence["high_leverage"]["status"] in {"candidate", "ordinary"}
+    assert "high_leverage" in signals[0].metadata
 
     queued = asyncio.run(agent._message_queue.get_for_agent("orchestrator"))
     assert queued is not None

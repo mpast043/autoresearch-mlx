@@ -1443,6 +1443,15 @@ class Database:
         if not getattr(self._local, "batch_depth", 0):
             self._commit(conn)
 
+    def update_finding_evidence(self, finding_id: int, evidence: dict[str, Any]) -> None:
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE findings SET evidence_json = ? WHERE id = ?",
+            (_json_dumps(evidence or {}), finding_id),
+        )
+        if not getattr(self._local, "batch_depth", 0):
+            self._commit(conn)
+
     def insert_raw_signal(self, signal: RawSignal) -> int:
         signal.__post_init__()
         conn = self._get_connection()
@@ -1492,6 +1501,15 @@ class Database:
         return [self._row_to_raw_signal(row) for row in self._get_connection().execute(
             "SELECT * FROM raw_signals WHERE finding_id = ? ORDER BY id ASC", (finding_id,)
         ).fetchall()]
+
+    def update_raw_signal_metadata(self, signal_id: int, metadata: dict[str, Any]) -> None:
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE raw_signals SET metadata_json = ? WHERE id = ?",
+            (_json_dumps(metadata or {}), signal_id),
+        )
+        if not getattr(self._local, "batch_depth", 0):
+            self._commit(conn)
 
     def insert_problem_atom(self, atom: ProblemAtom) -> int:
         atom.__post_init__()
@@ -1603,6 +1621,29 @@ class Database:
 
     def get_cluster_record(self, cluster_id: int) -> Optional[OpportunityCluster]:
         return self.get_cluster(cluster_id)
+
+    def get_cluster_by_key(self, cluster_key: str) -> Optional[OpportunityCluster]:
+        if not cluster_key:
+            return None
+        conn = self._get_connection()
+        for table in ("opportunity_clusters", "clusters"):
+            try:
+                columns = _table_columns(conn, table)
+                if "cluster_key" in columns:
+                    row = conn.execute(
+                        f"SELECT * FROM {table} WHERE cluster_key = ? ORDER BY id DESC LIMIT 1",
+                        (cluster_key,),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        f"SELECT * FROM {table} WHERE json_extract(metadata_json, '$.cluster_key') = ? ORDER BY id DESC LIMIT 1",
+                        (cluster_key,),
+                    ).fetchone()
+            except sqlite3.OperationalError:
+                row = None
+            if row:
+                return self._row_to_cluster(row)
+        return None
 
     def upsert_cluster(self, cluster: OpportunityCluster) -> int:
         cluster.__post_init__()
@@ -3066,6 +3107,16 @@ class Database:
     def get_opportunity(self, opportunity_id: int) -> Optional[Opportunity]:
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM opportunities WHERE id = ?", (opportunity_id,)).fetchone()
+        if not row:
+            return None
+        return Opportunity(**dict(row))
+
+    def get_opportunity_by_cluster_id(self, cluster_id: int) -> Optional[Opportunity]:
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM opportunities WHERE cluster_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (cluster_id,),
+        ).fetchone()
         if not row:
             return None
         return Opportunity(**dict(row))

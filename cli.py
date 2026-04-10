@@ -281,6 +281,7 @@ def build_operator_report(app: AutoResearcher, *, limit: int = 10) -> dict:
     decision_surface = app.db.get_candidate_workbench(limit=max(limit * 3, 25), run_id=app.current_run_id) if hasattr(app.db, "get_candidate_workbench") else []
     backlog_workbench = app.db.get_backlog_workbench(limit=max(limit * 3, 25)) if hasattr(app.db, "get_backlog_workbench") else []
     builder_jobs = build_builder_jobs_view(app.db, run_id=app.current_run_id, limit=max(limit * 3, 25))
+    high_leverage = app.high_leverage_report(limit=limit)
     validation_rows = app.validation_report(limit=1000)
     action_mix = collections.Counter(
         str(item.get("next_recommended_action") or "")
@@ -330,6 +331,7 @@ def build_operator_report(app: AutoResearcher, *, limit: int = 10) -> dict:
             "top_ranked_backlog": backlog_workbench[:limit],
             "build_queue": builder_jobs[:limit],
         },
+        "high_leverage": high_leverage,
         "operator_focus": {
             "recommended_focus": recommended_focus,
             "primary_blocker": blockers[0] if blockers else "",
@@ -365,6 +367,7 @@ def build_verbose_report(app: AutoResearcher, summary: dict) -> dict:
         if app.db and hasattr(app.db, "get_candidate_workbench")
         else [],
         "builder_jobs": build_builder_jobs_view(app.db, run_id=app.current_run_id, limit=10),
+        "high_leverage": app.high_leverage_report(limit=10),
         "operator_report": build_operator_report(app, limit=10),
         "review": app.review_report(limit=10),
         "recent_logs": app.status_tracker.status.get("logs", [])[-12:],
@@ -1206,6 +1209,7 @@ async def main() -> None:
             "decision-surface",
             "operator-report",
             "builder-jobs",
+            "high-leverage-report",
             "wedge-eval",
             "report",
             "gate-diagnostics",
@@ -1333,6 +1337,8 @@ async def main() -> None:
             print_json(build_operator_report(app, limit=min(max(args.limit, 5), 25)))
         elif args.command == "builder-jobs":
             print_json(build_builder_jobs_view(app.db, run_id=app.current_run_id, limit=100) if app.db else [])
+        elif args.command == "high-leverage-report":
+            print_json(app.high_leverage_report(limit=args.limit))
         elif args.command == "wedge-eval":
             from src.builder_output import WedgeEvaluator
 

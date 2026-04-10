@@ -165,6 +165,7 @@ discovery:
 orchestration:
   evidence_concurrency: 3
   run_once_max_wait_seconds: 180
+  stalled_idle_cycles_threshold: 50
   evidence_timeout_seconds: 120
   # After validation: generate SaaS/product ideas when decision is promote OR selection_status is prototype_candidate.
   auto_ideate_after_validation: true
@@ -226,6 +227,17 @@ build_prep:
 validation:
   promotion_threshold: 0.45
   park_threshold: 0.35
+  sharp_research:
+    decision_margin_below_park: 0.035
+    decision_floor_min: 0.10
+    problem_truth_score: 0.115
+    revenue_readiness_score: 0.18
+    evidence_quality: 0.42
+    value_support: 0.38
+    frequency_score: 0.25
+    workaround_density: 0.34
+    cost_of_inaction: 0.40
+    buildability: 0.52
   # Evidence/gathering search settings
   search:
     query_terms: 14

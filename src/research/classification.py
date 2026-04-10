@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.source_patterns import PAIN_KEYWORDS, contains_phrase
 
 
 # Classification constants moved from research_tools.py
@@ -18,30 +19,6 @@ AI_TOOL_KEYWORDS = [
     "cursor",
     "v0",
     "bolt",
-]
-
-PAIN_KEYWORDS = [
-    "manual",
-    "frustrating",
-    "annoying",
-    "takes too long",
-    "waste time",
-    "repetitive",
-    "error-prone",
-    "wish there was",
-    "need a way",
-    "need a better way",
-    "hate that",
-    "struggle",
-    "can't find",
-    "too expensive",
-    "overkill",
-    "problem",
-    "issue",
-    "worried",
-    "time consuming",
-    "negative review",
-    "destroyed my",
 ]
 
 VALUE_KEYWORDS = [
@@ -85,8 +62,7 @@ def contains_ai_keyword(text: str) -> bool:
 
 
 def contains_pain_keyword(text: str) -> bool:
-    text_lower = text.lower()
-    return any(kw in text_lower for kw in PAIN_KEYWORDS)
+    return any(contains_phrase(text, kw) for kw in PAIN_KEYWORDS)
 
 
 def contains_value_keyword(text: str) -> bool:

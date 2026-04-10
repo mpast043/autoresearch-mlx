@@ -175,6 +175,24 @@ class DummyApp:
     def review_report(self, limit=10):
         return [{"finding_id": 5, "decision": "park", "recurrence_state": "thin", "recurrence_score": 0.22}]
 
+    def high_leverage_report(self, limit=10):
+        return {
+            "run_id": "run-1",
+            "count": 1,
+            "band_mix": {"strong": 1},
+            "status_mix": {"candidate": 1},
+            "findings": [
+                {
+                    "finding_id": 5,
+                    "title": "Stripe payouts do not match QuickBooks invoices",
+                    "high_leverage_score": 0.71,
+                    "high_leverage_status": "candidate",
+                    "high_leverage_band": "strong",
+                    "evidence_tier": "one_family_strong",
+                }
+            ],
+        }
+
     def snapshot(self):
         return {"raw_signals": [1, 2], "ledger_entries": [1], "validations": []}
 
@@ -195,6 +213,7 @@ def test_build_verbose_report_includes_runtime_paths_counts_and_logs():
     assert report["candidate_workbench"][0]["next_recommended_action"] == "prototype_now"
     assert report["decision_surface"][0]["next_recommended_action"] == "prototype_now"
     assert report["builder_jobs"][0]["builder_status"] == "ready_to_build"
+    assert report["high_leverage"]["findings"][0]["finding_id"] == 5
     assert report["operator_report"]["money_surface"]["prototype_now_count"] == 1
     assert report["review"][0]["finding_id"] == 5
     assert "stage=discovery" in report["recent_logs"][0]
@@ -217,6 +236,7 @@ def test_build_operator_report_combines_health_sources_and_build_queue():
     assert report["money_surface"]["prototype_now_count"] == 1
     assert report["money_surface"]["build_ready_count"] == 1
     assert report["money_surface"]["builder_job_status_mix"]["ready_to_build"] == 1
+    assert report["high_leverage"]["findings"][0]["high_leverage_status"] == "candidate"
     assert report["operator_focus"]["recommended_focus"] == "prototype_now"
 
 

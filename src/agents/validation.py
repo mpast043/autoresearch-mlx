@@ -37,6 +37,11 @@ from src.opportunity_engine import (
 from src.research_tools import ResearchToolkit
 from src.source_policy import atom_generation_allowed
 from src.agents.validation_helpers import build_evidence_payload
+from src.high_leverage import (
+    build_high_leverage_cluster_context,
+    persist_high_leverage_assessment,
+    score_high_leverage_finding,
+)
 from src.validation_thresholds import resolve_promotion_park_thresholds
 
 
@@ -167,6 +172,7 @@ class ValidationAgent(BaseAgent):
             cluster=cluster,
             cluster_atoms=cluster_atoms,
             anchor_atom=anchor_atom,
+            anchor_signal=anchor_signal,
             market_gap=market_gap,
             scorecard=scorecard,
             counterevidence=counterevidence,
@@ -192,6 +198,7 @@ class ValidationAgent(BaseAgent):
         cluster: OpportunityCluster,
         cluster_atoms: list[ProblemAtom],
         anchor_atom: ProblemAtom,
+        anchor_signal: RawSignal,
         market_gap: dict[str, Any],
         scorecard: dict[str, Any],
         counterevidence: list[dict[str, Any]],
@@ -276,6 +283,37 @@ class ValidationAgent(BaseAgent):
 
         passed = decision["recommendation"] == "promote"
         overall_score = scorecard["composite_score"]
+        high_leverage_context = build_high_leverage_cluster_context(self.db, finding, anchor_atom)
+        high_leverage_context.update(
+            {
+                "cluster_id": cluster_id,
+                "cluster_label": cluster.label,
+                "cluster_key": cluster.cluster_key,
+                "opportunity_id": opportunity_id,
+                "recommendation": decision["recommendation"],
+                "selection_status": selection_status,
+            }
+        )
+        high_leverage_evidence = {
+            **(finding.evidence or {}),
+            "validation": {
+                **(evidence_scores.get("evidence", {}) or {}),
+                "corroboration": validation_payload.get("corroboration") or {},
+                "market_enrichment": validation_payload.get("market_enrichment") or {},
+                "decision": decision["recommendation"],
+                "selection_status": selection_status,
+                "selection_reason": selection_reason,
+            },
+            "corroboration": validation_payload.get("corroboration") or {},
+            "market_enrichment": validation_payload.get("market_enrichment") or {},
+        }
+        high_leverage = score_high_leverage_finding(
+            finding,
+            anchor_signal,
+            anchor_atom,
+            high_leverage_evidence,
+            high_leverage_context,
+        )
         evidence = build_evidence_payload(
             finding_id=finding_id,
             finding_kind=finding.finding_kind,
@@ -302,6 +340,7 @@ class ValidationAgent(BaseAgent):
             selection_gate=selection_gate,
             gate_threshold=self.gate_threshold,
             promotion_threshold=self.promotion_threshold,
+            high_leverage=high_leverage,
         )
 
         validation = Validation(
@@ -315,6 +354,12 @@ class ValidationAgent(BaseAgent):
             run_id=self.db.active_run_id,
         )
         validation_id = self.db.upsert_validation(validation)
+        persist_high_leverage_assessment(
+            self.db,
+            finding_id=finding_id,
+            signal_id=anchor_signal.id,
+            assessment=high_leverage,
+        )
 
         build_brief_id = 0
         if selection_status == "prototype_candidate":

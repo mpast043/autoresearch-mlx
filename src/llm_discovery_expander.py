@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import time
+import asyncio
 from typing import Any
 
 from src.problem_space import (
@@ -156,12 +157,12 @@ class LLMClient:
         if self.provider == "ollama":
             return await self._ollama_agenerate(system_prompt, user_prompt)
         elif self.provider == "anthropic":
-            return self._anthropic_generate(system_prompt, user_prompt)
+            return await asyncio.to_thread(self._anthropic_generate, system_prompt, user_prompt)
         else:
             result = await self._ollama_agenerate(system_prompt, user_prompt)
             if result is not None:
                 return result
-            return self._anthropic_generate(system_prompt, user_prompt)
+            return await asyncio.to_thread(self._anthropic_generate, system_prompt, user_prompt)
 
     def _ollama_generate(self, system_prompt: str, user_prompt: str) -> str | None:
         """Synchronous Ollama call via /api/chat endpoint."""

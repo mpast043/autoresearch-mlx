@@ -142,6 +142,18 @@ class TestCircuitBreaker:
         with pytest.raises(CircuitOpenError):
             await cb.call_sync(func)
 
+    @pytest.mark.asyncio
+    async def test_failure_predicate_exception_preserves_original_error(self):
+        cb = CircuitBreaker("test", failure_threshold=1)
+        func = AsyncMock(side_effect=RuntimeError("original"))
+
+        def bad_predicate(_exc):
+            raise ValueError("predicate exploded")
+
+        with pytest.raises(RuntimeError, match="original"):
+            await cb.call(func, failure_predicate=bad_predicate)
+        assert cb.state == CircuitState.OPEN
+
 
 class TestGetBreaker:
     """Tests for the get_breaker registry."""

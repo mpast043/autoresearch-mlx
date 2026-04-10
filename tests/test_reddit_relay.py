@@ -15,6 +15,7 @@ from src.reddit_relay import (
     AUTH_TOKEN_KEY,
     STORE_KEY,
     RedditRelayStore,
+    _canonical_url,
     build_relay_app,
     cached_comments,
     cached_search,
@@ -116,6 +117,14 @@ def test_relay_store_thread_matches_relative_and_absolute_urls():
     finally:
         if os.path.exists(path):
             os.remove(path)
+
+
+def test_canonical_url_rejects_non_reddit_hosts():
+    try:
+        _canonical_url("https://example.com/not-reddit")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "unsupported reddit host" in str(exc)
 
 
 def test_cached_thread_repairs_legacy_shape():

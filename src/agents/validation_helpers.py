@@ -38,6 +38,7 @@ def build_evidence_payload(
     selection_gate: dict[str, Any],
     gate_threshold: float,
     promotion_threshold: float,
+    high_leverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the full evidence payload dict for a validation result.
 
@@ -152,4 +153,5 @@ def build_evidence_payload(
         "selection_status": selection_status,
         "selection_reason": selection_reason,
         "selection_gate": selection_gate,
+        "high_leverage": high_leverage or {},
     }

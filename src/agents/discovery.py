@@ -39,6 +39,7 @@ from src.discovery_term_lifecycle import (
     compute_next_state,
     recompute_wedge_quality_score,
 )
+from src.high_leverage import score_high_leverage_finding
 from src.llm_discovery_expander import LLMDiscoveryExpander
 from src.problem_space import EXPLORING, VALIDATED
 from src.problem_space_lifecycle import ProblemSpaceLifecycleManager
@@ -385,7 +386,10 @@ class DiscoveryAgent(BaseAgent):
         self.toolkit = ResearchToolkit(self.config)
         close_old = getattr(old_toolkit, "close", None)
         if callable(close_old):
-            await close_old()
+            try:
+                await close_old()
+            except Exception as exc:
+                logger.warning("error closing previous discovery toolkit during refresh: %s", exc)
 
     def _screened_out_retention_limit(self) -> int:
         retention = self.config.get("discovery", {}).get("screened_out_retention", {}) or {}
@@ -928,6 +932,50 @@ class DiscoveryAgent(BaseAgent):
             evidence=evidence,
         )
 
+        temp_signal = RawSignal(
+            finding_id=0,
+            source_name=signal_payload["source_name"],
+            source_type=signal_payload["source_type"],
+            source_class=source_classification["source_class"],
+            source_url=signal_payload["source_url"],
+            title=signal_payload["title"],
+            body_excerpt=signal_payload["body_excerpt"],
+            quote_text=signal_payload["quote_text"],
+            role_hint=signal_payload["role_hint"],
+            published_at=signal_payload["published_at"],
+            timestamp_hint=signal_payload["timestamp_hint"],
+            content_hash=content_hash,
+            metadata=signal_payload["metadata_json"],
+        )
+        temp_atom = ProblemAtom(
+            signal_id=0,
+            finding_id=0,
+            cluster_key=atom_payload["cluster_key"],
+            segment=atom_payload["segment"],
+            user_role=atom_payload["user_role"],
+            job_to_be_done=atom_payload["job_to_be_done"],
+            trigger_event=atom_payload["trigger_event"],
+            pain_statement=atom_payload["pain_statement"],
+            failure_mode=atom_payload["failure_mode"],
+            current_workaround=atom_payload["current_workaround"],
+            current_tools=atom_payload["current_tools"],
+            urgency_clues=atom_payload["urgency_clues"],
+            frequency_clues=atom_payload["frequency_clues"],
+            emotional_intensity=atom_payload["emotional_intensity"],
+            cost_consequence_clues=atom_payload["cost_consequence_clues"],
+            why_now_clues=atom_payload["why_now_clues"],
+            confidence=atom_payload["confidence"],
+            platform=atom_payload.get("platform", ""),
+            specificity_score=atom_payload.get("specificity_score", 0.0),
+            consequence_score=atom_payload.get("consequence_score", 0.0),
+            atom_extraction_method=atom_payload.get("atom_extraction_method", "heuristic"),
+            atom_json=json.dumps(atom_payload["atom_json"]),
+        )
+        high_leverage = score_high_leverage_finding(finding, temp_signal, temp_atom, evidence)
+        evidence["high_leverage"] = high_leverage
+        finding.evidence = evidence
+        finding.evidence_json = json.dumps(evidence)
+
         finding_id = self.db.insert_finding(finding)
         self._seen_hashes.add(content_hash)
         if source_plan and discovery_query:
@@ -952,6 +1000,8 @@ class DiscoveryAgent(BaseAgent):
                 )
             self._enforce_screened_out_retention()
             return finding_id
+
+        signal_payload.setdefault("metadata_json", {})["high_leverage"] = high_leverage
 
         signal = RawSignal(
             finding_id=finding_id,

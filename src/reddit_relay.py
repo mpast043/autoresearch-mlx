@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - supports package and direct module usage
 
 
 logger = logging.getLogger(__name__)
+ALLOWED_REDDIT_HOSTS = {"reddit.com", "www.reddit.com", "old.reddit.com", "np.reddit.com"}
 
 
 def _resolve_env(value: str | None) -> str:
@@ -47,7 +48,9 @@ def _canonical_url(url: str) -> str:
     parsed = urlparse(raw)
     scheme = parsed.scheme or "https"
     netloc = parsed.netloc.lower() or "reddit.com"
-    if netloc == "www.reddit.com":
+    if netloc not in ALLOWED_REDDIT_HOSTS:
+        raise ValueError(f"unsupported reddit host: {netloc}")
+    if netloc in {"www.reddit.com", "old.reddit.com", "np.reddit.com"}:
         netloc = "reddit.com"
     path = parsed.path.rstrip("/") or "/"
     return f"{scheme}://{netloc}{path}"
@@ -58,8 +61,19 @@ class RedditRelayStore:
 
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self._session: aiohttp.ClientSession | None = None
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
+
+    async def close(self) -> None:
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
+
+    async def _http_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
@@ -341,12 +355,12 @@ class RedditRelayStore:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(json_url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                    if resp.status != 200:
-                        logger.warning("live reddit thread failed status=%s url=%s", resp.status, canonical_url)
-                        return None
-                    data = await resp.json()
+            session = await self._http_session()
+            async with session.get(json_url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                if resp.status != 200:
+                    logger.warning("live reddit thread failed status=%s url=%s", resp.status, canonical_url)
+                    return None
+                data = await resp.json()
         except asyncio.TimeoutError:
             logger.warning("live reddit thread timeout url=%s", canonical_url)
             return None
@@ -709,9 +723,15 @@ async def cached_thread(request: web.Request) -> web.Response:
     url = str(body.get("url", "") or "")
     comment_limit = min(max(int(body.get("comment_limit", 50) or 50), 1), 50)
     depth = max(int(body.get("depth", 4) or 4), 1)
-    result = store.get_thread(url=url)
+    try:
+        result = store.get_thread(url=url)
+    except ValueError as exc:
+        return _json_error(400, "invalid_reddit_url", str(exc), post=None, comments=[])
     if result is None:
-        result = await store.fetch_live_thread(url=url, comment_limit=comment_limit, depth=depth)
+        try:
+            result = await store.fetch_live_thread(url=url, comment_limit=comment_limit, depth=depth)
+        except ValueError as exc:
+            return _json_error(400, "invalid_reddit_url", str(exc), post=None, comments=[])
     if result is None:
         return _json_error(404, "no_cached_result", "no cached thread result", post=None, comments=[])
     try:
@@ -734,10 +754,16 @@ async def cached_comments(request: web.Request) -> web.Response:
     limit = min(max(int(body.get("limit", 8) or 8), 1), 50)
     store = request.app[STORE_KEY]
     url = str(body.get("url", "") or "")
-    result = store.get_comments(url=url, limit=limit)
-    if result is None:
-        await store.fetch_live_thread(url=url, comment_limit=limit, depth=max(int(body.get("depth", 4) or 4), 1))
+    try:
         result = store.get_comments(url=url, limit=limit)
+    except ValueError as exc:
+        return _json_error(400, "invalid_reddit_url", str(exc), items=[])
+    if result is None:
+        try:
+            await store.fetch_live_thread(url=url, comment_limit=limit, depth=max(int(body.get("depth", 4) or 4), 1))
+            result = store.get_comments(url=url, limit=limit)
+        except ValueError as exc:
+            return _json_error(400, "invalid_reddit_url", str(exc), items=[])
     if result is None:
         return _json_error(404, "no_cached_result", "no cached comments result", items=[])
     return web.json_response({"ok": True, "items": result["items"], "collected_at": result["collected_at"]})
@@ -762,6 +788,11 @@ def build_relay_app(config: dict[str, Any] | None = None) -> web.Application:
     app.router.add_post("/api/reddit/search-posts", cached_search)
     app.router.add_post("/api/reddit/post-thread", cached_thread)
     app.router.add_post("/api/reddit/comments", cached_comments)
+
+    async def _cleanup(app: web.Application) -> None:
+        await app[STORE_KEY].close()
+
+    app.on_cleanup.append(_cleanup)
     return app
 
 
