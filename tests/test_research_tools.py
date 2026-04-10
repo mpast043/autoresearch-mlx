@@ -1368,6 +1368,43 @@ def test_web_problem_filter_keeps_independent_operator_thread():
     ) is False
 
 
+def test_web_problem_filter_rejects_reference_calculation_pages():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Residential Duct Systems Design - Engineers Edge",
+        snippet="Provided Excel spreadsheet for residential duct system design calculations",
+        body=(
+            "ACCA Manual 3rd Edition reference with a provided Excel spreadsheet for "
+            "residential duct system design calculations and potential incorrect design notes."
+        ),
+        url="https://www.engineersedge.com/hvac/residential_duct_systems_design.htm",
+    )
+
+
+def test_web_problem_filter_rejects_download_and_editorial_excel_pages():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Download HVAC Duct Measurement Excel Sheet",
+        snippet="Free download for HVAC duct measurement workbook",
+        body="Download now to get the Excel sheet and reference guide.",
+        url="https://example.com/downloads/hvac-duct-measurement-excel-sheet",
+    )
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Microsoft Excel - Download",
+        snippet="Download Microsoft Excel as part of Microsoft 365.",
+        body="Get started with Microsoft 365 and Excel today.",
+        url="https://www.microsoft.com/en-us/microsoft-365/excel/download",
+    )
+    assert toolkit._is_low_quality_web_problem_page(
+        title="What's New in Microsoft Excel",
+        snippet="See the latest Excel features and release notes.",
+        body="New features, release notes, and Microsoft 365 updates.",
+        url="https://www.microsoft.com/en-us/microsoft-365/blog/whats-new-in-excel/",
+    )
+
+
 def test_validation_recurrence_filter_rejects_generic_comparison_listicles():
     toolkit = ResearchToolkit()
 

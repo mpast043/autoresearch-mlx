@@ -389,6 +389,7 @@ def test_completion_state_reports_queue_and_worker_activity():
 
         assert state["queue_empty"] is False
         assert state["queue_size"] == 2
+        assert state["queue_by_agent"] == {}
         assert state["open_qualified"] == 1
         assert state["evidence_busy"] == 1
         assert state["validation_busy"] == 0
@@ -833,7 +834,35 @@ def test_wait_for_pipeline_drained_uses_configured_stalled_idle_threshold():
     drained, sleep_calls = asyncio.run(_run())
 
     assert drained is True
-    assert len(sleep_calls) == 2
+    assert len(sleep_calls) == 3
+
+
+def test_completion_state_reports_agent_queue_sizes_and_statuses():
+    app = AutoResearcher(config_path=str(Path(__file__).resolve().parents[1] / "config.yaml"))
+    app.orchestrator = type(
+        "OrchestratorStub",
+        (),
+        {
+            "_message_queue": type(
+                "QueueStub",
+                (),
+                {
+                    "empty": lambda self: False,
+                    "qsize": lambda self, agent_name=None: 3 if agent_name is None else (2 if agent_name == "builder" else 1),
+                    "registered_agents": lambda self: ["builder", "ideation"],
+                },
+            )()
+        },
+    )()
+    app.agents = {
+        "builder": type("BuilderStub", (), {"busy_count": lambda self: 0, "status": type("Status", (), {"value": "RUNNING"})()})(),
+        "ideation": type("IdeationStub", (), {"busy_count": lambda self: 0, "status": type("Status", (), {"value": "ERROR"})()})(),
+    }
+
+    state = app.completion_state()
+
+    assert state["queue_by_agent"] == {"builder": 2, "ideation": 1}
+    assert state["agent_statuses"] == {"builder": "RUNNING", "ideation": "ERROR"}
 
 
 def test_snapshot_screening_uses_current_run_counts():

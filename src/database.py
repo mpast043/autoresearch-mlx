@@ -305,6 +305,10 @@ class Validation:
             self.evidence = _json_loads(self.evidence_json, {})
         self.evidence_json = _json_dumps(self.evidence)
 
+    @property
+    def evidence_dict(self) -> dict[str, Any]:
+        return dict(self.evidence or {})
+
 
 @dataclass
 class ValidationExperiment:
@@ -2064,6 +2068,24 @@ class Database:
 
     def upsert_validation(self, validation: Validation) -> int:
         return self.insert_validation(validation)
+
+    def get_validation(self, validation_id: int) -> Optional[Validation]:
+        conn = self._get_connection()
+        row = conn.execute("SELECT * FROM validations WHERE id = ?", (validation_id,)).fetchone()
+        if not row:
+            return None
+        return Validation(
+            id=row["id"],
+            finding_id=row["finding_id"],
+            run_id=row["run_id"] or "",
+            market_score=float(row["market_score"] or 0.0),
+            technical_score=float(row["technical_score"] or 0.0),
+            distribution_score=float(row["distribution_score"] or 0.0),
+            overall_score=float(row["overall_score"] or 0.0),
+            passed=bool(row["passed"]),
+            evidence=_json_loads(row["evidence"], {}),
+            validated_at=row["validated_at"],
+        )
 
     def get_recent_validations(self, limit: int = 25) -> list[dict[str, Any]]:
         conn = self._get_connection()
@@ -3903,10 +3925,90 @@ class Database:
             params.append(limit)
         return [Idea(**dict(row)) for row in conn.execute(sql, params).fetchall()]
 
+    def insert_idea(self, idea: Idea) -> int:
+        conn = self._get_connection()
+        build_brief_id = int(idea.build_brief_id or 0)
+        cur = conn.execute(
+            """
+            INSERT INTO ideas (
+                title, slug, description, pattern_ids, estimated_market_size,
+                technical_complexity, status, audience, monetization_strategy,
+                confidence_score, product_type, spec_json, build_brief_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                idea.title,
+                idea.slug,
+                idea.description,
+                idea.pattern_ids,
+                idea.estimated_market_size,
+                idea.technical_complexity,
+                idea.status,
+                idea.audience,
+                idea.monetization_strategy,
+                idea.confidence_score,
+                idea.product_type,
+                idea.spec_json,
+                build_brief_id if build_brief_id > 0 else None,
+            ),
+        )
+        self._commit(conn)
+        return int(cur.lastrowid)
+
     def get_idea(self, idea_id: int) -> Optional[Idea]:
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
         return Idea(**dict(row)) if row else None
+
+    def get_idea_by_slug(self, slug: str) -> Optional[Idea]:
+        conn = self._get_connection()
+        row = conn.execute("SELECT * FROM ideas WHERE slug = ? LIMIT 1", (slug,)).fetchone()
+        return Idea(**dict(row)) if row else None
+
+    def update_idea(
+        self,
+        idea_id: int,
+        *,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        pattern_ids: Optional[str] = None,
+        estimated_market_size: Optional[str] = None,
+        technical_complexity: Optional[str] = None,
+        status: Optional[str] = None,
+        audience: Optional[str] = None,
+        monetization_strategy: Optional[str] = None,
+        confidence_score: Optional[float] = None,
+        product_type: Optional[str] = None,
+        spec_json: Optional[str] = None,
+        build_brief_id: Optional[int] = None,
+    ) -> None:
+        updates: list[str] = []
+        params: list[Any] = []
+        for field, value in [
+            ("title", title),
+            ("description", description),
+            ("pattern_ids", pattern_ids),
+            ("estimated_market_size", estimated_market_size),
+            ("technical_complexity", technical_complexity),
+            ("status", status),
+            ("audience", audience),
+            ("monetization_strategy", monetization_strategy),
+            ("confidence_score", confidence_score),
+            ("product_type", product_type),
+            ("spec_json", spec_json),
+            ("build_brief_id", (int(build_brief_id or 0) if build_brief_id is not None else None)),
+        ]:
+            if value is not None:
+                if field == "build_brief_id":
+                    value = value if value > 0 else None
+                updates.append(f"{field} = ?")
+                params.append(value)
+        if not updates:
+            return
+        params.append(idea_id)
+        conn = self._get_connection()
+        conn.execute(f"UPDATE ideas SET {', '.join(updates)} WHERE id = ?", params)
+        self._commit(conn)
 
     def update_idea_status(self, idea_id: int, status: str) -> None:
         conn = self._get_connection()

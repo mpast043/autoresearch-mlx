@@ -220,6 +220,13 @@ def get_platform_classification_config() -> dict[str, str]:
             os.environ.get("OLLAMA_API_KEY"),
             default="",
         ),
+        "timeout_seconds": float(
+            _pick(
+                classifier_config.get("timeout_seconds"),
+                os.environ.get("PLATFORM_FIT_LLM_TIMEOUT"),
+                default="60",
+            )
+        ),
         "anthropic_api_key": _pick(
             classifier_config.get("anthropic_api_key"),
             llm_config.get("anthropic_api_key"),
@@ -385,7 +392,7 @@ def _classify_via_ollama(
             headers=headers,
         )
 
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=float(config.get("timeout_seconds", 60) or 60)) as response:
             result = json.loads(response.read().decode("utf-8"))
             if use_openai_compat:
                 raw = (
@@ -1127,6 +1134,31 @@ def _determine_product_via_keyword(
             product_name="listing_workflow_patch",
             one_sentence_product="Streamline shipping and listing workflows",
             why_this_format="Built into seller workflow",
+            llm_used=False,
+            fallback_used=True,
+        )
+    if any(marker in text for marker in ["excel", "spreadsheet", "worksheet"]) and any(
+        marker in text
+        for marker in [
+            "revision",
+            "version",
+            "submittal",
+            "design",
+            "calculation",
+            "billing",
+            "milestone",
+            "contract",
+            "tax rate",
+            "field service",
+            "parts usage",
+        ]
+    ):
+        return PlatformFit(
+            host_platform="Spreadsheet workflow",
+            product_format="workflow add-on",
+            product_name="spreadsheet_workflow_guard",
+            one_sentence_product="Catch spreadsheet-driven workflow drift before revisions, billing, or calculations go wrong",
+            why_this_format="Targets a narrow spreadsheet-heavy checkpoint instead of a generic internal workflow tool",
             llm_used=False,
             fallback_used=True,
         )

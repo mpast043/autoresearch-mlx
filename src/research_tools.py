@@ -508,6 +508,8 @@ WEB_PROBLEM_REJECT_PATH_TOKENS = [
     "/comparison",
     "/reviews/",
     "/top-",
+    "/download",
+    "/downloads/",
 ]
 
 WEB_PROBLEM_REJECT_TEXT_PATTERNS = [
@@ -528,6 +530,39 @@ WEB_PROBLEM_REJECT_TEXT_PATTERNS = [
     "risks and challenges",
     "fails accounting teams",
     "solved:",
+    "what's new in microsoft excel",
+    "whats new in microsoft excel",
+    "microsoft excel - download",
+    "download hvac duct measurement excel sheet",
+    "free download",
+    "download now",
+]
+
+WEB_PROBLEM_REFERENCE_TEXT_PATTERNS = [
+    "3rd edition",
+    "third edition",
+    "provided excel spreadsheet",
+    "design calculations",
+    "reference guide",
+    "download worksheet",
+    "design worksheet",
+    "calculator",
+]
+
+WEB_PROBLEM_PRACTITIONER_TEXT_PATTERNS = [
+    "our team",
+    "we spend",
+    "we have to",
+    "i spend",
+    "i have to",
+    "manually",
+    "every month",
+    "every week",
+    "ops team",
+    "accounting team",
+    "merchant",
+    "bookkeeper",
+    "manager",
 ]
 
 WEB_PROBLEM_CONTENT_FARM_DOMAINS = {
@@ -1509,9 +1544,40 @@ class ResearchToolkit:
             return True
         if any(token in domain for token in WEB_PROBLEM_REJECT_DOMAIN_TOKENS):
             return True
+        if "engineersedge." in domain:
+            return True
         if any(token in path for token in WEB_PROBLEM_REJECT_PATH_TOKENS):
             return True
         if any(pattern in haystack for pattern in WEB_PROBLEM_REJECT_TEXT_PATTERNS):
+            return True
+        has_practitioner_context = any(pattern in haystack for pattern in WEB_PROBLEM_PRACTITIONER_TEXT_PATTERNS)
+        looks_like_reference = any(pattern in haystack for pattern in WEB_PROBLEM_REFERENCE_TEXT_PATTERNS)
+        discussion_surface = any(token in path for token in ["/forum/", "/forums/", "/thread/", "/threads/", "/discussion", "/discussions/"])
+        looks_like_download = (
+            title_lower.startswith("download ")
+            or title_lower.endswith(" - download")
+            or "free download" in haystack
+            or "download now" in haystack
+            or "/download" in path
+        )
+        looks_like_release_editorial = (
+            title_lower.startswith("what's new in ")
+            or title_lower.startswith("whats new in ")
+            or "release notes" in haystack
+            or "new features" in haystack
+        )
+        looks_like_vendor_product_page = (
+            any(token in domain for token in ["microsoft.com", "office.com"])
+            and ("excel" in haystack or "microsoft 365" in haystack)
+            and not has_practitioner_context
+        )
+        if looks_like_reference and not has_practitioner_context and not discussion_surface:
+            return True
+        if looks_like_download and not has_practitioner_context and not discussion_surface:
+            return True
+        if looks_like_release_editorial and not has_practitioner_context:
+            return True
+        if looks_like_vendor_product_page:
             return True
         if title_lower.startswith("why ") and ("tutorial" in haystack or "compatibility version" in haystack):
             return True

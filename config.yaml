@@ -223,6 +223,7 @@ build_prep:
     base_url: http://127.0.0.1:11434/v1
     api_key: ollama
     model: gemma4:latest
+    timeout_seconds: 60
 
 validation:
   promotion_threshold: 0.18

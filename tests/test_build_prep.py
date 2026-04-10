@@ -20,6 +20,7 @@ from build_prep import (
     _parse_platform_fit_response,
     _classify_via_ollama,
     _classify_via_anthropic,
+    _determine_product_via_keyword,
 )
 
 
@@ -884,6 +885,7 @@ class TestProviderClassification(unittest.TestCase):
             self.assertEqual(config["provider"], "auto")
             self.assertEqual(config["ollama_base_url"], "http://127.0.0.1:11434")
             self.assertEqual(config["ollama_model"], "gemma4:latest")
+            self.assertEqual(config["timeout_seconds"], 60.0)
         finally:
             os.environ.clear()
             os.environ.update(original_env)
@@ -918,6 +920,7 @@ class TestProviderClassification(unittest.TestCase):
                         "base_url": "http://127.0.0.1:11434/v1",
                         "api_key": "ollama",
                         "model": "gemma4:latest",
+                        "timeout_seconds": 90,
                     }
                 },
             }
@@ -928,6 +931,18 @@ class TestProviderClassification(unittest.TestCase):
         self.assertEqual(config["ollama_base_url"], "http://127.0.0.1:11434/v1")
         self.assertEqual(config["ollama_api_key"], "ollama")
         self.assertEqual(config["ollama_model"], "gemma4:latest")
+        self.assertEqual(config["timeout_seconds"], 90.0)
+
+    def test_keyword_fallback_handles_spreadsheet_revision_workflows(self):
+        result = _determine_product_via_keyword(
+            wedge_name="Local permitting document revision tracking",
+            job_to_be_done="Track spreadsheet-driven submittal revisions and milestone billing changes",
+            failure_mode="Excel-based revision sheets drift and contract milestone billing goes wrong",
+            user_role="project coordinator",
+        )
+
+        self.assertEqual(result.host_platform, "Spreadsheet workflow")
+        self.assertEqual(result.product_name, "spreadsheet_workflow_guard")
 
     def test_parse_platform_fit_response_valid_json(self):
         """Test parsing valid JSON response."""

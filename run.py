@@ -203,6 +203,7 @@ class AutoResearcher:
         stalled_idle_cycles = 0
         last_log_at = 0.0
         last_state: dict[str, Any] | None = None
+        last_idle_signature: tuple[Any, ...] | None = None
         stalled_idle_threshold = int(
             (self.config.get("orchestration", {}) or {}).get(
                 "stalled_idle_cycles_threshold",
@@ -223,17 +224,28 @@ class AutoResearcher:
                     return True
             else:
                 quiet_cycles = 0
-            if (
-                last_state == state
+
+            is_idle_but_stuck = (
+                not state.get("queue_empty")
                 and state.get("open_qualified") == 0
                 and state.get("total_busy") == 0
-            ):
+            )
+            idle_signature = (
+                state.get("queue_size"),
+                state.get("open_qualified"),
+                state.get("total_busy"),
+                tuple(sorted((state.get("queue_by_agent") or {}).items())),
+                tuple(sorted((state.get("agent_statuses") or {}).items())),
+            )
+
+            if is_idle_but_stuck and idle_signature == last_idle_signature:
                 stalled_idle_cycles += 1
                 if stalled_idle_cycles >= stalled_idle_threshold:
                     logger.warning("treating stable idle queue as drained: %s", state)
                     return True
             else:
                 stalled_idle_cycles = 0
+            last_idle_signature = idle_signature if is_idle_but_stuck else None
             await asyncio.sleep(0.1)
         return bool(self.completion_state().get("drained"))
 
@@ -415,9 +427,16 @@ class AutoResearcher:
     def completion_state(self) -> dict[str, Any]:
         queue_empty = True
         queue_size = 0
+        queue_by_agent: dict[str, int] = {}
         if self.orchestrator is not None:
             queue_empty = self.orchestrator._message_queue.empty()
             queue_size = self.orchestrator._message_queue.qsize()
+            queue_registry = getattr(self.orchestrator._message_queue, "registered_agents", None)
+            if callable(queue_registry):
+                for agent_name in queue_registry():
+                    agent_queue_size = int(self.orchestrator._message_queue.qsize(agent_name))
+                    if agent_queue_size > 0:
+                        queue_by_agent[agent_name] = agent_queue_size
         actual_open_qualified = self._count_actionable_qualified_findings() if self.db is not None else 0
         open_qualified = 0 if self._ignore_backlog_for_completion else actual_open_qualified
 
@@ -425,8 +444,12 @@ class AutoResearcher:
         validation_busy = 0
         total_busy = 0
         busy_agents: dict[str, int] = {}
+        agent_statuses: dict[str, str] = {}
         if self.agents:
             for agent_name, agent in self.agents.items():
+                agent_status = getattr(getattr(agent, "status", None), "value", "")
+                if agent_status:
+                    agent_statuses[agent_name] = str(agent_status)
                 if agent is None or not hasattr(agent, "busy_count"):
                     continue
                 agent_busy = int(agent.busy_count())
@@ -439,12 +462,14 @@ class AutoResearcher:
         return {
             "queue_empty": queue_empty,
             "queue_size": queue_size,
+            "queue_by_agent": queue_by_agent,
             "open_qualified": open_qualified,
             "actual_open_qualified": actual_open_qualified,
             "evidence_busy": evidence_busy,
             "validation_busy": validation_busy,
             "total_busy": total_busy,
             "busy_agents": busy_agents,
+            "agent_statuses": agent_statuses,
             "drained": drained,
         }
 
