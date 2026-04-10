@@ -584,6 +584,15 @@ class BuilderV2Agent(BaseAgent):
             payload = {"success": False, "error": f"Build brief {build_brief_id} not found", "build_brief_id": build_brief_id}
             await self._emit_result(message, payload)
             return payload
+        if str(brief.status or "") != "build_ready":
+            payload = {
+                "success": False,
+                "error": f"Build brief {build_brief_id} is not build_ready",
+                "build_brief_id": build_brief_id,
+                "status": brief.status,
+            }
+            await self._emit_result(message, payload)
+            return payload
 
         spec = dict(brief.brief or {})
         prep_outputs = self.db.list_build_prep_outputs(build_brief_id=build_brief_id, run_id=brief.run_id, limit=20)

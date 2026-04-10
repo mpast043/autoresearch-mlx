@@ -83,6 +83,18 @@ class Orchestrator:
         self._agents[agent.name] = agent
         agent._message_queue = self._message_queue
 
+    def _brief_is_build_ready(self, build_brief_id: Any) -> bool:
+        if not build_brief_id:
+            return False
+        try:
+            brief = self._db.get_build_brief(int(build_brief_id))
+        except Exception:
+            logger.exception("failed to load build brief %s for auto-build gate", build_brief_id)
+            return False
+        if brief is None:
+            return False
+        return str(brief.status or "") == "build_ready"
+
     async def start(self, skip_agents: Optional[set[str]] = None) -> None:
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
@@ -290,6 +302,7 @@ class Orchestrator:
             elif (
                 self._auto_build
                 and message.payload.get("prep_stage") == "spec_generation"
+                and self._brief_is_build_ready(message.payload.get("build_brief_id"))
             ):
                 await self.send_message(
                     to_agent="builder",

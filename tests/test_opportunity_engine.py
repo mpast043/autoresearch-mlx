@@ -520,6 +520,41 @@ def test_qualify_problem_signal_rejects_help_choosing_vendor_prompt():
     assert "too_generic_after_review" in screening["negative_signals"]
 
 
+def test_qualify_problem_signal_rejects_hiring_bookkeeper_advice_thread():
+    finding_data = {
+        "source": "reddit-problem/accounting",
+        "source_url": "https://reddit.com/r/accounting/comments/hire-bookkeeper",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Best time to hire a bookkeeper for a growing small business?",
+        "body_excerpt": (
+            "I'm doing the books myself every Sunday night and wondering when people usually hire a bookkeeper. "
+            "Would love advice from owners who have been through this."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "user_role": "small business owner",
+        "job_to_be_done": "manage bookkeeping for a growing small business",
+        "trigger_event": "sunday nights",
+        "pain_statement": "still doing the books myself",
+        "failure_mode": "",
+        "current_workaround": "do the books myself on weekends",
+        "urgency_clues": "",
+        "frequency_clues": "weekly",
+        "cost_consequence_clues": "",
+        "why_now_clues": "growing business",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "hiring_or_staffing_advice_thread" in screening["negative_signals"]
+
+
 def test_qualify_problem_signal_rejects_virtual_card_expense_shopping_prompt():
     finding_data = {
         "source": "reddit-problem/smallbusiness",

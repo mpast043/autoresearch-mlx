@@ -332,6 +332,21 @@ class ValidationExperiment:
             self.result = _json_loads(self.result_json, {})
         self.result_json = _json_dumps(self.result)
 
+    @property
+    def plan(self) -> dict[str, Any]:
+        plan = {
+            "test_type": self.test_type,
+            "hypothesis": self.hypothesis,
+            "falsifier": self.falsifier,
+            "smallest_test": self.smallest_test,
+            "success_signal": self.success_signal,
+            "failure_signal": self.failure_signal,
+        }
+        result = self.result or {}
+        if isinstance(result, dict) and result:
+            plan["result"] = dict(result)
+        return plan
+
 
 @dataclass
 class EvidenceLedgerEntry:

@@ -1735,6 +1735,15 @@ def test_should_hydrate_reddit_problem_doc_rejects_generic_tooling_questions_wit
         )
     ) is False
 
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="Best time to hire a bookkeeper for a growing small business?",
+            url="https://reddit.com/r/accounting/comments/example-9",
+            snippet="Doing the books myself and wondering when most owners hire help",
+            source="reddit/accounting",
+        )
+    ) is False
+
 
 def test_stackoverflow_recurrence_requires_transferable_operational_shape():
     toolkit = ResearchToolkit()

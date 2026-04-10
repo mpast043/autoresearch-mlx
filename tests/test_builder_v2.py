@@ -199,3 +199,76 @@ def test_builder_v2_build_request_from_idea_persists_product(monkeypatch, tmp_pa
         db.close()
         if os.path.exists(db_path):
             os.remove(db_path)
+
+
+def test_builder_v2_build_request_from_brief_rejects_non_build_ready(monkeypatch, tmp_path):
+    db_path = tempfile.mktemp(suffix=".db")
+    db = Database(db_path)
+    db.init_schema()
+    db.set_active_run_id("test-run")
+    try:
+        finding_id = db.insert_finding(
+            Finding(source="reddit", source_url="https://example.com/thread", content_hash="builder-v2-not-ready")
+        )
+        validation_id = db.insert_validation(
+            Validation(
+                finding_id=finding_id,
+                passed=True,
+                overall_score=0.8,
+                run_id="test-run",
+                evidence={"decision": "promote"},
+            )
+        )
+        cluster_id = db.upsert_cluster(
+            OpportunityCluster(
+                label="Ops handoff failures",
+                cluster_key="ops-handoffs-not-ready",
+                summary={"sample_atoms": []},
+            )
+        )
+        opportunity_id = db.upsert_opportunity(
+            Opportunity(
+                cluster_id=cluster_id,
+                title="Fix spreadsheet handoff failures",
+                market_gap="handoff gap",
+                recommendation="promote",
+                status="promoted",
+                selection_status="research_more",
+            )
+        )
+        build_brief_id = db.upsert_build_brief(
+            BuildBrief(
+                run_id="test-run",
+                opportunity_id=opportunity_id,
+                validation_id=validation_id,
+                cluster_id=cluster_id,
+                status="research_more",
+                recommended_output_type="workflow_reliability_console",
+                brief_json=json.dumps({"problem_summary": "Spreadsheet handoff failures"}),
+            )
+        )
+
+        async def scenario():
+            agent = BuilderV2Agent({"llm": {"provider": "ollama"}}, db=db)
+            agent._message_queue = MessageBus()
+            payload = await agent.process(
+                create_message(
+                    from_agent="orchestrator",
+                    to_agent="builder",
+                    msg_type=MessageType.BUILD_REQUEST,
+                    payload={"build_brief_id": build_brief_id},
+                )
+            )
+            emitted = await agent._message_queue.receive("orchestrator")
+            return payload, emitted
+
+        payload, emitted = asyncio.run(scenario())
+
+        assert payload["success"] is False
+        assert payload["status"] == "research_more"
+        assert emitted.payload["success"] is False
+        assert db.get_product_for_build_brief(build_brief_id) is None
+    finally:
+        db.close()
+        if os.path.exists(db_path):
+            os.remove(db_path)

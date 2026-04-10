@@ -227,6 +227,14 @@ GENERIC_REQUEST_PATTERNS = [
     "need a recommendation",
     "what's the best",
 ]
+HIRING_ADVICE_PATTERNS = [
+    "best time to hire",
+    "when should i hire",
+    "hire a bookkeeper",
+    "hire my first bookkeeper",
+    "hire an accountant",
+    "bookkeeper for a growing small business",
+]
 ADVICE_SEEKING_PATTERNS = [
     "looking for advice",
     "how do you handle",
@@ -2270,6 +2278,9 @@ def classify_source_signal(
     if _has_phrase(origin_text, FINANCE_BROAD_VISIBILITY_PATTERNS) and not _has_specific_finance_failure_shape(origin_text):
         reasons.append("broad_finance_visibility_without_specific_failure")
         return {"source_class": "low_signal_summary", "reasons": reasons}
+    if _has_phrase(origin_text, HIRING_ADVICE_PATTERNS) and not _has_specific_finance_failure_shape(origin_text):
+        reasons.append("hiring_or_staffing_advice_thread")
+        return {"source_class": "low_signal_summary", "reasons": reasons}
     if _is_broad_buying_prompt_without_wedge_slice(origin_text, atom_payload, origin_text):
         reasons.append("broad_buying_prompt_without_wedge_slice")
         return {"source_class": "low_signal_summary", "reasons": reasons}
@@ -2470,6 +2481,9 @@ def qualify_problem_signal(
     if _has_phrase(text, FINANCE_BROAD_VISIBILITY_PATTERNS) and not _has_specific_finance_failure_shape(text):
         negative_signals.append("broad_finance_visibility_without_specific_failure")
         score -= 6
+    if _has_phrase(text, HIRING_ADVICE_PATTERNS) and not _has_specific_finance_failure_shape(text):
+        negative_signals.append("hiring_or_staffing_advice_thread")
+        score -= 7
     if _is_broad_buying_prompt_without_wedge_slice(text, atom_payload, workflow_context):
         negative_signals.append("broad_buying_prompt_without_wedge_slice")
         score -= 7
@@ -2534,6 +2548,7 @@ def qualify_problem_signal(
         and "finance_acquisition_or_vendor_chatter" not in negative_signals
         and "finance_tool_shopping_without_specific_failure" not in negative_signals
         and "broad_finance_visibility_without_specific_failure" not in negative_signals
+        and "hiring_or_staffing_advice_thread" not in negative_signals
         and "broad_buying_prompt_without_wedge_slice" not in negative_signals
         and "advice_seeking_without_actionable_stakes" not in negative_signals
         and "solicitation_for_problem_examples" not in negative_signals

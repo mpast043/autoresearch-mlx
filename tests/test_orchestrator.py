@@ -10,7 +10,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from src.database import Database
+import json
+from src.database import BuildBrief, Database, Finding, Opportunity, OpportunityCluster, Validation
 from src.messaging import MessageType, create_message
 from src.orchestrator import Orchestrator
 
@@ -184,14 +185,49 @@ def test_consume_until_quiet_drains_orchestrator_queue(temp_db):
 
 def test_orchestrator_routes_spec_generation_completion_to_builder_when_auto_build_enabled(temp_db):
     orchestrator = Orchestrator(temp_db, auto_build=True)
+    finding_id = temp_db.insert_finding(
+        Finding(source="reddit", source_url="https://example.com/brief-ready", content_hash="orch-build-ready")
+    )
+    validation_id = temp_db.insert_validation(
+        Validation(
+            finding_id=finding_id,
+            passed=True,
+            overall_score=0.8,
+            run_id="test-run",
+            evidence={"decision": "promote"},
+        )
+    )
+    cluster_id = temp_db.upsert_cluster(
+        OpportunityCluster(label="Ready brief cluster", cluster_key="ready-brief-cluster", summary={})
+    )
+    opportunity_id = temp_db.upsert_opportunity(
+        Opportunity(
+            cluster_id=cluster_id,
+            title="Ready brief opportunity",
+            market_gap="gap",
+            recommendation="promote",
+            status="promoted",
+            selection_status="build_ready",
+        )
+    )
+    build_brief_id = temp_db.upsert_build_brief(
+        BuildBrief(
+            run_id="test-run",
+            opportunity_id=opportunity_id,
+            validation_id=validation_id,
+            cluster_id=cluster_id,
+            status="build_ready",
+            brief_json=json.dumps({"title": "Ready brief"}),
+        )
+    )
     message = create_message(
         from_agent="spec_generation",
         to_agent="orchestrator",
         msg_type=MessageType.BUILD_PREP,
         payload={
-            "build_brief_id": 9,
-            "opportunity_id": 4,
-            "validation_id": 7,
+            "build_brief_id": build_brief_id,
+            "opportunity_id": opportunity_id,
+            "validation_id": validation_id,
             "prep_stage": "spec_generation",
             "next_agent": "",
         },
@@ -202,4 +238,60 @@ def test_orchestrator_routes_spec_generation_completion_to_builder_when_auto_bui
     queued = asyncio.run(orchestrator._message_queue.get_for_agent("builder"))
     assert queued is not None
     assert queued.msg_type == MessageType.BUILD_REQUEST
-    assert queued.payload["build_brief_id"] == 9
+    assert queued.payload["build_brief_id"] == build_brief_id
+
+
+def test_orchestrator_does_not_route_spec_generation_to_builder_when_brief_not_build_ready(temp_db):
+    orchestrator = Orchestrator(temp_db, auto_build=True)
+    finding_id = temp_db.insert_finding(
+        Finding(source="reddit", source_url="https://example.com/brief-not-ready", content_hash="orch-not-build-ready")
+    )
+    validation_id = temp_db.insert_validation(
+        Validation(
+            finding_id=finding_id,
+            passed=True,
+            overall_score=0.8,
+            run_id="test-run",
+            evidence={"decision": "promote"},
+        )
+    )
+    cluster_id = temp_db.upsert_cluster(
+        OpportunityCluster(label="Not ready brief cluster", cluster_key="not-ready-brief-cluster", summary={})
+    )
+    opportunity_id = temp_db.upsert_opportunity(
+        Opportunity(
+            cluster_id=cluster_id,
+            title="Not ready brief opportunity",
+            market_gap="gap",
+            recommendation="promote",
+            status="promoted",
+            selection_status="research_more",
+        )
+    )
+    build_brief_id = temp_db.upsert_build_brief(
+        BuildBrief(
+            run_id="test-run",
+            opportunity_id=opportunity_id,
+            validation_id=validation_id,
+            cluster_id=cluster_id,
+            status="research_more",
+            brief_json=json.dumps({"title": "Not ready brief"}),
+        )
+    )
+    message = create_message(
+        from_agent="spec_generation",
+        to_agent="orchestrator",
+        msg_type=MessageType.BUILD_PREP,
+        payload={
+            "build_brief_id": build_brief_id,
+            "opportunity_id": opportunity_id,
+            "validation_id": validation_id,
+            "prep_stage": "spec_generation",
+            "next_agent": "",
+        },
+    )
+
+    asyncio.run(orchestrator._handle_orchestrator_message(message))
+
+    queued = asyncio.run(orchestrator._message_queue.get_for_agent("builder"))
+    assert queued is None

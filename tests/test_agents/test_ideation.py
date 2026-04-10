@@ -9,7 +9,7 @@ import tempfile
 import pytest
 
 from src.agents.ideation import IdeationAgent
-from src.database import Database, Finding, Validation
+from src.database import Database, Finding, Opportunity, OpportunityCluster, Validation, ValidationExperiment
 from src.messaging import MessageBus
 
 
@@ -83,3 +83,84 @@ def test_ideation_generates_research_brief_with_db_validation_accessor(temp_db: 
     assert ideas
     assert ideas[0].title.endswith("Brief")
     assert sent_messages
+
+
+def test_ideation_uses_validation_experiment_plan_property(temp_db: Database):
+    queue = MessageBus()
+    agent = IdeationAgent(temp_db, message_queue=queue, config={})
+
+    finding_id = temp_db.insert_finding(
+        Finding(
+            source="reddit-problem/accounting",
+            source_url="https://reddit.com/r/accounting/comments/2",
+            product_built="QuickBooks reconciliation backlog",
+            outcome_summary="The owner spends every weekend cleaning up imports.",
+            content_hash="ideation-experiment-plan",
+            status="promoted",
+            finding_kind="problem_signal",
+            source_class="pain_signal",
+            evidence={"run_id": "test-run"},
+        )
+    )
+    cluster_id = temp_db.upsert_cluster(
+        OpportunityCluster(
+            label="QuickBooks cleanup backlog",
+            cluster_key="quickbooks-cleanup-backlog",
+            summary={"segment": "small business finance"},
+        )
+    )
+    opportunity_id = temp_db.upsert_opportunity(
+        Opportunity(
+            cluster_id=cluster_id,
+            title="QuickBooks reconciliation backlog",
+            market_gap="Thin tooling for owner-led cleanup",
+            recommendation="promote",
+            status="promoted",
+            selection_status="prototype_candidate",
+        )
+    )
+    temp_db.insert_experiment(
+        ValidationExperiment(
+            opportunity_id=opportunity_id,
+            cluster_id=cluster_id,
+            test_type="workflow_walkthrough",
+            hypothesis="Owners will share the exact cleanup workflow.",
+            falsifier="Nobody will walk through the process.",
+            smallest_test="Run 5 cleanup walkthroughs.",
+            success_signal="At least 3 owners share the real spreadsheet flow.",
+            failure_signal="Owners refuse to show the current process.",
+        )
+    )
+    validation_id = temp_db.insert_validation(
+        Validation(
+            finding_id=finding_id,
+            run_id="test-run",
+            overall_score=0.79,
+            passed=True,
+            evidence={
+                "cluster": {"label": "QuickBooks cleanup backlog", "summary": {"segment": "finance owners"}},
+                "opportunity_scorecard": {"total_score": 0.79, "decision": "promote"},
+                "scores": {"feasibility_score": 0.66},
+                "market_gap_state": "underserved",
+                "experiment_id": 1,
+            },
+        )
+    )
+
+    result = asyncio.run(
+        agent._generate_idea(
+            {
+                "validation_id": validation_id,
+                "finding_id": finding_id,
+                "opportunity_id": opportunity_id,
+                "passed": True,
+                "selection_status": "",
+                "build_brief_id": 0,
+            }
+        )
+    )
+
+    assert result["success"] is True
+    idea = temp_db.get_ideas(limit=1)[0]
+    assert idea.spec["validation_plan"]["test_type"] == "workflow_walkthrough"
+    assert "Run 5 cleanup walkthroughs." in idea.spec["core_features"][2]
