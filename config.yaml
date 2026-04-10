@@ -186,7 +186,7 @@ orchestration:
     retry_interval_seconds: 0
 
 builder:
-  auto_build: true
+  auto_build: false
 
 # Security agent for vulnerability scanning
 security:

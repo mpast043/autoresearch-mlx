@@ -427,6 +427,21 @@ def test_is_wedge_ready_signal_accepts_specific_workflow_failure():
     assert reason == "passed"
 
 
+def test_is_wedge_ready_signal_accepts_specific_manual_workflow_without_explicit_failure_verb():
+    finding_data = {
+        "product_built": "Shopify and Amazon revenue tracking without manual spreadsheets",
+        "outcome_summary": (
+            "Every week we spend hours reconciling Shopify and Amazon revenue in spreadsheets before month-end close "
+            "because the team still rebuilds the shared ledger manually."
+        ),
+    }
+
+    is_ready, reason = is_wedge_ready_signal(finding_data)
+
+    assert is_ready is True
+    assert reason == "passed"
+
+
 def test_is_wedge_ready_signal_rejects_broad_finance_prompt():
     finding_data = {
         "product_built": "Growing team looking for the best virtual credit card for expense automation",

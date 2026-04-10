@@ -85,6 +85,9 @@ SPACE_PROPOSAL_USER = """\
 ## Current Validated Opportunities
 {opportunities_table}
 
+## Strong Recent Pain Findings
+{strong_findings_table}
+
 ## Currently Exploring Problem Spaces
 {current_spaces_table}
 
@@ -367,14 +370,49 @@ class LLMDiscoveryExpander:
         # Validated opportunities (top N by score)
         opportunities = self.db.get_opportunities(limit=20)
         opp_rows = []
+        prototype_candidate_count = 0
         for opp in opportunities:
+            selection_status = getattr(opp, "selection_status", "") or ""
+            if selection_status == "prototype_candidate":
+                prototype_candidate_count += 1
             opp_rows.append({
                 "id": opp.id,
                 "title": opp.title or "",
                 "composite_score": getattr(opp, "composite_score", 0) or 0,
-                "selection_status": getattr(opp, "selection_status", "") or "",
+                "selection_status": selection_status,
                 "cluster_id": getattr(opp, "cluster_id", 0),
             })
+
+        min_validated = int(self.expansion_config.get("min_validated_for_promoted", 1) or 1)
+        min_prototypes = int(self.expansion_config.get("min_prototype_candidates", 1) or 1)
+
+        strong_finding_rows: list[dict[str, Any]] = []
+        should_include_strong_findings = len(opp_rows) < min_validated or prototype_candidate_count < min_prototypes
+        if should_include_strong_findings:
+            findings = self.db.get_findings(limit=80)
+            for finding in findings:
+                if finding.source_class != "pain_signal":
+                    continue
+                if finding.status not in {"promoted", "qualified"}:
+                    continue
+                evidence = dict(finding.evidence or {})
+                high_leverage = evidence.get("high_leverage", {}) if isinstance(evidence.get("high_leverage", {}), dict) else {}
+                hl_score = float(high_leverage.get("score", 0.0) or 0.0)
+                hl_status = str(high_leverage.get("status", "") or "")
+                if finding.status != "promoted" and hl_score < 0.6 and hl_status not in {"candidate", "confirmed"}:
+                    continue
+                strong_finding_rows.append(
+                    {
+                        "id": finding.id,
+                        "title": finding.product_built or finding.outcome_summary[:120],
+                        "summary": finding.outcome_summary[:220],
+                        "status": finding.status,
+                        "hl_score": hl_score,
+                        "hl_status": hl_status or ("candidate" if hl_score >= 0.62 else "thin"),
+                    }
+                )
+                if len(strong_finding_rows) >= 8:
+                    break
 
         # Current problem spaces (exploring + validated)
         active_spaces = self.db.list_problem_spaces(limit=25)
@@ -399,6 +437,7 @@ class LLMDiscoveryExpander:
 
         return {
             "opportunities": opp_rows,
+            "strong_findings": strong_finding_rows,
             "active_spaces": space_rows,
             "exhausted_space_keys": exhausted_keys,
             "search_coverage": {
@@ -417,6 +456,14 @@ class LLMDiscoveryExpander:
                 f"score={opp['composite_score']:.2f}: {opp['title'][:80]}"
             )
         opportunities_table = "\n".join(opp_lines) if opp_lines else "No validated opportunities yet."
+
+        finding_lines = []
+        for finding in context.get("strong_findings", []):
+            finding_lines.append(
+                f"  #{finding['id']} [{finding.get('status', '?')}/{finding.get('hl_status', '?')}] "
+                f"hl={finding.get('hl_score', 0.0):.2f}: {finding['title'][:80]} :: {finding.get('summary', '')[:120]}"
+            )
+        strong_findings_table = "\n".join(finding_lines) if finding_lines else "No strong recent pain findings."
 
         # Format current spaces table
         space_lines = []
@@ -441,6 +488,7 @@ class LLMDiscoveryExpander:
 
         user_prompt = SPACE_PROPOSAL_USER.format(
             opportunities_table=opportunities_table,
+            strong_findings_table=strong_findings_table,
             current_spaces_table=current_spaces_table,
             exhausted_spaces_table=exhausted_table,
             search_coverage=search_coverage,
@@ -593,8 +641,9 @@ class LLMDiscoveryExpander:
     def _compute_prompt_hash(self, context: dict[str, Any]) -> str:
         """Compute a hash of the core prompt content for deduplication."""
         opp_ids = sorted(o["id"] for o in context.get("opportunities", []))
+        finding_ids = sorted(f["id"] for f in context.get("strong_findings", []))
         space_keys = sorted(s["space_key"] for s in context.get("active_spaces", []))
-        content = json.dumps({"opp_ids": opp_ids, "space_keys": space_keys}, sort_keys=True)
+        content = json.dumps({"opp_ids": opp_ids, "finding_ids": finding_ids, "space_keys": space_keys}, sort_keys=True)
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     async def expand_after_validation(self) -> list[ProblemSpace]:
@@ -612,9 +661,9 @@ class LLMDiscoveryExpander:
         # Step 1: Gather context
         context = self.gather_context()
 
-        # If no opportunities yet, skip expansion
-        if not context["opportunities"]:
-            logger.info("No validated opportunities yet, skipping LLM expansion")
+        # If neither validated opportunities nor strong recent findings exist, skip expansion
+        if not context["opportunities"] and not context.get("strong_findings"):
+            logger.info("No validated opportunities or strong recent findings yet, skipping LLM expansion")
             return []
 
         # Step 2: Build prompt and call LLM

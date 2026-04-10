@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
-from src.database import Database
+from src.database import Database, Finding
 from src.problem_space import ProblemSpace, EXPLORING, VALIDATED
 from src.llm_discovery_expander import (
     LLMClient,
@@ -173,11 +173,37 @@ class TestLLMDiscoveryExpander(unittest.TestCase):
         assert len(context["opportunities"]) >= 1
         assert context["opportunities"][0]["title"] == "Test Opportunity"
 
+    def test_gather_context_includes_strong_recent_findings_when_opportunity_volume_is_thin(self) -> None:
+        from src.database import Finding
+
+        self.db.insert_finding(
+            Finding(
+                source="reddit-problem/accounting",
+                source_url="https://reddit.com/r/accounting/comments/strong-finding",
+                product_built="Sunday-night spreadsheet reconciliation",
+                outcome_summary="Owner spends every Sunday night reconciling payouts in spreadsheets before close.",
+                content_hash="llm-strong-finding",
+                status="promoted",
+                finding_kind="problem_signal",
+                source_class="pain_signal",
+                evidence={"high_leverage": {"score": 0.67, "status": "candidate"}},
+            )
+        )
+
+        context = self.expander.gather_context()
+
+        assert context["opportunities"] == []
+        assert len(context["strong_findings"]) == 1
+        assert context["strong_findings"][0]["title"] == "Sunday-night spreadsheet reconciliation"
+
     def test_build_proposal_prompt(self) -> None:
         context = {
             "opportunities": [
                 {"id": 1, "title": "Bank reconciliation pain", "composite_score": 0.8,
                  "selection_status": "prototype_candidate", "cluster_id": 1},
+            ],
+            "strong_findings": [
+                {"id": 8, "title": "Sunday spreadsheet close", "summary": "Owner does weekend spreadsheet cleanup", "status": "promoted", "hl_score": 0.67, "hl_status": "candidate"},
             ],
             "active_spaces": [
                 {"space_key": "financial_recon", "label": "Financial Reconciliation",
@@ -191,6 +217,7 @@ class TestLLMDiscoveryExpander(unittest.TestCase):
         }
         system, user = self.expander.build_proposal_prompt(context)
         assert "Bank reconciliation pain" in user
+        assert "Sunday spreadsheet close" in user
         assert "financial_recon" in user
         assert "old_space" in user
 
@@ -444,6 +471,45 @@ async def test_expand_after_validation_no_opportunities(expander_with_db):
         new_spaces = await expander.expand_after_validation()
         assert new_spaces == []
         mock_agenerate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_expand_after_validation_can_use_strong_recent_findings_without_opportunities(expander_with_db):
+    db, expander = expander_with_db
+    db.insert_finding(
+        Finding(
+            source="reddit-problem/accounting",
+            source_url="https://reddit.com/r/accounting/comments/finding-seed",
+            product_built="Weekend spreadsheet reconciliation",
+            outcome_summary="Owner spends every weekend reconciling bank deposits in spreadsheets before close.",
+            content_hash="finding-seed",
+            status="promoted",
+            finding_kind="problem_signal",
+            source_class="pain_signal",
+            evidence={"high_leverage": {"score": 0.7, "status": "candidate"}},
+        )
+    )
+
+    with patch.object(LLMClient, "agenerate", new_callable=AsyncMock) as mock_agenerate:
+        mock_agenerate.return_value = json.dumps({
+            "proposed_spaces": [{
+                "space_key": "deposit_reconciliation_backlog",
+                "label": "Deposit reconciliation backlog",
+                "description": "Manual bank deposit cleanup before close",
+                "semantic_summary": "Operators rebuild deposit ledgers manually",
+                "keywords": ["bank deposit reconciliation spreadsheet"],
+                "subreddits": ["accounting"],
+                "web_queries": ["manual bank deposit reconciliation spreadsheet"],
+                "github_queries": [],
+                "adjacent_spaces": [],
+                "rationale": "Derived from strong recent pain findings",
+            }],
+        })
+
+        new_spaces = await expander.expand_after_validation()
+
+    assert len(new_spaces) == 1
+    assert new_spaces[0].space_key == "deposit_reconciliation_backlog"
 
 
 @pytest.mark.asyncio

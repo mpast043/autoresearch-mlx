@@ -20,6 +20,21 @@ discovery:
     min_validation_score: 0.4
     cooldown_hours: 12
 
+  llm_expansion:
+    enabled: true
+    trigger_after_cycles: 1
+    trigger_interval_cycles: 1
+    max_proposed_spaces: 4
+    min_validated_for_promoted: 1
+    min_prototype_candidates: 1
+    max_idle_cycles_for_exhausted: 3
+    max_idle_cycles_for_archived: 10
+    fallback_to_keywords: true
+    max_keywords_per_space: 10
+    max_subreddits_per_space: 5
+    max_web_queries_per_space: 5
+    max_github_queries_per_space: 3
+
   # Web discovery options
   web:
     # Use Jina Reader for content extraction (free, no API key)
@@ -165,7 +180,7 @@ orchestration:
     retry_interval_seconds: 0
 
 builder:
-  auto_build: true
+  auto_build: false
 
 build_prep:
   wedge_evaluation:

@@ -159,6 +159,39 @@ SPECIFIC_FINANCE_FAILURE_HINTS = {
     "shared ledger",
 }
 
+MANUAL_WORKFLOW_HINTS = {
+    "manual",
+    "manually",
+    "spreadsheet",
+    "spreadsheets",
+    "copy paste",
+    "copy/paste",
+    "weekend",
+    "sunday",
+    "every week",
+    "weekly",
+    "every month",
+    "month end",
+    "month-end",
+    "staring at spreadsheets",
+    "rebuild the ledger",
+}
+
+MANUAL_WORKFLOW_STAKES_HINTS = {
+    "hours",
+    "hour",
+    "late",
+    "delay",
+    "delayed",
+    "risk",
+    "error",
+    "errors",
+    "wrong",
+    "cleanup",
+    "close",
+    "missed",
+}
+
 META_PATTERNS = [
     r'^what (is|are) ', r'^how do i ', r'^how to ',
     r'looking to build', r'want to build', r'building a',
@@ -202,6 +235,9 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
     generic_bucket_hits = sum(1 for phrase in GENERIC_TASK_BUCKETS if phrase in text)
     has_specific_context = any(hint in text for hint in SPECIFIC_CONTEXT_HINTS)
     has_failure = any(verb in text for verb in FAILURE_VERBS)
+    has_manual_workflow = any(hint in text for hint in MANUAL_WORKFLOW_HINTS)
+    has_manual_stakes = any(hint in text for hint in MANUAL_WORKFLOW_STAKES_HINTS)
+    strong_manual_workflow_slice = has_specific_context and has_manual_workflow and has_manual_stakes
 
     # Check 2b: Broad productivity sermons and multi-workflow bundles
     if any(re.search(pattern, text) for pattern in GENERIC_PROMPT_PATTERNS):
@@ -217,11 +253,11 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
 
     # Check 3: Contains concrete object
     has_object = any(obj in text for obj in CONCRETE_OBJECTS)
-    if not has_object:
+    if not has_object and not strong_manual_workflow_slice:
         return False, "no_concrete_object"
 
     # Check 4: Contains failure verb/pattern
-    if not has_failure:
+    if not has_failure and not strong_manual_workflow_slice:
         return False, "no_failure_pattern"
 
     # Check 5: Generic productivity talk (without specific failure)
