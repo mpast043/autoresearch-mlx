@@ -196,6 +196,26 @@ class TestLLMDiscoveryExpander(unittest.TestCase):
         assert len(context["strong_findings"]) == 1
         assert context["strong_findings"][0]["title"] == "Sunday-night spreadsheet reconciliation"
 
+    def test_gather_context_skips_business_risk_strong_findings_without_operational_failure_shape(self) -> None:
+        self.db.insert_finding(
+            Finding(
+                source="reddit-problem/smallbusiness",
+                source_url="https://reddit.com/r/smallbusiness/comments/client-concentration",
+                product_built="Perdi el 23% de mi revenue en un mes cuando se fue un cliente",
+                outcome_summary="Mi mayor cliente se fue y nadie me advirtio sobre la concentracion de revenue.",
+                content_hash="llm-business-risk-finding",
+                status="promoted",
+                finding_kind="problem_signal",
+                source_class="pain_signal",
+                evidence={"high_leverage": {"score": 0.81, "status": "candidate"}},
+            )
+        )
+
+        context = self.expander.gather_context()
+
+        assert context["opportunities"] == []
+        assert context["strong_findings"] == []
+
     def test_build_proposal_prompt(self) -> None:
         context = {
             "opportunities": [

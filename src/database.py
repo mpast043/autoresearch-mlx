@@ -526,6 +526,13 @@ class Idea:
     def spec(self) -> dict[str, Any]:
         return _json_loads(self.spec_json, {})
 
+    @property
+    def pattern_id_list(self) -> list[int]:
+        data = _json_loads(self.pattern_ids, [])
+        if isinstance(data, list):
+            return [int(item) for item in data if isinstance(item, (int, float, str)) and str(item).strip()]
+        return []
+
 
 @dataclass
 class Product:

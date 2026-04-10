@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import tempfile
 
 import pytest
 
 from src.agents.ideation import IdeationAgent
-from src.database import Database, Finding, Opportunity, OpportunityCluster, Validation, ValidationExperiment
+from src.database import Database, Finding, Idea, Opportunity, OpportunityCluster, Validation, ValidationExperiment
 from src.messaging import MessageBus
 
 
@@ -164,3 +165,68 @@ def test_ideation_uses_validation_experiment_plan_property(temp_db: Database):
     idea = temp_db.get_ideas(limit=1)[0]
     assert idea.spec["validation_plan"]["test_type"] == "workflow_walkthrough"
     assert "Run 5 cleanup walkthroughs." in idea.spec["core_features"][2]
+
+
+def test_ideation_updates_existing_idea_using_pattern_id_list_compatibility(temp_db: Database):
+    queue = MessageBus()
+    agent = IdeationAgent(temp_db, message_queue=queue, config={})
+
+    finding_id = temp_db.insert_finding(
+        Finding(
+            source="reddit-problem/accounting",
+            source_url="https://reddit.com/r/accounting/comments/3",
+            product_built="Usage-based invoice audit",
+            outcome_summary="Finance ops manually audits usage rows before invoices go out.",
+            content_hash="ideation-pattern-list",
+            status="promoted",
+            finding_kind="problem_signal",
+            source_class="pain_signal",
+            evidence={"run_id": "test-run"},
+        )
+    )
+    validation_id = temp_db.insert_validation(
+        Validation(
+            finding_id=finding_id,
+            run_id="test-run",
+            overall_score=0.74,
+            passed=True,
+            evidence={
+                "cluster": {"label": "Usage-based invoice audit", "summary": {"segment": "finance operations"}},
+                "opportunity_scorecard": {"total_score": 0.74, "decision": "promote"},
+                "scores": {"feasibility_score": 0.62},
+                "market_gap_state": "underserved",
+            },
+        )
+    )
+
+    existing_id = temp_db.insert_idea(
+        Idea(
+            slug="usage-based-invoice-audit-brief",
+            title="Usage-based invoice audit Brief",
+            description="Existing brief",
+            pattern_ids=json.dumps([999]),
+            confidence_score=0.4,
+            spec_json=json.dumps({"slug": "usage-based-invoice-audit-brief", "core_features": []}),
+        )
+    )
+
+    result = asyncio.run(
+        agent._generate_idea(
+            {
+                "validation_id": validation_id,
+                "finding_id": finding_id,
+                "opportunity_id": 0,
+                "passed": True,
+                "selection_status": "",
+                "build_brief_id": 0,
+            }
+        )
+    )
+
+    assert result["success"] is True
+    assert result["refined"] is True
+    assert result["idea_id"] == existing_id
+
+    updated = temp_db.get_idea(existing_id)
+    assert updated is not None
+    assert updated.pattern_id_list == sorted([999, finding_id])

@@ -359,6 +359,19 @@ LOW_VALUE_REDDIT_PREFILTER_PATTERNS = [
     "how do you manage inventory as you scale",
     "how do you handle importing old data",
     "price / competitor monitoring",
+    "good fit for me",
+    "review my resume",
+    "resume review",
+    "resume roast",
+    "critique my resume",
+    "wholesale account owes me",
+    "revenue concentration",
+    "client concentration",
+    "biggest client",
+    "major client",
+    "hiring first sales",
+    "structuring msp business",
+    "se fue un cliente",
 ]
 
 LOW_VALUE_REDDIT_TITLE_PREFIXES = [
@@ -453,6 +466,77 @@ COST_SIGNAL_TERMS = [
     "error-prone",
     "downtime",
 ]
+
+NON_OPERATIONAL_BUSINESS_RISK_TERMS = [
+    "biggest client",
+    "major client",
+    "client concentration",
+    "revenue concentration",
+    "owes me",
+    "wholesale account",
+    "hiring first sales",
+    "first sales",
+    "structuring msp business",
+    "good fit for me",
+    "resume review",
+    "resume roast",
+    "review my resume",
+    "career advice",
+    "se fue un cliente",
+]
+
+OPERATIONAL_PROCESS_TERMS = [
+    "reconcile",
+    "reconciliation",
+    "bank deposit",
+    "bank deposits",
+    "payout",
+    "payouts",
+    "ledger",
+    "month end",
+    "month-end",
+    "import",
+    "imports",
+    "export",
+    "exports",
+    "invoice",
+    "invoices",
+    "payment",
+    "payments",
+    "order",
+    "orders",
+    "inventory",
+    "approval",
+    "approvals",
+    "handoff",
+    "handoffs",
+    "label",
+    "labels",
+    "returns",
+    "supplier data",
+]
+
+
+def _is_non_operational_business_risk_atom(atom: Optional[Any]) -> bool:
+    if atom is None:
+        return False
+    haystack = normalize_content(
+        " ".join(
+            [
+                getattr(atom, "segment", "") or "",
+                getattr(atom, "user_role", "") or "",
+                getattr(atom, "job_to_be_done", "") or "",
+                getattr(atom, "failure_mode", "") or "",
+                getattr(atom, "trigger_event", "") or "",
+                getattr(atom, "current_workaround", "") or "",
+                getattr(atom, "cost_consequence_clues", "") or "",
+                getattr(atom, "current_tools", "") or "",
+            ]
+        )
+    )
+    business_risk_pain = any(term in haystack for term in NON_OPERATIONAL_BUSINESS_RISK_TERMS)
+    operational_process_pain = any(term in haystack for term in OPERATIONAL_PROCESS_TERMS)
+    return business_risk_pain and not operational_process_pain
 
 HELP_URL_PATTERNS = [
     "/help",
@@ -1714,6 +1798,10 @@ class ResearchToolkit:
         title_lower = compact_text(title.lower(), 240)
         if any(pattern in cheap_haystack for pattern in LOW_VALUE_REDDIT_PREFILTER_PATTERNS):
             return False
+        if any(pattern in cheap_haystack for pattern in NON_OPERATIONAL_BUSINESS_RISK_TERMS):
+            has_operational_process = any(term in cheap_haystack for term in OPERATIONAL_PROCESS_TERMS)
+            if not has_operational_process:
+                return False
         has_specific_failure = any(term in cheap_haystack for term in REDDIT_PREFILTER_FAILURE_TERMS)
         has_specific_object = any(term in cheap_haystack for term in REDDIT_PREFILTER_OBJECT_TERMS)
         has_workaround_signal = any(term in cheap_haystack for term in WORKAROUND_SIGNAL_TERMS)
@@ -6190,6 +6278,8 @@ class ResearchToolkit:
         ops_admin_pain = any(term in haystack for term in ["operations", "operator", "admin", "supplier", "vendor", "partner", "follow-up", "handoff"])
         compliance_pain = any(term in haystack for term in ["compliance", "audit", "soc 2", "m365", "evidence monitoring", "export"])
         generic_manual_pain = any(term in haystack for term in ["manual work", "manual process", "manual task", "repetitive"])
+        if _is_non_operational_business_risk_atom(atom):
+            return archetype_queries
 
         if source_label == "web":
             if spreadsheet_pain:
@@ -6267,6 +6357,34 @@ class ResearchToolkit:
         budget_profile: dict[str, Any],
         corroboration_plan: Optional[CorroborationPlan] = None,
     ) -> tuple[list[SearchDocument], dict[str, int], dict[str, int], dict[str, Any], dict[str, Any]]:
+        if _is_non_operational_business_risk_atom(atom):
+            return current_docs, current_results_by_query, current_results_by_source, current_collection_meta, {
+                "triggered": False,
+                "missing_sources": [],
+                "queries": [],
+                "reshaped_query_history": [],
+                "source_attempts": [],
+                "last_action": "GATHER_MARKET_ENRICHMENT",
+                "last_transition_reason": "non_operational_business_risk_atom",
+                "chosen_family": "",
+                "expected_gain_class": "low",
+                "source_attempts_snapshot": {},
+                "skipped_families": {},
+                "controller_actions": [],
+                "budget_snapshot": budget_profile,
+                "fallback_strategy_used": "",
+                "decomposed_atom_queries": [],
+                "routing_override_reason": "",
+                "cohort_query_pack_used": False,
+                "cohort_query_pack_name": "",
+                "web_query_strategy_path": [],
+                "specialized_surface_targeting_used": False,
+                "promotion_gap_class": "weak",
+                "near_miss_enrichment_action": "GATHER_MARKET_ENRICHMENT",
+                "sufficiency_priority_reason": "business_risk_without_transferable_workflow",
+                "candidate_meaningful": self._meaningful_candidate_snapshot(atom),
+            }
+
         active_sources = self._active_recurrence_source_labels(current_results_by_source)
         target_sources = max(2, int(budget_profile.get("target_sources", 1) or 1))
         corroboration_plan = corroboration_plan or self._build_corroboration_plan(

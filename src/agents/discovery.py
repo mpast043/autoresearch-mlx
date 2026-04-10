@@ -43,6 +43,11 @@ from src.high_leverage import score_high_leverage_finding
 from src.llm_discovery_expander import LLMDiscoveryExpander
 from src.problem_space import EXPLORING, VALIDATED
 from src.problem_space_lifecycle import ProblemSpaceLifecycleManager
+from src.source_patterns import (
+    MANUAL_WORKFLOW_HINTS as CANONICAL_MANUAL_WORKFLOW_HINTS,
+    MANUAL_WORKFLOW_STAKES_HINTS as CANONICAL_MANUAL_WORKFLOW_STAKES_HINTS,
+    contains_any_phrase,
+)
 
 
 # =============================================================================
@@ -66,6 +71,53 @@ FAILURE_VERBS = {
     'incorrect', 'wrong', 'error', 'errors', 'failed', 'fail',
     'break', 'broken', 'out of sync', 'not updating',
     'lost', 'late', 'inconsistent', 'corrupt',
+}
+
+BUSINESS_RISK_PATTERNS = {
+    "biggest client",
+    "major client",
+    "client concentration",
+    "revenue concentration",
+    "owes me",
+    "good fit for me",
+    "review my resume",
+    "resume review",
+    "resume roast",
+    "career advice",
+    "first sales",
+    "hiring first sales",
+    "se fue un cliente",
+}
+
+OPERATIONAL_WEDGE_HINTS = {
+    "reconciliation",
+    "reconcile",
+    "bank deposit",
+    "bank deposits",
+    "payout",
+    "payouts",
+    "ledger",
+    "month end",
+    "month-end",
+    "import",
+    "imports",
+    "export",
+    "exports",
+    "invoice",
+    "invoices",
+    "payment",
+    "payments",
+    "order",
+    "orders",
+    "inventory",
+    "approval",
+    "approvals",
+    "handoff",
+    "handoffs",
+    "label",
+    "labels",
+    "supplier data",
+    "returns",
 }
 
 GENERIC_TASK_BUCKETS = {
@@ -159,38 +211,8 @@ SPECIFIC_FINANCE_FAILURE_HINTS = {
     "shared ledger",
 }
 
-MANUAL_WORKFLOW_HINTS = {
-    "manual",
-    "manually",
-    "spreadsheet",
-    "spreadsheets",
-    "copy paste",
-    "copy/paste",
-    "weekend",
-    "sunday",
-    "every week",
-    "weekly",
-    "every month",
-    "month end",
-    "month-end",
-    "staring at spreadsheets",
-    "rebuild the ledger",
-}
-
-MANUAL_WORKFLOW_STAKES_HINTS = {
-    "hours",
-    "hour",
-    "late",
-    "delay",
-    "delayed",
-    "risk",
-    "error",
-    "errors",
-    "wrong",
-    "cleanup",
-    "close",
-    "missed",
-}
+MANUAL_WORKFLOW_HINTS = list(CANONICAL_MANUAL_WORKFLOW_HINTS)
+MANUAL_WORKFLOW_STAKES_HINTS = list(CANONICAL_MANUAL_WORKFLOW_STAKES_HINTS)
 
 META_PATTERNS = [
     r'^what (is|are) ', r'^how do i ', r'^how to ',
@@ -232,11 +254,16 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
         if re.search(pattern, text):
             return False, "meta_post"
 
+    if any(phrase in text for phrase in BUSINESS_RISK_PATTERNS):
+        has_operational_anchor = any(hint in text for hint in OPERATIONAL_WEDGE_HINTS)
+        if not has_operational_anchor:
+            return False, "business_risk_or_career_post"
+
     generic_bucket_hits = sum(1 for phrase in GENERIC_TASK_BUCKETS if phrase in text)
     has_specific_context = any(hint in text for hint in SPECIFIC_CONTEXT_HINTS)
     has_failure = any(verb in text for verb in FAILURE_VERBS)
-    has_manual_workflow = any(hint in text for hint in MANUAL_WORKFLOW_HINTS)
-    has_manual_stakes = any(hint in text for hint in MANUAL_WORKFLOW_STAKES_HINTS)
+    has_manual_workflow = contains_any_phrase(text, MANUAL_WORKFLOW_HINTS)
+    has_manual_stakes = contains_any_phrase(text, MANUAL_WORKFLOW_STAKES_HINTS)
     strong_manual_workflow_slice = has_specific_context and has_manual_workflow and has_manual_stakes
 
     # Check 2b: Broad productivity sermons and multi-workflow bundles

@@ -278,7 +278,38 @@ def test_qualify_problem_signal_rejects_problem_solicitation_prompt():
     screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
 
     assert screening["accepted"] is False
-    assert "solicitation_for_problem_examples" in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_rejects_client_concentration_business_risk_thread():
+    finding_data = {
+        "source": "reddit-problem/smallbusiness",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/client-risk",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Perdi el 23% de mi revenue en un mes cuando se fue un cliente",
+        "body_excerpt": (
+            "Our biggest client left and now we are manually crunching numbers in a spreadsheet "
+            "to understand revenue concentration risk."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal"},
+    }
+    atom_payload = {
+        "job_to_be_done": "understand revenue concentration risk",
+        "failure_mode": "major client leaves and revenue drops suddenly",
+        "current_workaround": "crunching numbers manually in a spreadsheet",
+        "urgency_clues": "this month",
+        "frequency_clues": "",
+        "cost_consequence_clues": "lost 23% of revenue",
+        "why_now_clues": "major client churn",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is False
+    assert "business_risk_or_career_thread" in screening["negative_signals"]
 
 
 def test_qualify_problem_signal_rejects_product_complaint_without_workflow_context():

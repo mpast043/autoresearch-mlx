@@ -106,6 +106,39 @@ DATA_TOUCHPOINT_TERMS = [
     "transaction",
 ]
 
+MANUAL_WORKFLOW_HINTS = [
+    "manual",
+    "manually",
+    "spreadsheet",
+    "spreadsheets",
+    "copy paste",
+    "copy/paste",
+    "weekend",
+    "sunday",
+    "every week",
+    "weekly",
+    "every month",
+    "month end",
+    "month-end",
+    "staring at spreadsheets",
+    "rebuild the ledger",
+]
+
+MANUAL_WORKFLOW_STAKES_HINTS = [
+    "hours",
+    "hour",
+    "late",
+    "delay",
+    "delayed",
+    "risk",
+    "error",
+    "errors",
+    "wrong",
+    "cleanup",
+    "close",
+    "missed",
+]
+
 
 @lru_cache(maxsize=512)
 def _compiled_phrase_pattern(phrase: str) -> re.Pattern[str] | None:

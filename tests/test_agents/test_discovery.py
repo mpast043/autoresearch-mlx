@@ -457,6 +457,21 @@ def test_is_wedge_ready_signal_rejects_broad_finance_prompt():
     assert reason == "broad_finance_prompt"
 
 
+def test_is_wedge_ready_signal_rejects_business_risk_story_without_operational_wedge():
+    finding_data = {
+        "product_built": "Perdi el 23% de mi revenue en un mes cuando se fue un cliente",
+        "outcome_summary": (
+            "Nuestro cliente mas grande se fue y ahora solo estamos crunching numbers in a spreadsheet "
+            "to understand the revenue concentration risk."
+        ),
+    }
+
+    is_ready, reason = is_wedge_ready_signal(finding_data)
+
+    assert is_ready is False
+    assert reason == "business_risk_or_career_post"
+
+
 def test_process_finding_persists_pre_atom_filtered_signal_as_screened_out(temp_db):
     agent = DiscoveryAgent(temp_db)
     finding_data = {

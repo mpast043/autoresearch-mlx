@@ -1745,6 +1745,19 @@ def test_should_hydrate_reddit_problem_doc_rejects_generic_tooling_questions_wit
     ) is False
 
 
+def test_should_hydrate_reddit_problem_doc_rejects_business_risk_thread_without_operational_process():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._should_hydrate_reddit_problem_doc(
+        SearchDocument(
+            title="Perdi el 23% de mi revenue en un mes cuando se fue un cliente",
+            url="https://reddit.com/r/smallbusiness/comments/example-10",
+            snippet="Mi mayor cliente se fue y nadie me advirtio que tenia tanta concentracion.",
+            source="reddit/smallbusiness",
+        )
+    ) is False
+
+
 def test_stackoverflow_recurrence_requires_transferable_operational_shape():
     toolkit = ResearchToolkit()
 
@@ -2727,6 +2740,50 @@ def test_expand_recurrence_source_families_records_reshape_retry_on_empty_retrie
     assert call_queries[0] != call_queries[1]
     assert any(attempt["source"] == "github" and attempt["attempts"] == 2 for attempt in branch["source_attempts"])
     assert branch["reshaped_query_history"]
+
+
+def test_expand_recurrence_source_families_skips_generic_recurrence_for_business_risk_atom(monkeypatch):
+    toolkit = ResearchToolkit({"validation": {"search": {"recurrence_results": 6}}})
+    atom = SimpleNamespace(
+        segment="small business owners",
+        user_role="owner",
+        job_to_be_done="avoid revenue concentration surprises",
+        failure_mode="biggest client leaves and revenue drops unexpectedly",
+        trigger_event="major client churns",
+        current_workaround="manual spreadsheet review",
+        cost_consequence_clues="cash flow shock",
+        current_tools="excel crm accounting",
+    )
+
+    async def fail_if_called(**kwargs):
+        raise AssertionError("business-risk atoms should not trigger recurrence family expansion")
+
+    monkeypatch.setattr(toolkit, "_run_recurrence_collection", fail_if_called)
+
+    docs, results_by_query, results_by_source, collection_meta, branch = asyncio.run(
+        toolkit._expand_recurrence_source_families(
+            selected_queries=['"biggest client left" revenue spreadsheet'],
+            atom=atom,
+            all_subreddits=["smallbusiness", "sysadmin"],
+            all_sites=[("github.com", "github")],
+            current_docs=[],
+            current_results_by_query={},
+            current_results_by_source={},
+            current_collection_meta={},
+            budget_profile={"target_sources": 2, "target_docs": 4, "early_stop_docs": 5},
+            corroboration_plan=toolkit._build_corroboration_plan(
+                atom=atom,
+                queries=['"biggest client left" revenue spreadsheet'],
+                finding_kind="problem_signal",
+            ),
+        )
+    )
+
+    assert docs == []
+    assert results_by_query == {}
+    assert results_by_source == {}
+    assert collection_meta == {}
+    assert branch["triggered"] is False
 
 
 def test_web_zero_retrieval_retry_switches_to_decomposed_queries(monkeypatch):

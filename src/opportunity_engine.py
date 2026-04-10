@@ -235,6 +235,24 @@ HIRING_ADVICE_PATTERNS = [
     "hire an accountant",
     "bookkeeper for a growing small business",
 ]
+BUSINESS_RISK_PATTERNS = [
+    "biggest client",
+    "major client",
+    "client concentration",
+    "revenue concentration",
+    "wholesale account owes me",
+    "owes me 25k",
+    "owes me $25k",
+    "good fit for me",
+    "review my resume",
+    "resume review",
+    "resume roast",
+    "career advice",
+    "hiring first sales",
+    "first sales",
+    "structuring msp business",
+    "se fue un cliente",
+]
 ADVICE_SEEKING_PATTERNS = [
     "looking for advice",
     "how do you handle",
@@ -747,6 +765,54 @@ def _has_transferable_workflow_shape(text: str) -> bool:
 def _has_specific_finance_failure_shape(text: str) -> bool:
     lowered = _normalized(text)
     return _has_phrase(lowered, SPECIFIC_FINANCE_FAILURE_TERMS) or _is_failure_event_atom(lowered)
+
+
+def _has_operational_wedge_shape(text: str) -> bool:
+    lowered = _normalized(text)
+    return _has_phrase(
+        lowered,
+        [
+            "reconcile",
+            "reconciliation",
+            "bank deposit",
+            "bank deposits",
+            "payout",
+            "payouts",
+            "ledger",
+            "month end",
+            "month-end",
+            "import",
+            "imports",
+            "export",
+            "exports",
+            "invoice",
+            "invoices",
+            "payment",
+            "payments",
+            "order",
+            "orders",
+            "inventory",
+            "approval",
+            "approvals",
+            "handoff",
+            "handoffs",
+            "label",
+            "labels",
+            "supplier data",
+            "returns",
+        ],
+    )
+
+
+def _is_business_risk_or_career_thread(text: str, workflow_context: str = "") -> bool:
+    lowered = _normalized(" ".join([text, workflow_context]))
+    if not _has_phrase(lowered, BUSINESS_RISK_PATTERNS):
+        return False
+    return not (
+        _has_transferable_workflow_shape(lowered)
+        or _has_specific_finance_failure_shape(lowered)
+        or _has_operational_wedge_shape(lowered)
+    )
 
 
 def _is_broad_buying_prompt_without_wedge_slice(
@@ -2281,6 +2347,9 @@ def classify_source_signal(
     if _has_phrase(origin_text, HIRING_ADVICE_PATTERNS) and not _has_specific_finance_failure_shape(origin_text):
         reasons.append("hiring_or_staffing_advice_thread")
         return {"source_class": "low_signal_summary", "reasons": reasons}
+    if _is_business_risk_or_career_thread(origin_text, " ".join(str(atom_payload.get(key, "") or "") for key in ("job_to_be_done", "failure_mode", "current_workaround", "pain_statement"))):
+        reasons.append("business_risk_or_career_thread")
+        return {"source_class": "low_signal_summary", "reasons": reasons}
     if _is_broad_buying_prompt_without_wedge_slice(origin_text, atom_payload, origin_text):
         reasons.append("broad_buying_prompt_without_wedge_slice")
         return {"source_class": "low_signal_summary", "reasons": reasons}
@@ -2484,6 +2553,9 @@ def qualify_problem_signal(
     if _has_phrase(text, HIRING_ADVICE_PATTERNS) and not _has_specific_finance_failure_shape(text):
         negative_signals.append("hiring_or_staffing_advice_thread")
         score -= 7
+    if _is_business_risk_or_career_thread(text, workflow_context):
+        negative_signals.append("business_risk_or_career_thread")
+        score -= 8
     if _is_broad_buying_prompt_without_wedge_slice(text, atom_payload, workflow_context):
         negative_signals.append("broad_buying_prompt_without_wedge_slice")
         score -= 7

@@ -149,6 +149,79 @@ Semantic Summary: {semantic_summary}
 
 Generate search queries for this problem space."""
 
+STRONG_FINDING_OPERATIONAL_TERMS = [
+    "reconcile",
+    "reconciliation",
+    "bank deposit",
+    "bank deposits",
+    "payout",
+    "payouts",
+    "ledger",
+    "month end",
+    "month-end",
+    "import",
+    "imports",
+    "export",
+    "exports",
+    "invoice",
+    "invoices",
+    "payment",
+    "payments",
+    "order",
+    "orders",
+    "inventory",
+    "approval",
+    "approvals",
+    "handoff",
+    "handoffs",
+    "label",
+    "labels",
+    "returns",
+    "supplier data",
+    "csv",
+    "spreadsheet",
+]
+
+STRONG_FINDING_FAILURE_TERMS = [
+    "duplicate",
+    "duplicates",
+    "duplicated",
+    "mismatch",
+    "not matching",
+    "wrong",
+    "error",
+    "errors",
+    "broken",
+    "fails",
+    "failed",
+    "manual",
+    "manually",
+    "copy paste",
+    "copy/paste",
+    "workaround",
+    "cleanup",
+    "staring at spreadsheets",
+    "rebuild",
+]
+
+STRONG_FINDING_BUSINESS_RISK_TERMS = [
+    "biggest client",
+    "major client",
+    "client concentration",
+    "revenue concentration",
+    "owes me",
+    "wholesale account",
+    "good fit for me",
+    "review my resume",
+    "resume review",
+    "resume roast",
+    "career advice",
+    "hiring first sales",
+    "first sales",
+    "structuring msp business",
+    "se fue un cliente",
+]
+
 
 # ---------------------------------------------------------------------------
 # LLM client
@@ -341,6 +414,18 @@ def _extract_json(raw: str) -> dict[str, Any] | None:
     return None
 
 
+def _is_operational_strong_finding(finding: Any) -> bool:
+    title = str(getattr(finding, "product_built", "") or "")
+    summary = str(getattr(finding, "outcome_summary", "") or "")
+    text = f"{title} {summary}".lower()
+    if any(term in text for term in STRONG_FINDING_BUSINESS_RISK_TERMS):
+        has_operational_terms = any(term in text for term in STRONG_FINDING_OPERATIONAL_TERMS)
+        has_failure_terms = any(term in text for term in STRONG_FINDING_FAILURE_TERMS)
+        if not (has_operational_terms and has_failure_terms):
+            return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # LLMDiscoveryExpander
 # ---------------------------------------------------------------------------
@@ -394,6 +479,8 @@ class LLMDiscoveryExpander:
                 if finding.source_class != "pain_signal":
                     continue
                 if finding.status not in {"promoted", "qualified"}:
+                    continue
+                if not _is_operational_strong_finding(finding):
                     continue
                 evidence = dict(finding.evidence or {})
                 high_leverage = evidence.get("high_leverage", {}) if isinstance(evidence.get("high_leverage", {}), dict) else {}
