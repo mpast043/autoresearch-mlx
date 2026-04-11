@@ -54,7 +54,7 @@ discovery:
   sources:
     - reddit
   candidate_filter:
-    min_score: 3
+    min_score: 2
     behavioral_min_signals: 2
     behavioral_penalty: 1
   # App/plugin review lanes (1–2 star pain). Tune slugs/handles to niches you care about.

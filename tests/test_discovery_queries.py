@@ -63,7 +63,7 @@ def test_repo_config_defaults_bias_toward_reddit_only_discovery():
     discovery = cfg["discovery"]
 
     assert discovery["sources"] == ["reddit"]
-    assert discovery["candidate_filter"]["min_score"] == 3
+    assert discovery["candidate_filter"]["min_score"] == 2
     assert discovery["candidate_filter"]["behavioral_min_signals"] == 2
     assert discovery["reddit"]["use_r_all"] is True
     assert discovery["reddit"]["search_sorts"] == ["new"]
