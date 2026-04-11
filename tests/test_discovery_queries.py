@@ -3,6 +3,8 @@
 import os
 import sys
 
+import yaml
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from discovery_queries import reddit_discovery_subreddits, reddit_problem_keywords, reddit_problem_subreddits
@@ -24,10 +26,10 @@ def test_reddit_problem_keywords_merge_curated_operator_pack():
 
     assert keywords[0] == "manual reconciliation"
     assert "custom niche pain" in keywords
-    assert "month end close spreadsheet" in keywords
-    assert "sales channel reconciliation spreadsheet" in keywords
-    assert "invoice reminder spreadsheet workflow" in keywords
-    assert "pdf collaboration version control" in keywords
+    assert "Invoice does not match payment" in keywords
+    assert "Orders duplicated after import" in keywords
+    assert "CSV import creates duplicates" in keywords
+    assert "Reconciliation fails after import" in keywords
 
 
 def test_reddit_problem_subreddits_prioritize_practitioner_lanes_ahead_of_meta():
@@ -51,3 +53,17 @@ def test_reddit_problem_subreddits_prioritize_practitioner_lanes_ahead_of_meta()
     assert subreddits[:5] == ["accounting", "smallbusiness", "ecommerce", "shopify", "EtsySellers"]
     assert subreddits.index("projectmanagement") > subreddits.index("shopify")
     assert subreddits.index("automation") > subreddits.index("EtsySellers")
+
+
+def test_repo_config_defaults_bias_toward_reddit_only_discovery():
+    root = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+    with open(root, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    discovery = cfg["discovery"]
+
+    assert discovery["sources"] == ["reddit"]
+    assert discovery["candidate_filter"]["min_score"] == 3
+    assert discovery["candidate_filter"]["behavioral_min_signals"] == 2
+    assert discovery["reddit"]["use_r_all"] is True
+    assert discovery["reddit"]["search_sorts"] == ["new"]
