@@ -115,6 +115,8 @@ discovery:
     max_docs_per_pair: 6
     problem_subreddits:
       - accounting
+      - Bookkeeping
+      - Excel
       - smallbusiness
       - EtsySellers
       - ecommerce
@@ -124,7 +126,6 @@ discovery:
       - sysadmin
       - msp
       - devops
-      - excel
       - notion
       - airtable
       - webdev

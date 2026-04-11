@@ -9,7 +9,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REDDIT_PROBLEM_SUBREDDITS = ["accounting", "smallbusiness", "ecommerce", "shopify", "EtsySellers", "sysadmin"]
+DEFAULT_REDDIT_PROBLEM_SUBREDDITS = ["accounting", "Bookkeeping", "Excel", "smallbusiness", "ecommerce", "shopify", "EtsySellers", "sysadmin"]
 DEFAULT_REDDIT_PROBLEM_KEYWORDS = [
     # Mismatch-based keywords - platform specific failures
     "QuickBooks invoice does not match payment",
@@ -31,6 +31,8 @@ DEFAULT_REDDIT_PROBLEM_KEYWORDS = [
 DEFAULT_REDDIT_SUCCESS_KEYWORDS: list[str] = []
 CURATED_OPERATOR_SUBREDDITS = [
     "accounting",
+    "Bookkeeping",
+    "Excel",
     "smallbusiness",
     "ecommerce",
     "shopify",

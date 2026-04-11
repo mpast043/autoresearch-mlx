@@ -7,6 +7,7 @@ import logging
 import sqlite3
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1477,6 +1478,46 @@ class Database:
         )
         if not getattr(self._local, "batch_depth", 0):
             self._commit(conn)
+
+    def requalify_finding_for_evidence(
+        self,
+        finding_id: int,
+        *,
+        review_label: str = "",
+        note: str = "",
+    ) -> bool:
+        finding = self.get_finding(finding_id)
+        if finding is None:
+            return False
+        if finding.status == "qualified":
+            return False
+        if finding.status not in {"parked", "killed"}:
+            return False
+        if (finding.source_class or "") != "pain_signal":
+            return False
+
+        signal_rows = self.get_raw_signals_by_finding(finding_id)
+        atom_rows = self.get_problem_atoms_by_finding(finding_id)
+        if not signal_rows or not atom_rows:
+            return False
+
+        evidence = dict(finding.evidence or {})
+        review_requalification = dict(evidence.get("review_requalification") or {})
+        review_requalification.update(
+            {
+                "applied": True,
+                "review_label": review_label,
+                "note": note,
+                "requalified_from": finding.status,
+                "requalified_to": "qualified",
+                "requalified_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            }
+        )
+        evidence["review_requalification"] = review_requalification
+
+        self.update_finding_status(finding_id, "qualified")
+        self.update_finding_evidence(finding_id, evidence)
+        return True
 
     def insert_raw_signal(self, signal: RawSignal) -> int:
         signal.__post_init__()

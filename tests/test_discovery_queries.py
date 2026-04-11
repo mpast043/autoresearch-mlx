@@ -48,6 +48,6 @@ def test_reddit_problem_subreddits_prioritize_practitioner_lanes_ahead_of_meta()
 
     subreddits = reddit_problem_subreddits(cfg)
 
-    assert subreddits[:5] == ["accounting", "smallbusiness", "ecommerce", "shopify", "EtsySellers"]
+    assert subreddits[:7] == ["accounting", "Bookkeeping", "Excel", "smallbusiness", "ecommerce", "shopify", "EtsySellers"]
     assert subreddits.index("projectmanagement") > subreddits.index("shopify")
     assert subreddits.index("automation") > subreddits.index("EtsySellers")

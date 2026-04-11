@@ -189,6 +189,70 @@ class TestDatabase(unittest.TestCase):
         self.db.update_finding_status(finding_id, "validated")
         self.assertEqual(self.db.get_finding_by_hash("status_hash").status, "validated")
 
+    def test_review_requalification_revives_parked_pain_signal(self) -> None:
+        finding_id = self.db.insert_finding(
+            Finding(
+                source="reddit-problem/accounting",
+                source_url="https://example.com/review-revive",
+                content_hash="review-revive-hash",
+                status="parked",
+                source_class="pain_signal",
+                evidence={"run_id": "test-run"},
+            )
+        )
+        signal_id = self.db.insert_raw_signal(
+            RawSignal(
+                finding_id=finding_id,
+                source_name="reddit",
+                source_type="thread",
+                source_class="pain_signal",
+                source_url="https://example.com/review-revive",
+                title="Manual reconciliation keeps breaking",
+                body_excerpt="The spreadsheet and payout totals never match cleanly.",
+                quote_text="We keep fixing this manually every month.",
+                content_hash="review-revive-signal",
+            )
+        )
+        self.db.insert_problem_atom(
+            ProblemAtom(
+                finding_id=finding_id,
+                raw_signal_id=signal_id,
+                signal_id=signal_id,
+                pain_statement="Manual reconciliation keeps breaking",
+                user_role="finance team",
+                job_to_be_done="close the books",
+                failure_mode="payment totals do not match invoice totals",
+                current_workaround="manual spreadsheet reconciliation",
+                atom_json=json.dumps({"is_specific_problem": True}),
+            )
+        )
+
+        changed = self.db.requalify_finding_for_evidence(
+            finding_id,
+            review_label="needs_more_evidence",
+            note="Borderline but real operator pain.",
+        )
+
+        refreshed = self.db.get_finding(finding_id)
+        self.assertTrue(changed)
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.status, "qualified")
+        self.assertEqual((refreshed.evidence or {}).get("review_requalification", {}).get("review_label"), "needs_more_evidence")
+
+    def test_review_requalification_skips_screened_out_without_atoms(self) -> None:
+        finding_id = self.db.insert_finding(
+            Finding(
+                source="web",
+                source_url="https://example.com/not-pain",
+                content_hash="review-skip-hash",
+                status="screened_out",
+                source_class="pain_signal",
+            )
+        )
+        changed = self.db.requalify_finding_for_evidence(finding_id, review_label="needs_more_evidence")
+        self.assertFalse(changed)
+        self.assertEqual(self.db.get_finding(finding_id).status, "screened_out")
+
     def test_insert_validation(self) -> None:
         finding_id = self.db.insert_finding(Finding(source="test", source_url="https://example.com", content_hash="validation_hash"))
         validation_id = self.db.insert_validation(

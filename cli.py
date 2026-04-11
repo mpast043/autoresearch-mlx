@@ -1648,7 +1648,23 @@ async def main() -> None:
                     run_id=app.current_run_id,
                 )
             )
-            print_json({"review_id": review_id, "finding_id": args.finding_id, "label": args.label})
+            requalified = False
+            if args.label == "needs_more_evidence":
+                requalified = bool(
+                    app.db.requalify_finding_for_evidence(
+                        args.finding_id,
+                        review_label=args.label,
+                        note=args.note,
+                    )
+                )
+            print_json(
+                {
+                    "review_id": review_id,
+                    "finding_id": args.finding_id,
+                    "label": args.label,
+                    "requalified": requalified,
+                }
+            )
         elif args.command == "ideas":
             print_json([item.__dict__ for item in app.db.get_ideas(limit=100)] if app.db else [])
         elif args.command == "products":
