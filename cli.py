@@ -89,6 +89,51 @@ def print_json(value) -> None:
     print(json.dumps(value, indent=2, default=str))
 
 
+def _normalize_revalidation_notes(
+    *,
+    existing_notes: dict | None,
+    scorecard: dict[str, float | int | str],
+    cluster_summary: dict | None,
+    market_gap: dict | None,
+    counterevidence: list[dict] | None,
+    scoring_version: str,
+    formula_version: str,
+    threshold_version: str,
+    recommendation: str,
+    selection_status: str,
+    selection_reason: str,
+) -> dict:
+    notes = dict(existing_notes or {})
+    normalized_cluster_summary = dict(cluster_summary or {})
+    if scorecard.get("cluster_signal_count") is not None:
+        normalized_cluster_summary["signal_count"] = int(scorecard.get("cluster_signal_count") or 0)
+    if scorecard.get("cluster_atom_count") is not None:
+        normalized_cluster_summary["atom_count"] = int(scorecard.get("cluster_atom_count") or 0)
+
+    prior_scorecard = dict(notes.get("scorecard") or {})
+    normalized_scorecard = {
+        **prior_scorecard,
+        **scorecard,
+        "scoring_version": scoring_version,
+        "formula_version": formula_version,
+        "threshold_version": threshold_version,
+    }
+
+    notes["scorecard"] = normalized_scorecard
+    notes["cluster_summary"] = normalized_cluster_summary
+    notes["market_gap"] = dict(market_gap or {})
+    notes["counterevidence"] = list(counterevidence or [])
+    notes["revalidation"] = {
+        "recommendation": recommendation,
+        "selection_status": selection_status,
+        "selection_reason": selection_reason,
+        "scoring_version": scoring_version,
+        "formula_version": formula_version,
+        "threshold_version": threshold_version,
+    }
+    return notes
+
+
 def build_discovery_sort_diagnostics(db, *, limit: int = 500, run_id: str = "") -> dict:
     """Summarize which Reddit sort modes are yielding findings."""
     findings = db.get_findings(limit=limit) if db else []
@@ -760,47 +805,232 @@ async def cmd_scoring_report(args: argparse.Namespace, _app: AutoResearcher) -> 
 
 
 async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None:
-    import sqlite3
+    from src.build_prep import determine_selection_state
+    from src.database import Database
+    from src.opportunity_engine import (
+        CURRENT_FORMULA_VERSION,
+        CURRENT_SCORING_VERSION,
+        CURRENT_THRESHOLD_VERSION,
+        stage_decision,
+    )
+    from src.research_tools import ResearchToolkit
 
+    config, _ = load_runtime_config(args.config)
     db_path = resolve_database_path_from_config(args.config)
     if not db_path.exists():
         print(f"No database found at {db_path}")
         return
 
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
+    db = Database(str(db_path))
+    db.init_schema()
+    conn = db._get_connection()
+    stale_rows = conn.execute(
+        """
+        SELECT id
+        FROM opportunities
+        WHERE COALESCE(scoring_version, '') != ?
+           OR COALESCE(formula_version, '') != ?
+           OR COALESCE(threshold_version, '') != ?
+        ORDER BY id ASC
+        """,
+        (CURRENT_SCORING_VERSION, CURRENT_FORMULA_VERSION, CURRENT_THRESHOLD_VERSION),
+    ).fetchall()
+    all_rows = conn.execute("SELECT id FROM opportunities ORDER BY id ASC").fetchall()
 
-    cursor.execute("""
-        SELECT o.id, o.cluster_id
-        FROM opportunities o
-        WHERE o.scoring_version = '0'
-    """)
-    unvalidated_opps = cursor.fetchall()
-
-    if not unvalidated_opps:
-        print("No opportunities need revalidation.")
-        print("All have been scored with current formula.")
-        conn.close()
+    if not all_rows:
+        print("No opportunities found.")
+        db.close()
         return
 
-    print(f"=== REVALIDATING {len(unvalidated_opps)} OPPORTUNITIES ===")
-    print("This will re-run validation with v2 formula (new weights/thresholds)")
-    print("Each opportunity will be marked with scoring_version='v2' after revalidation.\n")
+    promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
+    toolkit = ResearchToolkit(config)
+    print(f"=== REVALIDATING {len(all_rows)} OPPORTUNITIES ===")
+    print(
+        f"Using scoring={CURRENT_SCORING_VERSION}, formula={CURRENT_FORMULA_VERSION}, "
+        f"threshold_version={CURRENT_THRESHOLD_VERSION}"
+    )
+    print(f"Thresholds: promote={promote_thresh:.2f}, park={park_thresh:.2f}\n")
+    print(f"Version-stale before pass: {len(stale_rows)}\n")
 
-    for opp_id, cluster_id in unvalidated_opps[:5]:
-        print(f"  Would revalidate opportunity #{opp_id} (cluster={cluster_id})")
+    changed = 0
+    promote_count = 0
+    park_count = 0
+    kill_count = 0
+    samples: list[str] = []
 
-    print(f"\n  ... and {len(unvalidated_opps) - 5} more")
+    with db.batch():
+        for row in all_rows:
+            opportunity = db.get_opportunity(int(row["id"]))
+            if not opportunity:
+                continue
 
-    cursor.execute("SELECT COUNT(*), COUNT(CASE WHEN scoring_version = '0' THEN 1 END), COUNT(CASE WHEN scoring_version = 'v2' THEN 1 END) FROM opportunities")
-    total, legacy, current = cursor.fetchone()
+            notes = opportunity.notes or {}
+            cluster_summary = notes.get("cluster_summary", {}) or {}
+            market_gap = notes.get("market_gap") or {"market_gap": opportunity.market_gap}
+            counterevidence = notes.get("counterevidence", []) or []
+            cluster_record = db.get_cluster_record(opportunity.cluster_id)
+            cluster_signal_count = (
+                cluster_summary.get("signal_count")
+                or getattr(cluster_record, "signal_count", 0)
+                or 0
+            )
+            cluster_atom_count = (
+                cluster_summary.get("atom_count")
+                or getattr(cluster_record, "atom_count", 0)
+                or 0
+            )
+            scorecard = {
+                "decision_score": opportunity.decision_score,
+                "problem_truth_score": opportunity.problem_truth_score,
+                "revenue_readiness_score": opportunity.revenue_readiness_score,
+                "composite_score": opportunity.composite_score,
+                "problem_plausibility": opportunity.problem_plausibility,
+                "value_support": opportunity.value_support,
+                "corroboration_strength": opportunity.corroboration_strength,
+                "evidence_sufficiency": opportunity.evidence_sufficiency,
+                "willingness_to_pay_proxy": opportunity.willingness_to_pay_proxy,
+                "pain_severity": opportunity.pain_severity,
+                "frequency_score": opportunity.frequency_score,
+                "cost_of_inaction": opportunity.cost_of_inaction,
+                "workaround_density": opportunity.workaround_density,
+                "urgency_score": opportunity.urgency_score,
+                "segment_concentration": opportunity.segment_concentration,
+                "reachability": opportunity.reachability,
+                "timing_shift": opportunity.timing_shift,
+                "buildability": opportunity.buildability,
+                "expansion_potential": opportunity.expansion_potential,
+                "education_burden": opportunity.education_burden,
+                "dependency_risk": opportunity.dependency_risk,
+                "adoption_friction": opportunity.adoption_friction,
+                "evidence_quality": opportunity.evidence_quality,
+                "cluster_signal_count": cluster_signal_count,
+                "cluster_atom_count": cluster_atom_count,
+            }
+            cluster_atoms = db.get_problem_atoms_by_cluster_key(cluster_record.cluster_key) if cluster_record and cluster_record.cluster_key else []
+            cluster_signals = db.get_raw_signals_by_ids([atom.signal_id for atom in cluster_atoms if atom.signal_id]) if cluster_atoms else []
+            resolved_signals = [signal for signal in cluster_signals if signal is not None]
 
-    print(f"\n=== CURRENT STATUS ===")
-    print(f"  Total opportunities: {total}")
-    print(f"  Not validated (needs revalidate): {legacy}")
-    print(f"  v2 (current formula): {current}")
+            web_only_cluster = bool(resolved_signals) and all(str(signal.source_type or "") == "web" for signal in resolved_signals)
+            low_quality_web_cluster = web_only_cluster and all(
+                toolkit._is_low_quality_web_problem_page(
+                    title=str(signal.title or ""),
+                    snippet=str(signal.body_excerpt or ""),
+                    body=str(signal.quote_text or signal.body_excerpt or ""),
+                    url=str(signal.source_url or ""),
+                )
+                for signal in resolved_signals
+            )
 
-    conn.close()
+            if low_quality_web_cluster:
+                decision = {
+                    "recommendation": "kill",
+                    "status": "killed",
+                    "reason": "source_policy_rejected_web_page",
+                    "decision_reason": "source_policy_rejected_web_page",
+                    "park_subreason": "",
+                }
+            else:
+                decision = stage_decision(
+                    scorecard,
+                    market_gap,
+                    counterevidence,
+                    promotion_threshold=promote_thresh,
+                    park_threshold=park_thresh,
+                )
+
+            brief = db.get_build_brief_for_opportunity(opportunity.id or 0)
+            validation = db.get_validation(brief.validation_id) if brief and brief.validation_id else None
+            validation_evidence = validation.evidence_dict if validation else {}
+            corroboration = validation_evidence.get("corroboration", {}) or {}
+            market_enrichment = validation_evidence.get("market_enrichment", {}) or {}
+
+            if validation:
+                selection_status, selection_reason, _ = determine_selection_state(
+                    decision=decision["recommendation"],
+                    scorecard=scorecard,
+                    corroboration=corroboration,
+                    market_enrichment=market_enrichment,
+                )
+            else:
+                selection_status = (
+                    "archive"
+                    if decision["recommendation"] == "kill"
+                    else ("prototype_candidate" if decision["recommendation"] == "promote" else "research_more")
+                )
+                selection_reason = "revalidated_without_full_validation_context"
+
+            if low_quality_web_cluster:
+                selection_status = "archive"
+                selection_reason = "revalidated_source_policy_reject"
+
+            prev_signature = (
+                opportunity.recommendation,
+                opportunity.status,
+                opportunity.selection_status,
+                opportunity.threshold_version,
+            )
+
+            opportunity.recommendation = decision["recommendation"]
+            opportunity.status = decision["status"]
+            opportunity.selection_status = selection_status
+            opportunity.selection_reason = selection_reason
+            opportunity.scoring_version = CURRENT_SCORING_VERSION
+            opportunity.formula_version = CURRENT_FORMULA_VERSION
+            opportunity.threshold_version = CURRENT_THRESHOLD_VERSION
+            opportunity.notes = _normalize_revalidation_notes(
+                existing_notes=notes,
+                scorecard=scorecard,
+                cluster_summary=cluster_summary,
+                market_gap=market_gap,
+                counterevidence=counterevidence,
+                scoring_version=CURRENT_SCORING_VERSION,
+                formula_version=CURRENT_FORMULA_VERSION,
+                threshold_version=CURRENT_THRESHOLD_VERSION,
+                recommendation=decision["recommendation"],
+                selection_status=selection_status,
+                selection_reason=selection_reason,
+            )
+            opportunity.notes_json = json.dumps(opportunity.notes, default=str)
+            db.upsert_opportunity(opportunity)
+
+            if brief:
+                if selection_status in {"research_more", "archive"}:
+                    db.update_build_brief_status(brief.id or 0, "archive")
+                elif selection_status == "prototype_candidate" and str(brief.status or "") != "prototype_candidate":
+                    db.update_build_brief_status(brief.id or 0, "prototype_candidate")
+
+            next_signature = (
+                opportunity.recommendation,
+                opportunity.status,
+                opportunity.selection_status,
+                opportunity.threshold_version,
+            )
+            if prev_signature != next_signature:
+                changed += 1
+                if len(samples) < 8:
+                    samples.append(
+                        f"opp #{opportunity.id} cluster={opportunity.cluster_id} -> "
+                        f"{decision['recommendation']}/{selection_status}"
+                    )
+
+            if decision["recommendation"] == "promote":
+                promote_count += 1
+            elif decision["recommendation"] == "park":
+                park_count += 1
+            else:
+                kill_count += 1
+
+    print("=== REVALIDATION COMPLETE ===")
+    print(f"  Revalidated: {len(all_rows)}")
+    print(f"  Changed: {changed}")
+    print(f"  Promote: {promote_count}")
+    print(f"  Park: {park_count}")
+    print(f"  Kill: {kill_count}")
+    if samples:
+        print("\nSample changes:")
+        for sample in samples:
+            print(f"  - {sample}")
+    db.close()
 
 
 async def cmd_rescore_v4(args: argparse.Namespace, _app: AutoResearcher) -> None:

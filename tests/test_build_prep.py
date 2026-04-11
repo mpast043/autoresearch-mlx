@@ -112,6 +112,28 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertIn("single_family_support", gate["blocked_by"])
         self.assertIn("recurrence_timeout", gate["blocked_by"])
 
+    def test_selection_gate_blocks_single_signal_single_family_cluster(self):
+        status, reason, gate = determine_selection_state(
+            decision="park",
+            scorecard={
+                "evidence_quality": 0.62,
+                "value_support": 0.57,
+                "composite_score": 0.43,
+                "cluster_signal_count": 1,
+                "cluster_atom_count": 1,
+            },
+            corroboration={
+                "corroboration_score": 0.48,
+                "source_family_diversity": 1,
+                "generalizability_class": "reusable_workflow_pain",
+                "recurrence_state": "supported",
+            },
+            market_enrichment={"wedge_active": False},
+        )
+        self.assertEqual(status, "research_more")
+        self.assertEqual(reason, "selection_gate_not_met")
+        self.assertIn("single_signal_single_family_cluster", gate["blocked_by"])
+
     def test_selection_gate_preserves_promote_decisions_under_v4_scoring(self):
         status, reason, gate = determine_selection_state(
             decision="promote",
@@ -216,6 +238,8 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "evidence_quality": 0.5586,
                 "value_support": 0.5245,
                 "composite_score": 0.3939,
+                "cluster_signal_count": 2,
+                "cluster_atom_count": 2,
             },
             corroboration={
                 "corroboration_score": 0.534,
@@ -240,6 +264,8 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "evidence_quality": 0.494,
                 "value_support": 0.5164,
                 "composite_score": 0.4102,
+                "cluster_signal_count": 2,
+                "cluster_atom_count": 2,
             },
             corroboration={
                 "corroboration_score": 0.4569,
@@ -699,6 +725,8 @@ class TestBuildReadySharpness(unittest.TestCase):
                 },
                 "source_family_corroboration": {
                     "source_family_diversity": 2,
+                    "family_confirmation_count": 2,
+                    "corroboration_score": 0.45,
                     "evidence_quality": 0.7,
                 },
             }
@@ -728,6 +756,7 @@ class TestBuildReadySharpness(unittest.TestCase):
         self.assertIn("unknown_host_platform", gate["reasons"])
         self.assertIn("vague_product_name", gate["reasons"])
         self.assertIn("insufficient_source_family_diversity", gate["reasons"])
+        self.assertIn("insufficient_independent_confirmations", gate["reasons"])
 
     def test_sharpness_gate_rejects_generic_internal_sync_fallback(self):
         gate = evaluate_build_ready_sharpness(
@@ -744,6 +773,8 @@ class TestBuildReadySharpness(unittest.TestCase):
                 },
                 "source_family_corroboration": {
                     "source_family_diversity": 2,
+                    "family_confirmation_count": 2,
+                    "corroboration_score": 0.41,
                 },
             }
         )
@@ -766,12 +797,39 @@ class TestBuildReadySharpness(unittest.TestCase):
                 },
                 "source_family_corroboration": {
                     "source_family_diversity": 2,
+                    "family_confirmation_count": 2,
+                    "corroboration_score": 0.35,
                     "evidence_quality": 0.12,
                 },
             }
         )
         self.assertFalse(gate["passes"])
         self.assertIn("insufficient_evidence_quality", gate["reasons"])
+
+    def test_sharpness_gate_rejects_thin_corroboration_and_single_confirmation(self):
+        gate = evaluate_build_ready_sharpness(
+            {
+                "platform_fit": {
+                    "host_platform": "Google Docs",
+                    "product_format": "Google Docs add-on",
+                    "product_name": "Contract Guard",
+                },
+                "job_to_be_done": "Review Google Docs contracts before sending them to clients",
+                "pain_workaround": {
+                    "failure_mode": "Template reuse leaves the wrong legal entity on client contracts",
+                    "trigger_event": "Right before sending a renewal contract for signature",
+                },
+                "source_family_corroboration": {
+                    "source_family_diversity": 2,
+                    "family_confirmation_count": 1,
+                    "corroboration_score": 0.18,
+                    "evidence_quality": 0.66,
+                },
+            }
+        )
+        self.assertFalse(gate["passes"])
+        self.assertIn("insufficient_corroboration_score", gate["reasons"])
+        self.assertIn("insufficient_independent_confirmations", gate["reasons"])
 
     def test_build_brief_payload_includes_platform_fit(self):
         """Test that build_brief_payload includes platform_fit."""

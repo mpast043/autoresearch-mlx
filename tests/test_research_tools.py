@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from src.reddit_bridge import BridgeError
 from src.llm_discovery_expander import LLMClient
-from src.research_tools import ResearchToolkit, SearchDocument
+from src.research_tools import ResearchToolkit, SearchDocument, clean_extracted_web_text
 
 
 class FakeDDGS:
@@ -1419,6 +1419,26 @@ def test_web_problem_filter_rejects_excel_gallery_and_editorial_review_pages():
         snippet="Features and pricing, pros and cons, and editor's rating.",
         body="A product review of Microsoft Excel with pricing, features, and pros and cons.",
         url="https://example.com/reviews/microsoft-excel-review",
+    )
+
+
+def test_clean_extracted_web_text_repairs_common_joined_tokens():
+    cleaned = clean_extracted_web_text(
+        "SpreadsheetProgram helps teams analyze data.BillingWorkflow errors happen weekly.",
+    )
+    assert "Spreadsheet Program" in cleaned
+    assert "Billing Workflow" in cleaned
+    assert "data. Billing" in cleaned
+
+
+def test_web_problem_filter_rejects_marketing_copy_excel_pages():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_low_quality_web_problem_page(
+        title="Excel is a Powerful Spreadsheet Program",
+        snippet="Analyze data and create spreadsheets with Microsoft 365 Excel.",
+        body="Find customizable templates and browse templates for every business workflow.",
+        url="https://example.com/marketing/excel-overview",
     )
 
 

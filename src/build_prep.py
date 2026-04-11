@@ -137,6 +137,12 @@ def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, A
     pain = brief_payload.get("pain_workaround", {}) or {}
     corroboration = brief_payload.get("source_family_corroboration", {}) or {}
     evidence_quality = float(corroboration.get("evidence_quality", 0.0) or 0.0)
+    corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
+    independent_confirmations = int(
+        corroboration.get("family_confirmation_count", 0)
+        or brief_payload.get("evidence_provenance", {}).get("family_confirmation_count", 0)
+        or 0
+    )
 
     reasons: list[str] = []
 
@@ -168,6 +174,10 @@ def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, A
         reasons.append("insufficient_source_family_diversity")
     if evidence_quality < 0.4:
         reasons.append("insufficient_evidence_quality")
+    if corroboration_score < 0.3:
+        reasons.append("insufficient_corroboration_score")
+    if independent_confirmations < 2:
+        reasons.append("insufficient_independent_confirmations")
 
     return {
         "passes": not reasons,
@@ -175,6 +185,8 @@ def evaluate_build_ready_sharpness(brief_payload: dict[str, Any]) -> dict[str, A
         "host_platform": host_platform or "Unknown",
         "product_name": platform_fit.product_name or "",
         "source_family_diversity": source_family_diversity,
+        "independent_confirmations": independent_confirmations,
+        "corroboration_score": round(corroboration_score, 4),
         "evidence_quality": round(evidence_quality, 4),
     }
 
@@ -520,17 +532,6 @@ def determine_selection_state(
                 "blocked_by": ["decision_kill"],
             },
         )
-    if decision == "promote":
-        return (
-            "prototype_candidate",
-            "validated_selection_gate",
-            {
-                "eligible": True,
-                "gate_version": BUILD_PREP_RULE_VERSION,
-                "reasons": ["validation_recommended_promote"],
-                "blocked_by": [],
-            },
-        )
 
     corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
     # Use source_family_diversity (total unique confirming sources) rather than
@@ -542,6 +543,8 @@ def determine_selection_state(
     evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
     value_support = float(scorecard.get("value_support", 0.0) or 0.0)
     composite_score = float(scorecard.get("composite_score", 0.0) or 0.0)
+    cluster_signal_count = int(scorecard.get("cluster_signal_count", scorecard.get("cluster_atom_count", 1)) or 1)
+    cluster_atom_count = int(scorecard.get("cluster_atom_count", cluster_signal_count) or cluster_signal_count)
     frequency_score = float(scorecard.get("frequency_score", 0.0) or 0.0)
     workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
     cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
@@ -552,6 +555,12 @@ def determine_selection_state(
 
     reasons: list[str] = []
     blocked_by: list[str] = []
+
+    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or core_family_diversity >= 2
+    if minimum_cluster_ok:
+        reasons.append("cluster_size_threshold_met")
+    else:
+        blocked_by.append("single_signal_single_family_cluster")
 
     if generalizability_class == "reusable_workflow_pain":
         reasons.append("generalizable_workflow_pain")
@@ -591,8 +600,30 @@ def determine_selection_state(
     if wedge_active:
         reasons.append("wedge_active")
 
+    promote_requalified = (
+        decision == "promote"
+        and generalizability_class == "reusable_workflow_pain"
+        and minimum_cluster_ok
+        and core_family_diversity >= 2
+        and corroboration_score >= 0.3
+        and evidence_quality >= 0.4
+    )
+
+    if decision == "promote" and promote_requalified:
+        return (
+            "prototype_candidate",
+            "validated_selection_gate",
+            {
+                "eligible": True,
+                "gate_version": BUILD_PREP_RULE_VERSION,
+                "reasons": ["validation_recommended_promote", "promotion_requalification_passed"],
+                "blocked_by": [],
+            },
+        )
+
     eligible = (
         generalizability_class == "reusable_workflow_pain"
+        and minimum_cluster_ok
         and core_family_diversity >= 2
         and corroboration_score >= 0.6
         and value_support >= 0.55
@@ -628,6 +659,7 @@ def determine_selection_state(
 
     exploratory_candidate = (
         generalizability_class == "reusable_workflow_pain"
+        and minimum_cluster_ok
         and (
             (
                 core_family_diversity >= 2
@@ -726,6 +758,8 @@ def explain_selection_gate_detail(
     evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
     value_support = float(scorecard.get("value_support", 0.0) or 0.0)
     composite_score = float(scorecard.get("composite_score", 0.0) or 0.0)
+    cluster_signal_count = int(scorecard.get("cluster_signal_count", scorecard.get("cluster_atom_count", 1)) or 1)
+    cluster_atom_count = int(scorecard.get("cluster_atom_count", cluster_signal_count) or cluster_signal_count)
     frequency_score = float(scorecard.get("frequency_score", 0.0) or 0.0)
     workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
     cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
@@ -733,6 +767,7 @@ def explain_selection_gate_detail(
     cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
     generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
     wedge_active = bool(market_enrichment.get("wedge_active"))
+    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or core_family_diversity >= 2
 
     exploratory_recurrence_ok = recurrence_state in {"thin", "supported", "strong"}
     timeout_checkpoint_candidate = (
@@ -759,6 +794,12 @@ def explain_selection_gate_detail(
     )
 
     strict_checks: list[dict[str, Any]] = [
+        {
+            "id": "minimum_cluster_size",
+            "pass": minimum_cluster_ok,
+            "actual": {"cluster_signal_count": cluster_signal_count, "cluster_atom_count": cluster_atom_count},
+            "need": ">= 2 signals/atoms or >= 2 source families",
+        },
         {
             "id": "generalizability_class",
             "pass": generalizability_class == "reusable_workflow_pain",
@@ -798,6 +839,8 @@ def explain_selection_gate_detail(
     ]
 
     multifamily_explore = (
+        minimum_cluster_ok
+        and
         core_family_diversity >= 2
         and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
         and corroboration_score >= 0.25
@@ -806,6 +849,8 @@ def explain_selection_gate_detail(
         and composite_score >= 0.34
     )
     single_family_explore = (
+        minimum_cluster_ok
+        and
         core_family_diversity == 1
         and exploratory_recurrence_ok
         and corroboration_score >= 0.3
@@ -1444,6 +1489,7 @@ def build_brief_payload(
             "recurrence_state": corroboration.get("recurrence_state", ""),
             "recurrence_gap_reason": evidence_payload.get("recurrence_gap_reason", ""),
             "recurrence_failure_class": evidence_payload.get("recurrence_failure_class", ""),
+            "family_confirmation_count": evidence_payload.get("family_confirmation_count", 0),
             "source_families": corroboration.get("source_families", []),
             "source_family_match_counts": corroboration.get("source_family_match_counts", {}),
             "core_source_families": corroboration.get("core_source_families", []),

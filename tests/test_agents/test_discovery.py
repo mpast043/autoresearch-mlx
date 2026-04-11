@@ -974,6 +974,29 @@ def test_learned_theme_queries_are_injected_and_recorded(temp_db):
     assert strategy["learned_theme_queries"] == ["manual handoff workflow"]
 
 
+def test_content_hash_dedupes_same_content_across_tracking_urls(temp_db):
+    agent = DiscoveryAgent(temp_db, sources=["web"])
+
+    first_hash = agent._generate_content_hash(
+        {
+            "source_url": "https://example.com/article?utm_source=a",
+            "product_built": "Microsoft Excel Templates Gallery",
+            "finding_kind": "problem_signal",
+            "outcome_summary": "Browse spreadsheet templates for budgets, invoices, and scheduling.",
+        }
+    )
+    second_hash = agent._generate_content_hash(
+        {
+            "source_url": "https://example.com/article?utm_source=b",
+            "product_built": "Microsoft Excel Templates Gallery",
+            "finding_kind": "problem_signal",
+            "outcome_summary": "Browse spreadsheet templates for budgets, invoices, and scheduling.",
+        }
+    )
+
+    assert first_hash == second_hash
+
+
 def test_learned_themes_can_be_refreshed_from_validation_backed_examples(temp_db):
     agent = DiscoveryAgent(
         temp_db,

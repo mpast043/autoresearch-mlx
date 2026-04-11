@@ -76,7 +76,7 @@ def _atom_needs_llm(failure_mode: str, pain_statement: str, trigger_event: str) 
 #   v4: Split scoring into PTS/RRS with blended decision_score
 CURRENT_SCORING_VERSION = "v4"
 CURRENT_FORMULA_VERSION = "pts_rrs_v1"
-CURRENT_THRESHOLD_VERSION = "2025_q2"
+CURRENT_THRESHOLD_VERSION = "2026_q2"
 GENERALIZABILITY_VERSION = "source_policy_v2"
 GENERALIZABILITY_WEIGHTS = {
     "review": {
@@ -3240,6 +3240,9 @@ def score_opportunity(
         "scoring_version": CURRENT_SCORING_VERSION,
         "formula_version": CURRENT_FORMULA_VERSION,
         "threshold_version": CURRENT_THRESHOLD_VERSION,
+        "cluster_signal_count": int(cluster_signal_count or 0),
+        "cluster_atom_count": int(cluster_summary.get("atom_count", 0) or 0),
+        "cluster_source_type_diversity": int(len(source_types)),
         "problem_truth_score": round(problem_truth_score, 4),
         "revenue_readiness_score": round(revenue_readiness_score, 4),
         "decision_score": round(decision_score, 4),

@@ -119,6 +119,41 @@ AI_TOOL_KEYWORDS = [
     "bolt",
 ]
 
+
+def clean_extracted_web_text(text: str, *, limit: int | None = None) -> str:
+    """Normalize fetched web text before hashing or atom extraction.
+
+    Reader/fetcher outputs occasionally collapse adjacent inline elements into a
+    single token (for example ``spreadsheetprogram``). We repair the common
+    boundary cases here so downstream source policy and atom extraction read the
+    page more like a human would.
+    """
+    cleaned = str(text or "")
+    if not cleaned:
+        return ""
+
+    cleaned = (
+        cleaned.replace("\xa0", " ")
+        .replace("\u200b", " ")
+        .replace("\u200c", " ")
+        .replace("\u200d", " ")
+        .replace("\ufeff", " ")
+    )
+    cleaned = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", cleaned)
+    cleaned = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", cleaned)
+    cleaned = re.sub(r"(?<=\d)(?=[A-Za-z])", " ", cleaned)
+    cleaned = re.sub(r"(?<=[.!?])(?=[A-Z])", " ", cleaned)
+    for token in WEB_TEXT_JOIN_BREAKERS:
+        cleaned = re.sub(
+            rf"(?i)\b({re.escape(token)})(?=[a-z]{{4,}})",
+            r"\1 ",
+            cleaned,
+        )
+    cleaned = " ".join(cleaned.split())
+    if limit is not None:
+        return compact_text(cleaned, limit)
+    return cleaned
+
 PAIN_KEYWORDS = list(CANONICAL_PAIN_KEYWORDS)
 
 VALUE_KEYWORDS = [
@@ -634,6 +669,45 @@ WEB_PROBLEM_REJECT_TEXT_PATTERNS = [
     "editors' rating",
     "features and pricing",
     "pros and cons",
+    "powerful spreadsheet",
+    "find customizable templates",
+    "browse templates",
+    "microsoft 365 excel",
+    "analyze data",
+    "create spreadsheets",
+    "duct tape phase",
+    "held together with duct tape",
+    "profitable business still feels like chaos",
+    "not a permanent state",
+    "not a character flaw",
+    "making good money but feel like their business is held together with duct tape",
+]
+
+WEB_TEXT_JOIN_BREAKERS = [
+    "spreadsheet",
+    "spreadsheets",
+    "template",
+    "templates",
+    "gallery",
+    "download",
+    "downloads",
+    "worksheet",
+    "worksheets",
+    "software",
+    "workflow",
+    "invoice",
+    "billing",
+    "contract",
+    "inventory",
+    "pricing",
+    "service",
+    "services",
+    "reconciliation",
+    "audit",
+    "report",
+    "reports",
+    "excel",
+    "ductwork",
 ]
 
 WEB_PROBLEM_REFERENCE_TEXT_PATTERNS = [
@@ -1637,8 +1711,11 @@ class ResearchToolkit:
     def _is_low_quality_web_problem_page(self, *, title: str, snippet: str, body: str, url: str) -> bool:
         domain = domain_for(url)
         path = url_path(url)
-        haystack = compact_text(f"{title} {snippet} {body} {domain} {path}".lower(), 2200)
-        title_lower = compact_text(title.lower(), 300)
+        cleaned_title = clean_extracted_web_text(title, limit=300)
+        cleaned_snippet = clean_extracted_web_text(snippet, limit=600)
+        cleaned_body = clean_extracted_web_text(body, limit=1800)
+        haystack = compact_text(f"{cleaned_title} {cleaned_snippet} {cleaned_body} {domain} {path}".lower(), 2200)
+        title_lower = compact_text(cleaned_title.lower(), 300)
 
         if domain in WEB_PROBLEM_CONTENT_FARM_DOMAINS:
             return True
@@ -1681,6 +1758,20 @@ class ResearchToolkit:
             and ("excel" in haystack or "microsoft 365" in haystack or "spreadsheet" in haystack)
             and not has_practitioner_context
         )
+        looks_like_marketing_copy = (
+            any(
+                phrase in haystack
+                for phrase in [
+                    "powerful spreadsheet",
+                    "find customizable templates",
+                    "browse templates",
+                    "create spreadsheets",
+                    "analyze data",
+                    "microsoft 365 excel",
+                ]
+            )
+            and not has_practitioner_context
+        )
         if looks_like_reference and not has_practitioner_context and not discussion_surface:
             return True
         if looks_like_download and not has_practitioner_context and not discussion_surface:
@@ -1692,6 +1783,8 @@ class ResearchToolkit:
         if looks_like_template_gallery:
             return True
         if looks_like_editorial_review:
+            return True
+        if looks_like_marketing_copy:
             return True
         if title_lower.startswith("why ") and ("tutorial" in haystack or "compatibility version" in haystack):
             return True
@@ -2226,9 +2319,9 @@ class ResearchToolkit:
                 if result.success:
                     normalized = {
                         "url": url,
-                        "title": compact_text(result.title or url, 180),
-                        "description": compact_text(result.markdown[:900] if result.markdown else "", 900),
-                        "text": compact_text(result.markdown or "", 2500),
+                        "title": clean_extracted_web_text(result.title or url, limit=180),
+                        "description": clean_extracted_web_text(result.markdown[:900] if result.markdown else "", limit=900),
+                        "text": clean_extracted_web_text(result.markdown or "", limit=2500),
                     }
                     self._cache_set(self._fetch_cache, url, normalized)
                     return dict(normalized)
@@ -2241,9 +2334,15 @@ class ResearchToolkit:
                 if payload:
                     normalized = {
                         "url": url,
-                        "title": compact_text(str(payload.get("title", "") or url), 180),
-                        "description": compact_text(str(payload.get("description", "") or payload.get("text", "")), 900),
-                        "text": compact_text(str(payload.get("text", "") or payload.get("description", "")), 2500),
+                        "title": clean_extracted_web_text(str(payload.get("title", "") or url), limit=180),
+                        "description": clean_extracted_web_text(
+                            str(payload.get("description", "") or payload.get("text", "")),
+                            limit=900,
+                        ),
+                        "text": clean_extracted_web_text(
+                            str(payload.get("text", "") or payload.get("description", "")),
+                            limit=2500,
+                        ),
                     }
                     self._cache_set(self._fetch_cache, url, normalized)
                     return dict(normalized)
@@ -2258,8 +2357,8 @@ class ResearchToolkit:
             )
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
-            title = soup.title.string.strip() if soup.title and soup.title.string else url
-            text = compact_text(soup.get_text(" ", strip=True), 2500)
+            title = clean_extracted_web_text(soup.title.string.strip() if soup.title and soup.title.string else url, limit=180)
+            text = clean_extracted_web_text(soup.get_text(" ", strip=True), limit=2500)
             return {"url": url, "title": title, "description": text[:900], "text": text}
 
         try:

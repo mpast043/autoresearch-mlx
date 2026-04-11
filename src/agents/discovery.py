@@ -48,6 +48,7 @@ from src.source_patterns import (
     MANUAL_WORKFLOW_STAKES_HINTS as CANONICAL_MANUAL_WORKFLOW_STAKES_HINTS,
     contains_any_phrase,
 )
+from src.utils.hashing import generate_content_hash
 
 
 # =============================================================================
@@ -2018,19 +2019,14 @@ class DiscoveryAgent(BaseAgent):
             logger.warning("Problem space lifecycle update failed: %s", exc)
 
     def _generate_content_hash(self, finding_data: Dict[str, Any]) -> str:
-        normalized = json.dumps(
-            {
-                "source_url": finding_data.get("source_url", ""),
-                "title": finding_data.get("product_built", ""),
-                "kind": finding_data.get("finding_kind", ""),
-                "summary": finding_data.get("outcome_summary", ""),
-            },
-            sort_keys=True,
-            ensure_ascii=False,
-        )
-        import hashlib
-
-        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        title = str(finding_data.get("product_built", "") or "")
+        summary = str(finding_data.get("outcome_summary", "") or "")
+        kind = str(finding_data.get("finding_kind", "") or "")
+        source_url = str(finding_data.get("source_url", "") or "")
+        content_basis = " ".join(part for part in [kind, title, summary] if part).strip()
+        if len(content_basis) < 40:
+            content_basis = f"{content_basis} {source_url}".strip()
+        return generate_content_hash(content_basis)
 
     async def process(self, message) -> Dict[str, Any]:
         payload = message.payload
