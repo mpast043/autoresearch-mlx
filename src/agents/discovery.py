@@ -497,11 +497,22 @@ class DiscoveryAgent(BaseAgent):
         # Rate-limiting semaphore: caps concurrent outbound HTTP calls
         _sem_limit = int(self.config.get("discovery", {}).get("api_concurrency", 6))
         self._api_semaphore = asyncio.Semaphore(max(1, _sem_limit))
+        self._sync_sources_from_config()
+
+    def _sync_sources_from_config(self) -> None:
+        configured_sources = [
+            str(source).lower()
+            for source in (self.config.get("discovery", {}).get("sources", []) or [])
+            if str(source).strip()
+        ]
+        if configured_sources:
+            self.sources = configured_sources
 
     async def _refresh_toolkit(self, new_config: dict[str, Any]) -> None:
         old_toolkit = self.toolkit
         self.config = new_config
         self.check_interval = self.config.get("discovery", {}).get("check_interval", 300)
+        self._sync_sources_from_config()
         self.toolkit = ResearchToolkit(self.config)
         close_old = getattr(old_toolkit, "close", None)
         if callable(close_old):
@@ -548,6 +559,7 @@ class DiscoveryAgent(BaseAgent):
     async def _discover_once(self) -> list[int]:
         # Clear seen hashes from previous cycles to allow dedup within a single cycle only
         self._seen_hashes.clear()
+        self._sync_sources_from_config()
         # Run expansion to add new keywords/subreddits based on previous wave's feedback
         try:
             expansion_result = run_expansion(self.db, self.base_config)

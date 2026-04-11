@@ -206,6 +206,42 @@ def test_custom_sources_initialization(temp_db):
     assert agent.sources == ["reddit", "github"]
 
 
+def test_discovery_agent_syncs_sources_from_config_on_init(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["reddit", "github", "youtube"],
+        config={"discovery": {"sources": ["reddit"]}},
+    )
+    assert agent.sources == ["reddit"]
+
+
+def test_refresh_toolkit_resyncs_sources_from_config(temp_db, monkeypatch):
+    created_sources = []
+
+    class DummyToolkit:
+        def __init__(self, config):
+            created_sources.append(list(config.get("discovery", {}).get("sources", [])))
+
+        async def close(self):
+            return None
+
+        def set_discovery_feedback(self, feedback):
+            return None
+
+    monkeypatch.setattr("src.agents.discovery.ResearchToolkit", DummyToolkit)
+
+    agent = DiscoveryAgent(
+        temp_db,
+        sources=["reddit", "github"],
+        config={"discovery": {"sources": ["reddit", "github"]}},
+    )
+
+    asyncio.run(agent._refresh_toolkit({"discovery": {"sources": ["reddit"]}}))
+
+    assert created_sources[-1] == ["reddit"]
+    assert agent.sources == ["reddit"]
+
+
 def test_check_source_web_respects_focused_problem_only_and_configured_problem_queries(temp_db):
     agent = DiscoveryAgent(
         temp_db,
