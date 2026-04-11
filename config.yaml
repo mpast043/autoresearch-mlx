@@ -16,14 +16,19 @@ discovery:
   screened_out_retention:
     max_findings: 2000
   source_selection:
-    always_run: ["reddit", "web"]
+    always_run: ["reddit"]
     exploratory_low_yield_sources_per_cycle: 1
     low_yield_min_runs: 50
   expansion:
-    max_keywords_per_wave: 5
-    max_subreddits_per_wave: 5
+    max_keywords_per_wave: 8
+    max_subreddits_per_wave: 8
     min_validation_score: 0.25  # Lowered to enable auto-expansion
     cooldown_hours: 1  # Reduced for faster iteration
+  term_lifecycle:
+    max_zero_yield_runs_before_weak: 12
+    max_zero_yield_runs_before_exhausted: 40
+    max_discussion_fallback_zero_yield_runs: 6
+    paused_cooldown_waves: 3
 
   # LLM-driven discovery expansion: propose new problem spaces from validated opportunities
   llm_expansion:
@@ -54,12 +59,9 @@ discovery:
   # `web` = broad web search + marketplace pain threads (see DiscoveryAgent._check_source).
   sources:
     - reddit
-    - web
     - github
     - youtube
     - youtube-comments
-    - wordpress_reviews
-    - shopify_reviews
   candidate_filter:
     min_score: 2
     behavioral_min_signals: 1
@@ -101,8 +103,8 @@ discovery:
     # false = search curated operator/problem subreddits instead of noisy r/all.
     use_r_all: false
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
-    max_subreddits_per_wave: 4
-    max_keywords_per_wave: 4
+    max_subreddits_per_wave: 6
+    max_keywords_per_wave: 6
     pair_concurrency: 3
     # Prime only a small, diversified relay seed set per run.
     reddit_seed_query_limit: 8

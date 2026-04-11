@@ -934,6 +934,45 @@ def test_web_source_uses_high_yield_problem_queries(temp_db):
     assert '"manual process" every day' not in captured["candidates"]
 
 
+def test_update_term_lifecycle_exhausts_zero_yield_and_discussion_fallback_terms(temp_db):
+    agent = DiscoveryAgent(
+        temp_db,
+        config={
+            "discovery": {
+                "term_lifecycle": {
+                    "max_zero_yield_runs_before_exhausted": 5,
+                    "max_discussion_fallback_zero_yield_runs": 3,
+                }
+            }
+        },
+    )
+
+    for _ in range(5):
+        temp_db.record_discovery_probe("github-problem", "dead workflow query", docs_seen=0, latency_ms=10.0, status="ok")
+    for _ in range(3):
+        temp_db.record_discovery_probe(
+            "github-problem",
+            '"csv import workflow" [discussion-fallback]',
+            docs_seen=0,
+            latency_ms=10.0,
+            status="ok",
+        )
+
+    transitions = agent._update_term_lifecycle()
+
+    terms = {
+        row["term_value"]: row
+        for row in temp_db.list_search_terms(term_type="keyword", limit=20)
+    }
+
+    assert terms["dead workflow query"]["state"] == "exhausted"
+    assert terms['"csv import workflow" [discussion-fallback]']["state"] == "exhausted"
+    assert {item["term_value"] for item in transitions["keywords"]} == {
+        "dead workflow query",
+        '"csv import workflow" [discussion-fallback]',
+    }
+
+
 def test_learned_theme_queries_are_injected_and_recorded(temp_db):
     agent = DiscoveryAgent(
         temp_db,
