@@ -108,6 +108,80 @@ SHARP_RESEARCH_THRESHOLDS = {
     "buildability": 0.52,
 }
 
+BORING_MONEY_BUYER_TERMS = (
+    "operations",
+    "operator",
+    "ops",
+    "finance",
+    "accounting",
+    "billing",
+    "revops",
+    "compliance",
+    "inventory",
+    "warehouse",
+    "procurement",
+    "service manager",
+    "dispatcher",
+)
+
+BORING_MONEY_CADENCE_TERMS = (
+    "month-end",
+    "monthly",
+    "every month",
+    "week",
+    "weekly",
+    "every week",
+    "daily",
+    "close",
+    "billing cycle",
+    "renewal",
+    "reconciliation",
+    "invoice",
+    "invoicing",
+    "payroll",
+    "inventory",
+    "reorder",
+    "tax",
+    "audit",
+    "compliance",
+    "commission",
+    "statement",
+    "service call",
+)
+
+BORING_MONEY_INCUMBENT_TERMS = (
+    "spreadsheet",
+    "excel",
+    "csv",
+    "quickbooks",
+    "xero",
+    "netsuite",
+    "erp",
+    "crm",
+    "wms",
+    "m365",
+    "google sheets",
+    "billing workbook",
+    "master workbook",
+    "pdf",
+)
+
+BORING_MONEY_WORKAROUND_TERMS = (
+    "manual",
+    "manually",
+    "copy",
+    "copied",
+    "export",
+    "import",
+    "reconcile",
+    "reconciliation",
+    "audit",
+    "cross-check",
+    "check before sending",
+    "rules tab",
+    "workbook",
+)
+
 
 def _sharp_research_thresholds() -> dict[str, float]:
     overrides = (_RUNTIME_CONFIG.get("validation", {}) or {}).get("sharp_research", {}) if _RUNTIME_CONFIG else {}
@@ -2968,6 +3042,76 @@ def compute_decision_score(pts: float, rrs: float) -> float:
     return clamp(pts * 0.55 + rrs * 0.45, 0.0, 1.0)
 
 
+def _compute_boring_money_fit(
+    *,
+    atom: ProblemAtom,
+    signal: RawSignal,
+    frequency_hits: int,
+    cost_hits: int,
+    workaround_hits: int,
+    operational_buyer: float,
+    source_family_diversity: int,
+    recurrence_doc_count: int,
+) -> dict[str, float]:
+    role_text = _normalized(
+        " ".join(
+            [
+                str(_value(atom, "segment", "")),
+                str(_value(atom, "user_role", "")),
+                str(_value(atom, "job_to_be_done", "")),
+                str(_value(atom, "failure_mode", "")),
+                str(_value(atom, "why_now_clues", "")),
+                str(_value(signal, "title", "")),
+                str(_value(signal, "body_excerpt", "")),
+            ]
+        )
+    )
+    tool_text = _normalized(
+        " ".join(
+            [
+                str(_value(atom, "current_tools", "")),
+                str(_value(atom, "current_workaround", "")),
+                str(_value(signal, "title", "")),
+                str(_value(signal, "body_excerpt", "")),
+                str(_value(signal, "quote_text", "")),
+            ]
+        )
+    )
+
+    buyer_owner_score = clamp(
+        0.08
+        + (0.34 if any(term in role_text for term in BORING_MONEY_BUYER_TERMS) else 0.0)
+        + operational_buyer * 0.35
+        + (0.14 if any(term in role_text for term in ("billing", "accounting", "finance", "compliance")) else 0.0)
+    )
+    recurring_workflow_score = clamp(
+        0.08
+        + min(frequency_hits, 3) * 0.12
+        + min(cost_hits, 2) * 0.06
+        + min(recurrence_doc_count, 3) * 0.05
+        + (0.28 if any(term in role_text for term in BORING_MONEY_CADENCE_TERMS) else 0.0)
+    )
+    incumbent_gap_score = clamp(
+        0.05
+        + (0.24 if any(term in tool_text for term in BORING_MONEY_INCUMBENT_TERMS) else 0.0)
+        + (0.24 if any(term in tool_text for term in BORING_MONEY_WORKAROUND_TERMS) else 0.0)
+        + (0.12 if str(_value(atom, "current_tools", "")).strip() else 0.0)
+        + min(workaround_hits, 3) * 0.08
+        + min(source_family_diversity, 2) * 0.04
+    )
+    boring_money_fit = clamp(
+        incumbent_gap_score * 0.42
+        + recurring_workflow_score * 0.30
+        + buyer_owner_score * 0.28
+    )
+    return {
+        "buyer_owner_score": round(buyer_owner_score, 4),
+        "recurring_workflow_score": round(recurring_workflow_score, 4),
+        "incumbent_gap_score": round(incumbent_gap_score, 4),
+        "boring_money_fit": round(boring_money_fit, 4),
+    }
+
+
 def score_opportunity(
     atom: ProblemAtom,
     signal: RawSignal,
@@ -3036,6 +3180,20 @@ def score_opportunity(
     generalizability_penalty = float(corroboration.get("generalizability_penalty", 0.0) or 0.0)
 
     corroborating_sources = sum(1 for count in recurrence_results_by_source.values() if count)
+    boring_money = _compute_boring_money_fit(
+        atom=atom,
+        signal=signal,
+        frequency_hits=frequency_hits,
+        cost_hits=cost_hits,
+        workaround_hits=workaround_hits,
+        operational_buyer=operational_buyer,
+        source_family_diversity=source_family_diversity,
+        recurrence_doc_count=recurrence_doc_count,
+    )
+    buyer_owner_score = float(boring_money["buyer_owner_score"])
+    recurring_workflow_score = float(boring_money["recurring_workflow_score"])
+    incumbent_gap_score = float(boring_money["incumbent_gap_score"])
+    boring_money_fit = float(boring_money["boring_money_fit"])
 
     # Fix 1: Removed cost_hits to avoid double-counting (now only in cost_of_inaction)
     # Fix 2: Removed urgency_hits to avoid triple-counting (now only in urgency_score)
@@ -3083,6 +3241,8 @@ def score_opportunity(
         + buyer_intent_score * 0.14
         + demand_score * 0.08
         + willingness_to_pay_signal * 0.16
+        + recurring_workflow_score * 0.10
+        + incumbent_gap_score * 0.08
     )
     education_burden = clamp(0.2 + (0.18 if recurrence_score < 0.45 else 0.0) + (0.12 if not _value(atom, "user_role", "") else 0.0))
     dependency_risk = clamp(
@@ -3101,6 +3261,7 @@ def score_opportunity(
     # PART 3: MULTI-SIGNAL CORROBORATION BOOST
     # Get cluster signal count from cluster_summary
     cluster_signal_count = cluster_summary.get("signal_count", cluster_summary.get("atom_count", 1))
+    cluster_source_type_diversity = int(cluster_summary.get("source_type_diversity", 1) or 1)
 
     # Compute cluster bonus for corroboration
     if cluster_signal_count >= 10:
@@ -3161,6 +3322,7 @@ def score_opportunity(
         + review_signal_score * 0.04
         + (1.0 - competition_score) * 0.03
         + operational_value_lift * 0.12
+        + boring_money_fit * 0.12
         - generalizability_penalty * 0.2
     )
     evidence_quality = clamp(evidence_sufficiency * 0.72 + corroboration_strength * 0.16 + feasibility * 0.06 + generalizability_score * 0.06)
@@ -3242,7 +3404,7 @@ def score_opportunity(
         "threshold_version": CURRENT_THRESHOLD_VERSION,
         "cluster_signal_count": int(cluster_signal_count or 0),
         "cluster_atom_count": int(cluster_summary.get("atom_count", 0) or 0),
-        "cluster_source_type_diversity": int(len(source_types)),
+        "cluster_source_type_diversity": cluster_source_type_diversity,
         "problem_truth_score": round(problem_truth_score, 4),
         "revenue_readiness_score": round(revenue_readiness_score, 4),
         "decision_score": round(decision_score, 4),
@@ -3257,6 +3419,10 @@ def score_opportunity(
         "buildability": round(buildability, 4),
         "expansion_potential": round(expansion_potential, 4),
         "willingness_to_pay_proxy": round(willingness_to_pay_proxy, 4),
+        "buyer_owner_score": round(buyer_owner_score, 4),
+        "recurring_workflow_score": round(recurring_workflow_score, 4),
+        "incumbent_gap_score": round(incumbent_gap_score, 4),
+        "boring_money_fit": round(boring_money_fit, 4),
         "operational_value_lift": round(operational_value_lift, 4),
         "value_support": round(value_support, 4),
         "education_burden": round(education_burden, 4),
@@ -3475,14 +3641,46 @@ def stage_decision(
     workaround_density = float(opportunity_scores.get("workaround_density", 0.0) or 0.0)
     cost_of_inaction = float(opportunity_scores.get("cost_of_inaction", 0.0) or 0.0)
     buildability = float(opportunity_scores.get("buildability", 0.0) or 0.0)
+    recurring_workflow_score = float(
+        opportunity_scores.get(
+            "recurring_workflow_score",
+            clamp(frequency_score * 0.65 + cost_of_inaction * 0.2),
+        )
+        or 0.0
+    )
+    incumbent_gap_score = float(
+        opportunity_scores.get(
+            "incumbent_gap_score",
+            clamp(workaround_density * 0.65 + value_support * 0.15 + frequency_score * 0.1),
+        )
+        or 0.0
+    )
+    boring_money_fit = float(
+        opportunity_scores.get(
+            "boring_money_fit",
+            clamp(
+                incumbent_gap_score * 0.42
+                + recurring_workflow_score * 0.30
+                + value_support * 0.16
+                + cost_of_inaction * 0.12
+            ),
+        )
+        or 0.0
+    )
     sharp_thresholds = _sharp_research_thresholds()
 
     # Hard kill conditions
+    weak_boring_money_fit = (
+        boring_money_fit < 0.24
+        and incumbent_gap_score < 0.22
+        and recurring_workflow_score < 0.28
+    )
     hard_kill = (
         market_gap.get("market_gap") == "already_solved_well"
         or supported_count >= 4
         or (frequency_score < 0.25)
         or (problem_truth_score < 0.10)  # Hard PTS floor (below P50)
+        or (weak_boring_money_fit and decision_score < promotion_threshold)
     )
     if hard_kill:
         return {
@@ -3498,7 +3696,10 @@ def stage_decision(
     if (decision_score >= promotion_threshold
         and problem_truth_score >= 0.11
         and revenue_readiness_score >= 0.22
-        and frequency_score >= 0.25):
+        and frequency_score >= 0.25
+        and boring_money_fit >= 0.52
+        and incumbent_gap_score >= 0.42
+        and recurring_workflow_score >= 0.40):
         return {
             "status": "promoted",
             "recommendation": "promote",
@@ -3508,7 +3709,12 @@ def stage_decision(
         }
 
     # Override 1: High frequency override
-    if decision_score >= 0.40 and frequency_score >= 0.50:
+    if (
+        decision_score >= 0.40
+        and frequency_score >= 0.50
+        and boring_money_fit >= 0.50
+        and incumbent_gap_score >= 0.38
+    ):
         return {
             "status": "promoted",
             "recommendation": "promote",
@@ -3518,7 +3724,13 @@ def stage_decision(
         }
 
     # Override 2: Strong evidence override
-    if decision_score >= 0.38 and evidence_quality >= 0.70:
+    if (
+        decision_score >= 0.38
+        and evidence_quality >= 0.70
+        and boring_money_fit >= 0.50
+        and incumbent_gap_score >= 0.42
+        and recurring_workflow_score >= 0.40
+    ):
         return {
             "status": "promoted",
             "recommendation": "promote",
@@ -3567,6 +3779,9 @@ def stage_decision(
         and workaround_density >= sharp_thresholds["workaround_density"]
         and cost_of_inaction >= sharp_thresholds["cost_of_inaction"]
         and buildability >= sharp_thresholds["buildability"]
+        and boring_money_fit >= 0.44
+        and incumbent_gap_score >= 0.34
+        and recurring_workflow_score >= 0.34
     )
     if sharp_research_candidate:
         return {
@@ -3613,6 +3828,32 @@ def diagnose_stage_decision(
     workaround_density = float(opportunity_scores.get("workaround_density", 0.0) or 0.0)
     cost_of_inaction = float(opportunity_scores.get("cost_of_inaction", 0.0) or 0.0)
     buildability = float(opportunity_scores.get("buildability", 0.0) or 0.0)
+    recurring_workflow_score = float(
+        opportunity_scores.get(
+            "recurring_workflow_score",
+            clamp(frequency_score * 0.65 + cost_of_inaction * 0.2),
+        )
+        or 0.0
+    )
+    incumbent_gap_score = float(
+        opportunity_scores.get(
+            "incumbent_gap_score",
+            clamp(workaround_density * 0.65 + value_support * 0.15 + frequency_score * 0.1),
+        )
+        or 0.0
+    )
+    boring_money_fit = float(
+        opportunity_scores.get(
+            "boring_money_fit",
+            clamp(
+                incumbent_gap_score * 0.42
+                + recurring_workflow_score * 0.30
+                + value_support * 0.16
+                + cost_of_inaction * 0.12
+            ),
+        )
+        or 0.0
+    )
     sharp_thresholds = _sharp_research_thresholds()
 
     decision = stage_decision(
@@ -3629,46 +3870,56 @@ def diagnose_stage_decision(
         hard_kill_reasons.append("market_gap=already_solved_well")
     if supported_count >= 4:
         hard_kill_reasons.append(f"counterevidence_supported_count>={supported_count} (>=4)")
-    if market_gap.get("market_gap") == "likely_false_signal" and plausibility < 0.45:
-        hard_kill_reasons.append("likely_false_signal_and_plausibility<0.45")
-    if composite < park_threshold and plausibility < 0.38 and sufficiency < 0.35:
-        hard_kill_reasons.append(
-            f"weak_triple: composite({composite:.3f})<{park_threshold} & plausibility<0.38 & sufficiency<0.35"
-        )
-    if kill_bias >= 0.12 and plausibility < 0.45 and sufficiency < 0.32:
-        hard_kill_reasons.append("operator_kill_bias_heavy")
+    if frequency_score < 0.25:
+        hard_kill_reasons.append("frequency_score<0.25")
+    if problem_truth_score < 0.10:
+        hard_kill_reasons.append("problem_truth_score<0.10")
+    if boring_money_fit < 0.24 and incumbent_gap_score < 0.22 and recurring_workflow_score < 0.28 and decision_score < promotion_threshold:
+        hard_kill_reasons.append("weak_boring_money_fit")
 
     promote_checks: list[dict[str, Any]] = [
         {
-            "id": "composite_vs_promotion_threshold",
-            "pass": composite >= promotion_threshold,
-            "actual": round(composite, 4),
+            "id": "decision_score_vs_promotion_threshold",
+            "pass": decision_score >= promotion_threshold,
+            "actual": round(decision_score, 4),
             "floor": promotion_threshold,
-            "note": "composite uses scorecard.composite_score ± review biases",
+            "note": "decision score uses PTS/RRS blend plus review biases",
         },
         {
-            "id": "problem_plausibility",
-            "pass": plausibility >= 0.55,
-            "actual": round(plausibility, 4),
-            "floor": 0.6,
+            "id": "problem_truth_score",
+            "pass": problem_truth_score >= 0.11,
+            "actual": round(problem_truth_score, 4),
+            "floor": 0.11,
         },
         {
-            "id": "evidence_quality",
-            "pass": evidence_quality >= 0.55,
-            "actual": round(evidence_quality, 4),
-            "floor": 0.55,
+            "id": "revenue_readiness_score",
+            "pass": revenue_readiness_score >= 0.22,
+            "actual": round(revenue_readiness_score, 4),
+            "floor": 0.22,
         },
         {
-            "id": "counterevidence_supported_count",
-            "pass": supported_count <= 1,
-            "actual": supported_count,
-            "ceiling": 1,
+            "id": "frequency_score",
+            "pass": frequency_score >= 0.25,
+            "actual": round(frequency_score, 4),
+            "floor": 0.25,
         },
         {
-            "id": "value_support",
-            "pass": value_support >= 0.58,
-            "actual": round(value_support, 4),
-            "floor": 0.58,
+            "id": "boring_money_fit",
+            "pass": boring_money_fit >= 0.52,
+            "actual": round(boring_money_fit, 4),
+            "floor": 0.52,
+        },
+        {
+            "id": "incumbent_gap_score",
+            "pass": incumbent_gap_score >= 0.42,
+            "actual": round(incumbent_gap_score, 4),
+            "floor": 0.42,
+        },
+        {
+            "id": "recurring_workflow_score",
+            "pass": recurring_workflow_score >= 0.40,
+            "actual": round(recurring_workflow_score, 4),
+            "floor": 0.40,
         },
     ]
 
@@ -3687,6 +3938,9 @@ def diagnose_stage_decision(
         and workaround_density >= sharp_thresholds["workaround_density"]
         and cost_of_inaction >= sharp_thresholds["cost_of_inaction"]
         and buildability >= sharp_thresholds["buildability"]
+        and boring_money_fit >= 0.44
+        and incumbent_gap_score >= 0.34
+        and recurring_workflow_score >= 0.34
     )
 
     return {
@@ -3702,6 +3956,9 @@ def diagnose_stage_decision(
             "decision_score": round(decision_score, 4),
             "problem_truth_score": round(problem_truth_score, 4),
             "revenue_readiness_score": round(revenue_readiness_score, 4),
+            "boring_money_fit": round(boring_money_fit, 4),
+            "incumbent_gap_score": round(incumbent_gap_score, 4),
+            "recurring_workflow_score": round(recurring_workflow_score, 4),
         },
         "hard_kill_reasons": hard_kill_reasons,
         "promote_checks": promote_checks,
@@ -3714,6 +3971,9 @@ def diagnose_stage_decision(
             "workaround_density": round(workaround_density, 4),
             "cost_of_inaction": round(cost_of_inaction, 4),
             "buildability": round(buildability, 4),
+            "boring_money_fit": round(boring_money_fit, 4),
+            "incumbent_gap_score": round(incumbent_gap_score, 4),
+            "recurring_workflow_score": round(recurring_workflow_score, 4),
         },
         "park_subreason_if_parked": decision.get("park_subreason") if decision.get("recommendation") == "park" else "",
     }

@@ -79,6 +79,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "evidence_quality": 0.7,
                 "value_support": 0.63,
                 "composite_score": 0.58,
+                "boring_money_fit": 0.71,
+                "incumbent_gap_score": 0.62,
+                "recurring_workflow_score": 0.68,
             },
             corroboration={
                 "corroboration_score": 0.72,
@@ -98,6 +101,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "evidence_quality": 0.45,
                 "value_support": 0.32,
                 "composite_score": 0.29,
+                "boring_money_fit": 0.21,
+                "incumbent_gap_score": 0.18,
+                "recurring_workflow_score": 0.24,
             },
             corroboration={
                 "corroboration_score": 0.41,
@@ -121,6 +127,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "composite_score": 0.43,
                 "cluster_signal_count": 1,
                 "cluster_atom_count": 1,
+                "boring_money_fit": 0.58,
+                "incumbent_gap_score": 0.49,
+                "recurring_workflow_score": 0.51,
             },
             corroboration={
                 "corroboration_score": 0.48,
@@ -145,6 +154,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "evidence_quality": 0.60,
                 "value_support": 0.45,
                 "composite_score": 0.20,
+                "boring_money_fit": 0.61,
+                "incumbent_gap_score": 0.52,
+                "recurring_workflow_score": 0.56,
             },
             corroboration={
                 "corroboration_score": 0.70,
@@ -159,6 +171,34 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertTrue(gate["eligible"])
         self.assertIn("validation_recommended_promote", gate["reasons"])
 
+    def test_selection_gate_blocks_promote_without_boring_money_fit(self):
+        status, reason, gate = determine_selection_state(
+            decision="promote",
+            scorecard={
+                "decision_score": 0.22,
+                "problem_truth_score": 0.14,
+                "revenue_readiness_score": 0.27,
+                "frequency_score": 0.32,
+                "evidence_quality": 0.63,
+                "value_support": 0.58,
+                "composite_score": 0.28,
+                "boring_money_fit": 0.24,
+                "incumbent_gap_score": 0.19,
+                "recurring_workflow_score": 0.26,
+            },
+            corroboration={
+                "corroboration_score": 0.72,
+                "source_family_diversity": 2,
+                "generalizability_class": "reusable_workflow_pain",
+                "recurrence_state": "supported",
+            },
+            market_enrichment={"wedge_active": False},
+        )
+        self.assertEqual(status, "research_more")
+        self.assertEqual(reason, "selection_gate_not_met")
+        self.assertIn("boring_money_fit_below_threshold", gate["blocked_by"])
+        self.assertIn("incumbent_gap_not_clear", gate["blocked_by"])
+
     def test_selection_gate_allows_multifamily_near_miss_prototype_candidate(self):
         status, reason, gate = determine_selection_state(
             decision="park",
@@ -166,6 +206,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "evidence_quality": 0.4511,
                 "value_support": 0.6015,
                 "composite_score": 0.3468,
+                "boring_money_fit": 0.57,
+                "incumbent_gap_score": 0.44,
+                "recurring_workflow_score": 0.46,
             },
             corroboration={
                 "corroboration_score": 0.4215,
@@ -188,6 +231,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "evidence_quality": 0.53,
                 "value_support": 0.64,
                 "composite_score": 0.43,
+                "boring_money_fit": 0.62,
+                "incumbent_gap_score": 0.49,
+                "recurring_workflow_score": 0.47,
             },
             corroboration={
                 "corroboration_score": 0.48,
@@ -213,6 +259,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "workaround_density": 0.41,
                 "cost_of_inaction": 0.48,
                 "buildability": 0.61,
+                "boring_money_fit": 0.5,
+                "incumbent_gap_score": 0.38,
+                "recurring_workflow_score": 0.39,
             },
             corroboration={
                 "corroboration_score": 0.24,
@@ -240,6 +289,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "composite_score": 0.3939,
                 "cluster_signal_count": 2,
                 "cluster_atom_count": 2,
+                "boring_money_fit": 0.57,
+                "incumbent_gap_score": 0.41,
+                "recurring_workflow_score": 0.41,
             },
             corroboration={
                 "corroboration_score": 0.534,
@@ -266,6 +318,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "composite_score": 0.4102,
                 "cluster_signal_count": 2,
                 "cluster_atom_count": 2,
+                "boring_money_fit": 0.56,
+                "incumbent_gap_score": 0.4,
+                "recurring_workflow_score": 0.4,
             },
             corroboration={
                 "corroboration_score": 0.4569,

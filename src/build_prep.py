@@ -549,6 +549,33 @@ def determine_selection_state(
     workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
     cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
     buildability = float(scorecard.get("buildability", 0.0) or 0.0)
+    recurring_workflow_score = float(
+        scorecard.get(
+            "recurring_workflow_score",
+            min(1.0, frequency_score * 0.65 + cost_of_inaction * 0.2),
+        )
+        or 0.0
+    )
+    incumbent_gap_score = float(
+        scorecard.get(
+            "incumbent_gap_score",
+            min(1.0, workaround_density * 0.65 + value_support * 0.15 + frequency_score * 0.1),
+        )
+        or 0.0
+    )
+    boring_money_fit = float(
+        scorecard.get(
+            "boring_money_fit",
+            min(
+                1.0,
+                incumbent_gap_score * 0.42
+                + recurring_workflow_score * 0.30
+                + value_support * 0.16
+                + cost_of_inaction * 0.12,
+            ),
+        )
+        or 0.0
+    )
     cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
     generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
     wedge_active = bool(market_enrichment.get("wedge_active"))
@@ -587,6 +614,21 @@ def determine_selection_state(
     else:
         blocked_by.append("value_support_below_threshold")
 
+    if boring_money_fit >= 0.55:
+        reasons.append("boring_money_fit_threshold_met")
+    else:
+        blocked_by.append("boring_money_fit_below_threshold")
+
+    if incumbent_gap_score >= 0.4:
+        reasons.append("incumbent_gap_threshold_met")
+    else:
+        blocked_by.append("incumbent_gap_not_clear")
+
+    if recurring_workflow_score >= 0.42:
+        reasons.append("recurring_workflow_threshold_met")
+    else:
+        blocked_by.append("recurring_workflow_not_clear")
+
     if evidence_quality >= 0.6:
         reasons.append("evidence_quality_threshold_met")
     else:
@@ -607,6 +649,9 @@ def determine_selection_state(
         and core_family_diversity >= 2
         and corroboration_score >= 0.3
         and evidence_quality >= 0.4
+        and boring_money_fit >= 0.5
+        and incumbent_gap_score >= 0.36
+        and recurring_workflow_score >= 0.36
     )
 
     if decision == "promote" and promote_requalified:
@@ -627,6 +672,9 @@ def determine_selection_state(
         and core_family_diversity >= 2
         and corroboration_score >= 0.6
         and value_support >= 0.55
+        and boring_money_fit >= 0.55
+        and incumbent_gap_score >= 0.4
+        and recurring_workflow_score >= 0.42
         and evidence_quality >= 0.6
         and composite_score >= 0.5
     )
@@ -650,6 +698,9 @@ def determine_selection_state(
         and generalizability_score >= 0.58
         and frequency_score >= 0.25
         and value_support >= 0.46
+        and boring_money_fit >= 0.46
+        and incumbent_gap_score >= 0.34
+        and recurring_workflow_score >= 0.34
         and evidence_quality >= 0.42
         and composite_score >= 0.31
         and workaround_density >= 0.34
@@ -666,6 +717,9 @@ def determine_selection_state(
                 and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
                 and corroboration_score >= 0.25
                 and value_support >= 0.55
+                and boring_money_fit >= 0.48
+                and incumbent_gap_score >= 0.34
+                and recurring_workflow_score >= 0.36
                 and evidence_quality >= 0.45
                 and composite_score >= 0.34
             )
@@ -677,6 +731,9 @@ def determine_selection_state(
                 and exploratory_recurrence_ok
                 and corroboration_score >= 0.3
                 and value_support >= 0.5
+                and boring_money_fit >= 0.5
+                and incumbent_gap_score >= 0.36
+                and recurring_workflow_score >= 0.38
                 and evidence_quality >= 0.49
                 and composite_score >= 0.39
             )
@@ -764,6 +821,33 @@ def explain_selection_gate_detail(
     workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
     cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
     buildability = float(scorecard.get("buildability", 0.0) or 0.0)
+    recurring_workflow_score = float(
+        scorecard.get(
+            "recurring_workflow_score",
+            min(1.0, frequency_score * 0.65 + cost_of_inaction * 0.2),
+        )
+        or 0.0
+    )
+    incumbent_gap_score = float(
+        scorecard.get(
+            "incumbent_gap_score",
+            min(1.0, workaround_density * 0.65 + value_support * 0.15 + frequency_score * 0.1),
+        )
+        or 0.0
+    )
+    boring_money_fit = float(
+        scorecard.get(
+            "boring_money_fit",
+            min(
+                1.0,
+                incumbent_gap_score * 0.42
+                + recurring_workflow_score * 0.30
+                + value_support * 0.16
+                + cost_of_inaction * 0.12,
+            ),
+        )
+        or 0.0
+    )
     cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
     generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
     wedge_active = bool(market_enrichment.get("wedge_active"))
@@ -786,6 +870,9 @@ def explain_selection_gate_detail(
         and generalizability_score >= 0.58
         and frequency_score >= 0.25
         and value_support >= 0.46
+        and boring_money_fit >= 0.46
+        and incumbent_gap_score >= 0.34
+        and recurring_workflow_score >= 0.34
         and evidence_quality >= 0.42
         and composite_score >= 0.31
         and workaround_density >= 0.34
@@ -831,6 +918,24 @@ def explain_selection_gate_detail(
             "need": ">= 0.6",
         },
         {
+            "id": "boring_money_fit",
+            "pass": boring_money_fit >= 0.55,
+            "actual": round(boring_money_fit, 4),
+            "need": ">= 0.55",
+        },
+        {
+            "id": "incumbent_gap_score",
+            "pass": incumbent_gap_score >= 0.4,
+            "actual": round(incumbent_gap_score, 4),
+            "need": ">= 0.4",
+        },
+        {
+            "id": "recurring_workflow_score",
+            "pass": recurring_workflow_score >= 0.42,
+            "actual": round(recurring_workflow_score, 4),
+            "need": ">= 0.42",
+        },
+        {
             "id": "composite_score",
             "pass": composite_score >= 0.5,
             "actual": round(composite_score, 4),
@@ -845,6 +950,9 @@ def explain_selection_gate_detail(
         and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
         and corroboration_score >= 0.25
         and value_support >= 0.55
+        and boring_money_fit >= 0.48
+        and incumbent_gap_score >= 0.34
+        and recurring_workflow_score >= 0.36
         and evidence_quality >= 0.45
         and composite_score >= 0.34
     )
@@ -855,6 +963,9 @@ def explain_selection_gate_detail(
         and exploratory_recurrence_ok
         and corroboration_score >= 0.3
         and value_support >= 0.5
+        and boring_money_fit >= 0.5
+        and incumbent_gap_score >= 0.36
+        and recurring_workflow_score >= 0.38
         and evidence_quality >= 0.49
         and composite_score >= 0.39
     )
@@ -874,6 +985,9 @@ def explain_selection_gate_detail(
                 "timeout_checkpoint_candidate": timeout_checkpoint_candidate,
                 "corroboration_floor": 0.25,
                 "value_support_floor": 0.55,
+                "boring_money_fit_floor": 0.48,
+                "incumbent_gap_floor": 0.34,
+                "recurring_workflow_floor": 0.36,
                 "evidence_quality_floor": 0.45,
                 "composite_floor": 0.34,
             },
@@ -888,7 +1002,13 @@ def explain_selection_gate_detail(
                 "workaround_density": round(workaround_density, 4),
                 "cost_of_inaction": round(cost_of_inaction, 4),
                 "buildability": round(buildability, 4),
+                "boring_money_fit": round(boring_money_fit, 4),
+                "incumbent_gap_score": round(incumbent_gap_score, 4),
+                "recurring_workflow_score": round(recurring_workflow_score, 4),
                 "value_support_floor": 0.46,
+                "boring_money_fit_floor": 0.46,
+                "incumbent_gap_floor": 0.34,
+                "recurring_workflow_floor": 0.34,
                 "evidence_quality_floor": 0.42,
                 "composite_floor": 0.31,
             },
@@ -900,6 +1020,9 @@ def explain_selection_gate_detail(
                 "requires_recurrence_ok_not_timeout_only": exploratory_recurrence_ok,
                 "corroboration_floor": 0.3,
                 "value_support_floor": 0.5,
+                "boring_money_fit_floor": 0.5,
+                "incumbent_gap_floor": 0.36,
+                "recurring_workflow_floor": 0.38,
                 "evidence_quality_floor": 0.49,
                 "composite_floor": 0.39,
             },

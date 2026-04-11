@@ -134,6 +134,96 @@ def _normalize_revalidation_notes(
     return notes
 
 
+def _derive_boring_money_scores_from_notes(
+    *,
+    title: str,
+    cluster_summary: dict | None,
+    scorecard: dict[str, float | int | str],
+) -> dict[str, float]:
+    text_parts = [title]
+    summary = dict(cluster_summary or {})
+    for key in ("dominant_workaround", "dominant_failure", "cluster_context", "job_to_be_done", "user_role"):
+        value = summary.get(key)
+        if isinstance(value, str):
+            text_parts.append(value)
+    for key in ("sample_pains", "sample_failures"):
+        values = summary.get(key) or []
+        if isinstance(values, list):
+            text_parts.extend(str(item) for item in values[:3])
+    text = " ".join(part for part in text_parts if part).lower()
+
+    incumbent_terms = (
+        "spreadsheet",
+        "excel",
+        "csv",
+        "quickbooks",
+        "xero",
+        "netsuite",
+        "erp",
+        "crm",
+        "workbook",
+        "contract rules",
+        "pdf",
+    )
+    workaround_terms = (
+        "manual",
+        "manually",
+        "reconcile",
+        "reconciliation",
+        "audit",
+        "cross-check",
+        "review before sending",
+        "rules tab",
+        "export",
+        "import",
+    )
+    recurring_terms = (
+        "month-end",
+        "monthly",
+        "every month",
+        "weekly",
+        "every week",
+        "billing",
+        "invoice",
+        "usage",
+        "contract",
+        "renewal",
+        "close",
+        "reconciliation",
+    )
+
+    frequency_score = float(scorecard.get("frequency_score", 0.0) or 0.0)
+    cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
+    value_support = float(scorecard.get("value_support", 0.0) or 0.0)
+
+    incumbent_gap_score = min(
+        1.0,
+        0.05
+        + (0.28 if any(term in text for term in incumbent_terms) else 0.0)
+        + (0.24 if any(term in text for term in workaround_terms) else 0.0)
+        + value_support * 0.12,
+    )
+    recurring_workflow_score = min(
+        1.0,
+        0.08
+        + (0.26 if any(term in text for term in recurring_terms) else 0.0)
+        + frequency_score * 0.30
+        + cost_of_inaction * 0.14,
+    )
+    boring_money_fit = min(
+        1.0,
+        incumbent_gap_score * 0.42
+        + recurring_workflow_score * 0.30
+        + value_support * 0.16
+        + cost_of_inaction * 0.12,
+    )
+    return {
+        "boring_money_fit": round(boring_money_fit, 4),
+        "incumbent_gap_score": round(incumbent_gap_score, 4),
+        "recurring_workflow_score": round(recurring_workflow_score, 4),
+    }
+
+
 def build_discovery_sort_diagnostics(db, *, limit: int = 500, run_id: str = "") -> dict:
     """Summarize which Reddit sort modes are yielding findings."""
     findings = db.get_findings(limit=limit) if db else []
@@ -865,6 +955,7 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
                 continue
 
             notes = opportunity.notes or {}
+            prior_scorecard = notes.get("scorecard", {}) or {}
             cluster_summary = notes.get("cluster_summary", {}) or {}
             market_gap = notes.get("market_gap") or {"market_gap": opportunity.market_gap}
             counterevidence = notes.get("counterevidence", []) or []
@@ -906,6 +997,23 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
                 "cluster_signal_count": cluster_signal_count,
                 "cluster_atom_count": cluster_atom_count,
             }
+            boring_triplet = {
+                key: prior_scorecard.get(key)
+                for key in ("boring_money_fit", "incumbent_gap_score", "recurring_workflow_score")
+                if prior_scorecard.get(key) is not None
+            }
+            boring_triplet_all_zero = bool(boring_triplet) and all(abs(float(value or 0.0)) < 1e-9 for value in boring_triplet.values())
+            if not boring_triplet_all_zero:
+                for key, value in boring_triplet.items():
+                    scorecard[key] = value
+            else:
+                scorecard.update(
+                    _derive_boring_money_scores_from_notes(
+                        title=opportunity.title,
+                        cluster_summary=cluster_summary,
+                        scorecard=scorecard,
+                    )
+                )
             cluster_atoms = db.get_problem_atoms_by_cluster_key(cluster_record.cluster_key) if cluster_record and cluster_record.cluster_key else []
             cluster_signals = db.get_raw_signals_by_ids([atom.signal_id for atom in cluster_atoms if atom.signal_id]) if cluster_atoms else []
             resolved_signals = [signal for signal in cluster_signals if signal is not None]

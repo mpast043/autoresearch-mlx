@@ -50,3 +50,23 @@ def test_normalize_revalidation_notes_refreshes_versions_and_cluster_counts():
         "formula_version": "pts_rrs_v1",
         "threshold_version": "2026_q2",
     }
+
+
+def test_derive_boring_money_scores_from_notes_detects_recurring_tool_gap():
+    derived = cli._derive_boring_money_scores_from_notes(
+        title="Contract reconciliation still happens in Excel at month-end",
+        cluster_summary={
+            "dominant_workaround": "Contract Rules tab in a master billing workbook",
+            "dominant_failure": "Manual reconciliation of usage invoices",
+            "cluster_context": "Billing ops cross-checks CSV exports against contract PDFs before sending invoices",
+        },
+        scorecard={
+            "frequency_score": 0.42,
+            "cost_of_inaction": 0.54,
+            "value_support": 0.47,
+        },
+    )
+
+    assert derived["boring_money_fit"] >= 0.5
+    assert derived["incumbent_gap_score"] >= 0.5
+    assert derived["recurring_workflow_score"] >= 0.4

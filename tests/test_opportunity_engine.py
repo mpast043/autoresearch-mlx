@@ -1263,3 +1263,84 @@ def test_score_opportunity_lifts_ops_and_compliance_value_support():
     # from these calculations. The new values reflect corrected scoring without inflation.
     assert scorecard["operational_value_lift"] > 0.05  # Reduced from 0.25 due to bug fix
     assert scorecard["value_support"] > 0.30  # Reduced from 0.5 due to bug fix
+
+
+def test_score_opportunity_emits_boring_money_fit_for_recurring_tool_gap():
+    atom = ProblemAtom(
+        signal_id=2,
+        finding_id=2,
+        cluster_key="billing|reconciliation|contracts",
+        segment="mid market billing operations",
+        user_role="billing manager",
+        job_to_be_done="reconcile monthly usage invoices before sending them",
+        trigger_event="at month-end before invoices go out",
+        pain_statement="Billing ops still checks contract rules manually before sending invoices.",
+        failure_mode="usage invoices mismatch contract tiers and overages",
+        current_workaround="manual audit tab, spreadsheet cross-check, csv export review",
+        current_tools="quickbooks, excel, contract pdfs",
+        urgency_clues="late",
+        frequency_clues="every month",
+        emotional_intensity=0.55,
+        cost_consequence_clues="write-offs, invoice disputes",
+        why_now_clues="month-end billing cycle",
+        confidence=0.82,
+        atom_json="{}",
+    )
+    signal = RawSignal(
+        finding_id=2,
+        source_name="reddit-problem",
+        source_type="forum",
+        source_url="https://reddit.com/r/accounting/comments/2",
+        title="Our billing team still reconciles usage invoices in Excel every month",
+        body_excerpt="QuickBooks stores the invoices but we still export csvs and cross-check the contract rules in a workbook before sending.",
+        quote_text="QuickBooks stores the invoices but we still export csvs and cross-check the contract rules in a workbook before sending.",
+        published_at=None,
+        role_hint="billing manager",
+        timestamp_hint="",
+        content_hash="boring-money-fit",
+        metadata={},
+        id=2,
+    )
+    cluster_summary = {"atom_count": 2, "signal_count": 2, "evidence_quality": 0.66}
+    validation_evidence = {
+        "scores": {
+            "problem_score": 0.5,
+            "feasibility_score": 0.7,
+            "value_score": 0.46,
+        },
+        "evidence": {
+            "recurrence_query_coverage": 0.45,
+            "recurrence_doc_count": 3,
+            "recurrence_domain_count": 2,
+            "recurrence_results_by_source": {"reddit": 2, "web": 1},
+        },
+        "corroboration": {
+            "corroboration_score": 0.52,
+            "evidence_sufficiency": 0.44,
+            "cross_source_match_score": 0.28,
+            "source_family_diversity": 2,
+            "core_source_family_diversity": 2,
+            "generalizability_score": 0.72,
+            "generalizability_penalty": 0.0,
+        },
+        "market_enrichment": {
+            "operational_buyer_score": 0.48,
+            "compliance_burden_score": 0.18,
+            "cost_pressure_score": 0.46,
+            "buyer_intent_score": 0.52,
+            "demand_score": 0.41,
+            "competition_score": 0.1,
+            "trend_score": 0.22,
+            "review_signal_score": 0.0,
+            "willingness_to_pay_signal": 0.12,
+            "wedge_value_lift": 0.0,
+            "multi_source_value_lift": 0.18,
+        },
+    }
+    market_gap = {"market_gap": "underserved_edge_case", "why_now_strength": 0.3}
+
+    scorecard = score_opportunity(atom, signal, cluster_summary, validation_evidence, market_gap)
+
+    assert scorecard["boring_money_fit"] >= 0.6
+    assert scorecard["incumbent_gap_score"] >= 0.6
+    assert scorecard["recurring_workflow_score"] >= 0.5
