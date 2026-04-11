@@ -9,8 +9,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REDDIT_PROBLEM_SUBREDDITS = ["accounting", "Bookkeeping", "Excel", "smallbusiness", "ecommerce", "shopify", "EtsySellers", "sysadmin"]
+DEFAULT_REDDIT_PROBLEM_SUBREDDITS = ["accounting", "Bookkeeping", "Excel", "smallbusiness", "smallbiz", "ecommerce", "shopify", "EtsySellers", "sysadmin"]
 DEFAULT_REDDIT_PROBLEM_KEYWORDS = [
+    "Invoice reconciliation",
+    "Payment reconciliation",
+    "Billing errors spreadsheet",
+    "Reconciliation workflow",
+    "Accounts receivable automation",
     # Mismatch-based keywords - platform specific failures
     "QuickBooks invoice does not match payment",
     "Shopify orders duplicated after import",
@@ -34,11 +39,17 @@ CURATED_OPERATOR_SUBREDDITS = [
     "Bookkeeping",
     "Excel",
     "smallbusiness",
+    "smallbiz",
     "ecommerce",
     "shopify",
     "EtsySellers",
 ]
 CURATED_OPERATOR_KEYWORDS = [
+    "Invoice reconciliation",
+    "Payment reconciliation",
+    "Billing errors spreadsheet",
+    "Reconciliation workflow",
+    "Accounts receivable automation",
     # Mismatch-based keywords
     "Invoice does not match payment",
     "Orders duplicated after import",

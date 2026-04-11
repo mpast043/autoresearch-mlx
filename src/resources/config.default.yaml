@@ -93,6 +93,8 @@ discovery:
     search_time_filter: year
     # true = search r/all to expand the discovery surface once dead niche lanes are retired.
     use_r_all: true
+    # Reddit /search.json time filter: hour|day|week|month|year|all — bias toward fresh URLs to avoid content-hash stalls.
+    search_time_filter: month
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
     max_subreddits_per_wave: 6
     max_keywords_per_wave: 6
@@ -109,6 +111,7 @@ discovery:
       - Bookkeeping
       - Excel
       - smallbusiness
+      - smallbiz
       - EtsySellers
       - ecommerce
       - shopify
@@ -130,6 +133,11 @@ discovery:
       - freelance
     problem_keywords:
       - "manual reconciliation"
+      - "invoice reconciliation"
+      - "payment reconciliation"
+      - "billing errors spreadsheet"
+      - "reconciliation workflow"
+      - "accounts receivable automation"
       - "spreadsheet reconciliation process"
       - "manual handoff workflow"
       - "month end close spreadsheet"

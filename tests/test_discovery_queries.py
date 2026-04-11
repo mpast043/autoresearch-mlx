@@ -26,6 +26,8 @@ def test_reddit_problem_keywords_merge_curated_operator_pack():
 
     assert keywords[0] == "manual reconciliation"
     assert "custom niche pain" in keywords
+    assert "Invoice reconciliation" in keywords
+    assert "Payment reconciliation" in keywords
     assert "Invoice does not match payment" in keywords
     assert "Orders duplicated after import" in keywords
     assert "CSV import creates duplicates" in keywords
@@ -50,7 +52,7 @@ def test_reddit_problem_subreddits_prioritize_practitioner_lanes_ahead_of_meta()
 
     subreddits = reddit_problem_subreddits(cfg)
 
-    assert subreddits[:7] == ["accounting", "Bookkeeping", "Excel", "smallbusiness", "ecommerce", "shopify", "EtsySellers"]
+    assert subreddits[:8] == ["accounting", "Bookkeeping", "Excel", "smallbusiness", "smallbiz", "ecommerce", "shopify", "EtsySellers"]
     assert subreddits.index("projectmanagement") > subreddits.index("shopify")
     assert subreddits.index("automation") > subreddits.index("EtsySellers")
 
@@ -66,4 +68,5 @@ def test_repo_config_defaults_bias_toward_reddit_only_discovery():
     assert discovery["candidate_filter"]["min_score"] == 2
     assert discovery["candidate_filter"]["behavioral_min_signals"] == 2
     assert discovery["reddit"]["use_r_all"] is True
+    assert discovery["reddit"]["search_time_filter"] == "month"
     assert discovery["reddit"]["search_sorts"] == ["new"]

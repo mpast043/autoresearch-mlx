@@ -96,7 +96,7 @@ discovery:
   # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
   reddit:
     # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
-    search_time_filter: year
+    search_time_filter: month
     # true = search r/all to expand the discovery surface once dead niche lanes are retired.
     use_r_all: true
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
@@ -115,6 +115,7 @@ discovery:
       - Bookkeeping
       - Excel
       - smallbusiness
+      - smallbiz
       - EtsySellers
       - ecommerce
       - shopify
@@ -136,6 +137,11 @@ discovery:
       - freelance
     problem_keywords:
       - "manual reconciliation"
+      - "invoice reconciliation"
+      - "payment reconciliation"
+      - "billing errors spreadsheet"
+      - "reconciliation workflow"
+      - "accounts receivable automation"
       - "spreadsheet reconciliation process"
       - "manual handoff workflow"
       - "month end close spreadsheet"
