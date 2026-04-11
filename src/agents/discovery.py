@@ -485,7 +485,7 @@ class DiscoveryAgent(BaseAgent):
         self._last_reddit_seed_summary: dict[str, Any] = {}
         self.bypass_cache = bypass_cache
         # Term lifecycle manager for forward+reverse search space control
-        self.term_lifecycle = TermLifecycleManager(db)
+        self.term_lifecycle = TermLifecycleManager(db, self.config)
         # LLM-driven discovery expansion
         self._llm_expansion_cycle = 0
         self._llm_expander: LLMDiscoveryExpander | None = None
@@ -1790,7 +1790,14 @@ class DiscoveryAgent(BaseAgent):
                 prototype_candidates=int(metrics["prototype_candidates"] or 0),
                 build_briefs=int(metrics["build_briefs"] or 0),
                 screened_out=int(metrics["screened_out"] or 0),
-                low_yield_count=int(existing.get("low_yield_count", 0) or 0),
+                low_yield_count=(
+                    max(
+                        int(existing.get("low_yield_count", 0) or 0),
+                        int(metrics["runs"] or 0),
+                    )
+                    if int(metrics["findings_emitted"] or 0) == 0
+                    else int(existing.get("low_yield_count", 0) or 0)
+                ),
                 noisy_count=int(existing.get("noisy_count", 0) or 0),
                 thin_validation_count=int(existing.get("thin_validation_count", 0) or 0),
                 avg_validation_score=(
@@ -1803,6 +1810,7 @@ class DiscoveryAgent(BaseAgent):
                     if metrics["screening_weight"]
                     else 0.0
                 ),
+                waves_since_state_change=0,
             )
             term_metrics.quality_score = calculate_quality_score(term_metrics)
 
@@ -1830,7 +1838,12 @@ class DiscoveryAgent(BaseAgent):
             )
 
             self.term_lifecycle.ensure_term_exists("keyword", keyword)
-            new_state, reason = compute_next_state(current_state, term_metrics, self.term_lifecycle.config)
+            new_state, reason = compute_next_state(
+                current_state,
+                term_metrics,
+                self.term_lifecycle.config,
+                term_value=keyword,
+            )
             self.db.update_search_term_state("keyword", keyword, new_state, notes=reason)
             self.db.update_search_term_metrics(
                 "keyword",

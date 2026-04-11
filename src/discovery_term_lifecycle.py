@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,7 @@ class TermMetrics:
     avg_validation_score: float = 0.0
     avg_screening_score: float = 0.0
     quality_score: float = 0.0
+    waves_since_state_change: int = 0
 
 
 @dataclass
@@ -151,15 +152,43 @@ class LifecycleConfig:
     # Exhaustion thresholds (weak -> exhausted or active -> exhausted)
     max_weak_runs_before_exhausted: int = 3
     max_failed_validations_before_exhausted: int = 3
+    max_zero_yield_runs_before_weak: int = 12
+    max_zero_yield_runs_before_exhausted: int = 40
+    max_discussion_fallback_zero_yield_runs: int = 6
 
     # Pausing thresholds (weak -> paused)
     max_low_yield_before_pause: int = 2
+    paused_cooldown_waves: int = 3
 
     # Completion threshold (active -> completed)
     min_build_briefs_for_completion: int = 1
 
     # Misc
     min_runs_for_assessment: int = 2
+
+    @classmethod
+    def from_mapping(cls, config: Mapping[str, Any] | None = None) -> "LifecycleConfig":
+        if not config:
+            return cls()
+
+        raw_section: Mapping[str, Any]
+        if "discovery" in config:
+            raw_section = (
+                config.get("discovery", {}).get("term_lifecycle", {})  # type: ignore[assignment]
+                if isinstance(config.get("discovery"), Mapping)
+                else {}
+            )
+        else:
+            raw_section = config.get("term_lifecycle", {}) if isinstance(config, Mapping) else {}
+
+        if not isinstance(raw_section, Mapping):
+            return cls()
+
+        values: dict[str, Any] = {}
+        for field_name in cls.__dataclass_fields__:
+            if field_name in raw_section:
+                values[field_name] = raw_section[field_name]
+        return cls(**values)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -172,7 +201,11 @@ class LifecycleConfig:
             "max_noisy_before_demotion": self.max_noisy_before_demotion,
             "max_weak_runs_before_exhausted": self.max_weak_runs_before_exhausted,
             "max_failed_validations_before_exhausted": self.max_failed_validations_before_exhausted,
+            "max_zero_yield_runs_before_weak": self.max_zero_yield_runs_before_weak,
+            "max_zero_yield_runs_before_exhausted": self.max_zero_yield_runs_before_exhausted,
+            "max_discussion_fallback_zero_yield_runs": self.max_discussion_fallback_zero_yield_runs,
             "max_low_yield_before_pause": self.max_low_yield_before_pause,
+            "paused_cooldown_waves": self.paused_cooldown_waves,
             "min_build_briefs_for_completion": self.min_build_briefs_for_completion,
             "min_runs_for_assessment": self.min_runs_for_assessment,
         }
@@ -207,6 +240,8 @@ def should_demote_to_weak(metrics: TermMetrics, config: LifecycleConfig = DEFAUL
     # Repeated low yield
     if metrics.low_yield_count >= config.max_low_yield_before_demotion:
         return True
+    if metrics.findings_emitted == 0 and metrics.times_searched >= config.max_zero_yield_runs_before_weak:
+        return True
     # Repeated noisy output
     if metrics.noisy_count >= config.max_noisy_before_demotion:
         return True
@@ -217,21 +252,42 @@ def should_demote_to_weak(metrics: TermMetrics, config: LifecycleConfig = DEFAUL
     return False
 
 
-def should_mark_exhausted(metrics: TermMetrics, current_state: str, config: LifecycleConfig = DEFAULT_CONFIG) -> bool:
+def should_mark_exhausted(
+    metrics: TermMetrics,
+    current_state: str,
+    config: LifecycleConfig = DEFAULT_CONFIG,
+    *,
+    term_value: str = "",
+) -> bool:
     """Determine if a term should be marked as exhausted."""
     if metrics.times_searched < config.min_runs_for_assessment:
         return False
 
+    normalized_term = term_value.strip().lower()
+    if (
+        normalized_term.endswith("[discussion-fallback]")
+        and metrics.findings_emitted == 0
+        and metrics.times_searched >= config.max_discussion_fallback_zero_yield_runs
+    ):
+        return True
+
     # From weak state: too many failed attempts
     if current_state == "weak":
+        if metrics.findings_emitted == 0 and metrics.times_searched >= config.max_zero_yield_runs_before_exhausted:
+            return True
         if metrics.low_yield_count + metrics.noisy_count >= config.max_weak_runs_before_exhausted:
             return True
 
-    # From active state: consistent failure after enough runs
-    if current_state == "active":
-        if metrics.times_searched >= config.max_runs_before_demotion * 2:
-            if metrics.findings_emitted == 0 and metrics.validations >= config.max_failed_validations_before_exhausted:
-                return True
+    # From active/used state: consistent failure after enough runs
+    if current_state in {"active", "used"}:
+        if metrics.findings_emitted == 0 and metrics.times_searched >= config.max_zero_yield_runs_before_exhausted:
+            return True
+        if (
+            metrics.times_searched >= config.max_runs_before_demotion * 2
+            and metrics.findings_emitted == 0
+            and metrics.validations >= config.max_failed_validations_before_exhausted
+        ):
+            return True
 
     return False
 
@@ -475,6 +531,8 @@ def compute_next_state(
     current_state: str,
     metrics: TermMetrics,
     config: LifecycleConfig = DEFAULT_CONFIG,
+    *,
+    term_value: str = "",
 ) -> tuple[str, str]:
     """Compute the next state for a term based on its metrics.
 
@@ -488,9 +546,19 @@ def compute_next_state(
 
     # From new state
     if current_state == "new":
-        if metrics.times_searched > 0:
+        if metrics.times_searched <= 0:
+            return ("new", "not yet searched")
+        if metrics.times_searched == 1:
             return ("active", "first use")
-        return ("new", "not yet searched")
+        if should_promote_to_high_performing(metrics, config):
+            return ("high_performing", "historical success on first sync - promoting to high_performing")
+        if should_mark_completed(metrics, config):
+            return ("completed", "historical build-worthy wedge on first sync")
+        if should_mark_exhausted(metrics, "active", config, term_value=term_value):
+            return ("exhausted", "historical zero-yield sync - marking exhausted")
+        if should_demote_to_weak(metrics, config):
+            return ("weak", "historical low-yield sync - demoting to weak")
+        return ("active", "historical search usage detected")
 
     # From active or used state - check for promotion
     if current_state in ("active", "used"):
@@ -498,10 +566,10 @@ def compute_next_state(
             return ("high_performing", "repeated success - promoting to high_performing")
         if should_mark_completed(metrics, config):
             return ("completed", "produced build-worthy wedge")
+        if should_mark_exhausted(metrics, current_state, config, term_value=term_value):
+            return ("exhausted", "consistent zero-yield after many runs - marking exhausted")
         if should_demote_to_weak(metrics, config):
             return ("weak", "repeated low-yield/noisy output - demoting to weak")
-        if should_mark_exhausted(metrics, current_state, config):
-            return ("exhausted", "consistent failure after many runs - marking exhausted")
         return (current_state, "no state change needed")
 
     # From high_performing - check for completion or demotion
@@ -509,13 +577,13 @@ def compute_next_state(
         if should_mark_completed(metrics, config):
             return ("completed", "produced build-worthy wedge")
         # Stay high_performing unless things go really bad
-        if should_mark_exhausted(metrics, current_state, config):
+        if should_mark_exhausted(metrics, current_state, config, term_value=term_value):
             return ("exhausted", "even high-performer exhausted after consistent failure")
         return ("high_performing", "still high-performing")
 
     # From weak state - check for pause or exhaustion
     if current_state == "weak":
-        if should_mark_exhausted(metrics, current_state, config):
+        if should_mark_exhausted(metrics, current_state, config, term_value=term_value):
             return ("exhausted", "too many weak runs - marking exhausted")
         if should_mark_paused(metrics, config):
             return ("paused", "pausing due to poor performance")
@@ -523,8 +591,8 @@ def compute_next_state(
 
     # From paused state - auto-reactivate after cooldown if metrics suggest viability
     if current_state == "paused":
-        cooldown_waves = config.get("lifecycle", {}).get("paused_cooldown_waves", 3)
-        waves_since_pause = metrics.get("waves_since_state_change", 0)
+        cooldown_waves = max(1, int(config.paused_cooldown_waves))
+        waves_since_pause = max(0, int(metrics.waves_since_state_change))
         if waves_since_pause >= cooldown_waves:
             return ("active", "auto-reactivated after cooldown period")
         return ("paused", f"paused - {cooldown_waves - waves_since_pause} waves until auto-reactivation")
@@ -562,9 +630,14 @@ def format_term_summary(term: dict[str, Any], metrics: Optional[TermMetrics] = N
 class TermLifecycleManager:
     """Manager for term lifecycle operations."""
 
-    def __init__(self, db, config: Optional[LifecycleConfig] = None):
+    def __init__(self, db, config: Optional[LifecycleConfig | Mapping[str, Any]] = None):
         self.db = db
-        self.config = config or DEFAULT_CONFIG
+        if isinstance(config, LifecycleConfig):
+            self.config = config
+        elif isinstance(config, Mapping):
+            self.config = LifecycleConfig.from_mapping(config)
+        else:
+            self.config = DEFAULT_CONFIG
 
     def ensure_term_exists(self, term_type: str, term_value: str) -> None:
         """Ensure a term exists in the database."""
@@ -609,11 +682,12 @@ class TermLifecycleManager:
             prototype_candidates=current.get("prototype_candidates", 0) + prototype_candidates if current else prototype_candidates,
             build_briefs=current.get("build_briefs", 0) + build_briefs if current else build_briefs,
             screened_out=current.get("screened_out", 0) + screened_out if current else screened_out,
-            low_yield_count=current.get("low_yield_count", 0) + (1 if low_yield else 0) if current else (1 if low_yield else 0),
+            low_yield_count=current.get("low_yield_count", 0) + (1 if low_yield or findings_emitted == 0 else 0) if current else (1 if low_yield or findings_emitted == 0 else 0),
             noisy_count=current.get("noisy_count", 0) + (1 if noisy else 0) if current else (1 if noisy else 0),
             thin_validation_count=current.get("thin_validation_count", 0) + (1 if thin_validation else 0) if current else (1 if thin_validation else 0),
             avg_validation_score=current.get("avg_validation_score", 0.0) if current else 0.0,
             avg_screening_score=current.get("avg_screening_score", 0.0) if current else 0.0,
+            waves_since_state_change=0,
         )
 
         # Calculate quality score
@@ -641,7 +715,7 @@ class TermLifecycleManager:
         )
 
         # Determine next state
-        new_state, reason = compute_next_state(current_state, metrics, self.config)
+        new_state, reason = compute_next_state(current_state, metrics, self.config, term_value=term_value)
 
         # Update in database
         self.db.update_search_term_state(term_type, term_value, new_state, notes=reason)

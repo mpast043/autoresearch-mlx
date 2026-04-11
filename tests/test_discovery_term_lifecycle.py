@@ -134,6 +134,51 @@ class TestStateTransitions:
         new_state, reason = compute_next_state("weak", metrics, config)
         assert new_state == "exhausted"
 
+    def test_active_zero_yield_term_exhausts_after_threshold(self):
+        """Long-running zero-yield terms should exhaust directly instead of lingering."""
+        config = LifecycleConfig(
+            min_runs_for_assessment=2,
+            max_zero_yield_runs_before_weak=4,
+            max_zero_yield_runs_before_exhausted=8,
+        )
+        metrics = TermMetrics(
+            times_searched=9,
+            findings_emitted=0,
+            validations=0,
+            low_yield_count=9,
+        )
+        new_state, reason = compute_next_state("active", metrics, config, term_value="manual workflow")
+        assert new_state == "exhausted"
+        assert "zero-yield" in reason
+
+    def test_discussion_fallback_term_exhausts_quickly(self):
+        """Discussion-fallback variants should retire quickly when they never produce findings."""
+        config = LifecycleConfig(
+            min_runs_for_assessment=2,
+            max_discussion_fallback_zero_yield_runs=3,
+        )
+        metrics = TermMetrics(
+            times_searched=3,
+            findings_emitted=0,
+            validations=0,
+            low_yield_count=3,
+        )
+        new_state, _ = compute_next_state(
+            "active",
+            metrics,
+            config,
+            term_value='"csv import workflow" [discussion-fallback]',
+        )
+        assert new_state == "exhausted"
+
+    def test_paused_state_uses_dataclass_fields_for_cooldown(self):
+        """Paused state transitions should use typed config and metrics, not dict access."""
+        config = LifecycleConfig(paused_cooldown_waves=2)
+        metrics = TermMetrics(times_searched=4, waves_since_state_change=2)
+        new_state, reason = compute_next_state("paused", metrics, config)
+        assert new_state == "active"
+        assert "auto-reactivated" in reason
+
     def test_banned_stays_banned(self):
         """Banned terms cannot be auto-transitioned."""
         metrics = TermMetrics(times_searched=10, prototype_candidates=5)
@@ -225,6 +270,22 @@ class TestTermLifecycleManager:
         )
         # Should demote to weak
         assert result2["new_state"] == "weak"
+
+    def test_manager_can_load_lifecycle_config_from_mapping(self, temp_db):
+        """Manager should honor discovery.term_lifecycle config mappings."""
+        manager = TermLifecycleManager(
+            temp_db,
+            {
+                "discovery": {
+                    "term_lifecycle": {
+                        "max_zero_yield_runs_before_exhausted": 5,
+                        "max_discussion_fallback_zero_yield_runs": 2,
+                    }
+                }
+            },
+        )
+        assert manager.config.max_zero_yield_runs_before_exhausted == 5
+        assert manager.config.max_discussion_fallback_zero_yield_runs == 2
 
     def test_ban_term(self, temp_db):
         """Manually banning a term sets state to banned."""
