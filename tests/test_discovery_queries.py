@@ -26,12 +26,11 @@ def test_reddit_problem_keywords_merge_curated_operator_pack():
 
     assert keywords[0] == "manual reconciliation"
     assert "custom niche pain" in keywords
-    assert "Invoice reconciliation" in keywords
-    assert "Payment reconciliation" in keywords
-    assert "Invoice does not match payment" in keywords
-    assert "Orders duplicated after import" in keywords
-    assert "CSV import creates duplicates" in keywords
-    assert "Reconciliation fails after import" in keywords
+    assert "invoice reconciliation" in keywords
+    assert "payment reconciliation" in keywords
+    assert "shopify payout reconciliation" in keywords
+    assert "bank deposits not matching invoices" in keywords
+    assert "credit memo tracking spreadsheet" in keywords
 
 
 def test_reddit_problem_subreddits_prioritize_practitioner_lanes_ahead_of_meta():
@@ -39,12 +38,11 @@ def test_reddit_problem_subreddits_prioritize_practitioner_lanes_ahead_of_meta()
         "discovery": {
             "reddit": {
                 "problem_subreddits": [
-                    "projectmanagement",
-                    "automation",
                     "accounting",
+                    "quickbooksonline",
                     "smallbusiness",
-                    "shopify",
-                    "indiehackers",
+                    "Bookkeeping",
+                    "Netsuite",
                 ]
             }
         }
@@ -52,9 +50,7 @@ def test_reddit_problem_subreddits_prioritize_practitioner_lanes_ahead_of_meta()
 
     subreddits = reddit_problem_subreddits(cfg)
 
-    assert subreddits[:8] == ["accounting", "Bookkeeping", "Excel", "smallbusiness", "smallbiz", "ecommerce", "shopify", "EtsySellers"]
-    assert subreddits.index("projectmanagement") > subreddits.index("shopify")
-    assert subreddits.index("automation") > subreddits.index("EtsySellers")
+    assert subreddits[:5] == ["accounting", "Bookkeeping", "quickbooksonline", "Netsuite", "smallbusiness"]
 
 
 def test_repo_config_defaults_bias_toward_reddit_only_discovery():
@@ -67,6 +63,15 @@ def test_repo_config_defaults_bias_toward_reddit_only_discovery():
     assert discovery["sources"] == ["reddit"]
     assert discovery["candidate_filter"]["min_score"] == 2
     assert discovery["candidate_filter"]["behavioral_min_signals"] == 2
-    assert discovery["reddit"]["use_r_all"] is True
+    assert discovery["auto_expand"] is False
+    assert discovery["llm_expansion"]["enabled"] is False
+    assert discovery["reddit"]["use_r_all"] is False
     assert discovery["reddit"]["search_time_filter"] == "month"
     assert discovery["reddit"]["search_sorts"] == ["new"]
+    assert discovery["reddit"]["problem_subreddits"] == [
+        "accounting",
+        "Bookkeeping",
+        "quickbooksonline",
+        "Netsuite",
+        "smallbusiness",
+    ]

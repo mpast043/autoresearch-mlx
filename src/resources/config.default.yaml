@@ -4,15 +4,15 @@ database:
   path: data/autoresearch.db
 
 discovery:
-  # Self-expanding discovery: automatically add new keywords/subreddits based on what works
-  auto_expand: true
+  # Narrow-mode discovery: stay in a single proven lane instead of broadening.
+  auto_expand: false
   exploration_slots_per_cycle: 1
   max_queries_per_concept: 1
   query_family_decay_hours: 18
   query_family_decay_min_queries: 2
   source_selection:
     always_run: ["reddit"]
-    exploratory_low_yield_sources_per_cycle: 1
+    exploratory_low_yield_sources_per_cycle: 0
     low_yield_min_runs: 50
   expansion:
     max_keywords_per_wave: 8
@@ -26,7 +26,7 @@ discovery:
     paused_cooldown_waves: 3
 
   llm_expansion:
-    enabled: true
+    enabled: false
     trigger_after_cycles: 1
     trigger_interval_cycles: 1
     max_proposed_spaces: 4
@@ -89,14 +89,12 @@ discovery:
 
   # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
   reddit:
-    # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
-    search_time_filter: year
-    # true = search r/all to expand the discovery surface once dead niche lanes are retired.
-    use_r_all: true
     # Reddit /search.json time filter: hour|day|week|month|year|all — bias toward fresh URLs to avoid content-hash stalls.
     search_time_filter: month
+    # Stay inside curated operator communities for this narrow pass.
+    use_r_all: false
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
-    max_subreddits_per_wave: 6
+    max_subreddits_per_wave: 5
     max_keywords_per_wave: 6
     pair_concurrency: 3
     # Prime only a small, diversified relay seed set per run.
@@ -109,45 +107,24 @@ discovery:
     problem_subreddits:
       - accounting
       - Bookkeeping
-      - Excel
+      - quickbooksonline
+      - Netsuite
       - smallbusiness
-      - smallbiz
-      - EtsySellers
-      - ecommerce
-      - shopify
-      - projectmanagement
-      - automation
-      - sysadmin
-      - msp
-      - devops
-      - notion
-      - airtable
-      - webdev
-      - selfhosted
-      - sales
-      - productivity
-      - Entrepreneur
-      - indiehackers
-      - SaaS
-      - startups
-      - freelance
     problem_keywords:
       - "manual reconciliation"
       - "invoice reconciliation"
       - "payment reconciliation"
-      - "billing errors spreadsheet"
-      - "reconciliation workflow"
-      - "accounts receivable automation"
-      - "spreadsheet reconciliation process"
-      - "manual handoff workflow"
+      - "shopify payout reconciliation"
+      - "stripe payout reconciliation"
+      - "quickbooks reconciliation"
+      - "bank deposit reconciliation"
       - "month end close spreadsheet"
-      - "sales channel reconciliation spreadsheet"
-      - "bank deposit reconciliation spreadsheet"
-      - "returns workflow spreadsheet"
-      - "supplier data spreadsheet workflow"
-      - '"order received" "label printed" whatsapp spreadsheet'
-      - "held together by spreadsheets"
-      - "copy paste workflow"
+      - "invoice does not match payment"
+      - "bank deposits not matching invoices"
+      - "partial payment reconciliation"
+      - "csv cleanup before import"
+      - "accounts receivable follow up spreadsheet"
+      - "credit memo tracking spreadsheet"
     # Optional buckets for suggest-discovery to return per-theme keyword hints.
     theme_keywords:
       saas:
