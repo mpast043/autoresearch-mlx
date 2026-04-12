@@ -15,6 +15,8 @@ from src.llm_discovery_expander import (
     LLMClient,
     LLMDiscoveryExpander,
     _extract_json,
+    _build_lane_signature,
+    _proposal_matches_lane,
     SPACE_PROPOSAL_SYSTEM,
     SPACE_PROPOSAL_USER,
     QUERY_DERIVATION_SYSTEM,
@@ -195,6 +197,7 @@ class TestLLMDiscoveryExpander(unittest.TestCase):
         assert context["opportunities"] == []
         assert len(context["strong_findings"]) == 1
         assert context["strong_findings"][0]["title"] == "Sunday-night spreadsheet reconciliation"
+        assert "reconciliation" in context["lane_signature"]["anchor_terms"]
 
     def test_gather_context_skips_business_risk_strong_findings_without_operational_failure_shape(self) -> None:
         self.db.insert_finding(
@@ -309,6 +312,82 @@ class TestLLMDiscoveryExpander(unittest.TestCase):
         })
         spaces = self.expander.parse_proposals(raw)
         assert spaces[0].space_key == "tax_compliance"  # special chars stripped
+
+    def test_build_lane_signature_extracts_same_lane_anchor_terms(self) -> None:
+        context = {
+            "opportunities": [
+                {"title": "Shopify payout reconciliation backlog"},
+            ],
+            "strong_findings": [
+                {
+                    "title": "Invoice mismatch cleanup before close",
+                    "summary": "Finance team rebuilds payout to invoice matching before month-end close.",
+                }
+            ],
+        }
+
+        signature = _build_lane_signature(context)
+
+        assert "reconciliation" in signature["anchor_terms"]
+        assert "invoice" in signature["anchor_terms"]
+        assert "payout" in signature["anchor_terms"]
+
+    def test_proposal_matches_lane_requires_anchor_overlap(self) -> None:
+        lane_signature = {"anchor_terms": ["reconciliation", "invoice", "payment", "payout"]}
+
+        assert _proposal_matches_lane(
+            {
+                "label": "Stripe payout reconciliation",
+                "description": "Invoice and payout matching failures at close",
+                "keywords": ["invoice payout reconciliation"],
+            },
+            lane_signature,
+        )
+        assert not _proposal_matches_lane(
+            {
+                "label": "Construction submittal document version control",
+                "description": "Track revisions across subcontractor packages",
+                "keywords": ["submittal revision tracking"],
+            },
+            lane_signature,
+        )
+
+    def test_parse_proposals_rejects_out_of_lane_adjacent_space(self) -> None:
+        raw = json.dumps(
+            {
+                "proposed_spaces": [
+                    {
+                        "space_key": "construction_submittal_document_version_control",
+                        "label": "Construction submittal document version control",
+                        "description": "Version drift in subcontractor document packages",
+                        "semantic_summary": "Construction teams lose track of submittal revisions",
+                        "keywords": ["construction submittal revision control"],
+                        "subreddits": ["construction"],
+                        "web_queries": ["construction submittal revision control"],
+                        "github_queries": [],
+                        "adjacent_spaces": [],
+                    },
+                    {
+                        "space_key": "payment_reconciliation_exceptions",
+                        "label": "Payment reconciliation exceptions",
+                        "description": "Payout and invoice mismatches during close",
+                        "semantic_summary": "Finance teams rebuild payment to invoice matches",
+                        "keywords": ["invoice payment reconciliation", "payout mismatch close"],
+                        "subreddits": ["accounting"],
+                        "web_queries": ["invoice payment reconciliation exceptions"],
+                        "github_queries": [],
+                        "adjacent_spaces": [],
+                    },
+                ]
+            }
+        )
+
+        spaces = self.expander.parse_proposals(
+            raw,
+            lane_signature={"anchor_terms": ["reconciliation", "invoice", "payment", "payout"]},
+        )
+
+        assert [space.space_key for space in spaces] == ["payment_reconciliation_exceptions"]
 
     def test_register_space_and_terms(self) -> None:
         space = ProblemSpace(
@@ -530,6 +609,47 @@ async def test_expand_after_validation_can_use_strong_recent_findings_without_op
 
     assert len(new_spaces) == 1
     assert new_spaces[0].space_key == "deposit_reconciliation_backlog"
+
+
+@pytest.mark.asyncio
+async def test_expand_after_validation_rejects_out_of_lane_proposals(expander_with_db):
+    db, expander = expander_with_db
+    db.insert_finding(
+        Finding(
+            source="reddit-problem/accounting",
+            source_url="https://reddit.com/r/accounting/comments/finding-seed-2",
+            product_built="Weekend invoice reconciliation cleanup",
+            outcome_summary="Finance team manually matches payout deposits to invoices before close.",
+            content_hash="finding-seed-2",
+            status="promoted",
+            finding_kind="problem_signal",
+            source_class="pain_signal",
+            evidence={"high_leverage": {"score": 0.72, "status": "candidate"}},
+        )
+    )
+
+    with patch.object(LLMClient, "agenerate", new_callable=AsyncMock) as mock_agenerate:
+        mock_agenerate.return_value = json.dumps(
+            {
+                "proposed_spaces": [
+                    {
+                        "space_key": "construction_submittal_document_version_control",
+                        "label": "Construction submittal document version control",
+                        "description": "Track revisions across subcontractor packages",
+                        "semantic_summary": "Construction teams lose track of submittal revisions",
+                        "keywords": ["construction submittal revision control"],
+                        "subreddits": ["construction"],
+                        "web_queries": ["construction submittal revision control"],
+                        "github_queries": [],
+                        "adjacent_spaces": [],
+                    }
+                ]
+            }
+        )
+
+        new_spaces = await expander.expand_after_validation()
+
+    assert new_spaces == []
 
 
 @pytest.mark.asyncio

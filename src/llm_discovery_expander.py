@@ -15,6 +15,7 @@ import logging
 import re
 import time
 import asyncio
+from collections import Counter
 from typing import Any
 
 from src.problem_space import (
@@ -72,13 +73,23 @@ propose NEW adjacent problem spaces to explore.
 Rules:
 - Each problem space must be a NARROW, SPECIFIC problem domain that could
   sustain a plugin, add-on, or microSaaS product.
+- DEEPEN WINNING LANES instead of proposing adjacent markets.
+- Stay in the SAME buyer/workflow lane as the supplied opportunities and
+  strong findings. Preserve buyer type, workflow phase, data artifacts, and
+  incumbent systems where possible.
+- Prefer tighter variants such as: same workflow but different channel,
+  same reconciliation but different document type, same close process but a
+  sharper exception case.
 - AVOID vague spaces like "productivity", "workflow automation", "data sync".
+- DO NOT jump to different industries, compliance domains, construction,
+  facilities, warranty tracking, or other neighboring admin categories unless
+  the supplied lane anchors explicitly point there.
 - PREFER spaces with: concrete failure modes, specific user roles, clear
   trigger events, measurable consequences (costs, errors, delays).
 - Each space MUST include 5-10 specific search keywords, 3-5 relevant
   subreddits, and 3-5 web search queries.
-- Spaces MUST be adjacent to or divergent from current validated
-  opportunities, NOT rephrasings of existing spaces.
+- Spaces MUST be same-lane narrowings of current validated opportunities or
+  strong findings, NOT adjacent/divergent market brainstorms.
 - Output ONLY valid JSON. No markdown. No prose."""
 
 SPACE_PROPOSAL_USER = """\
@@ -87,6 +98,9 @@ SPACE_PROPOSAL_USER = """\
 
 ## Strong Recent Pain Findings
 {strong_findings_table}
+
+## Winning Lane Anchors
+{lane_anchor_table}
 
 ## Currently Exploring Problem Spaces
 {current_spaces_table}
@@ -97,11 +111,11 @@ SPACE_PROPOSAL_USER = """\
 ## Search Coverage So Far
 {search_coverage}
 
-Based on the above, propose 2-4 NEW problem spaces adjacent to the validated
-opportunities. Focus on:
-1. Problems adjacent to validated pain points that share similar users
-2. Trigger events that cause related failures
-3. Underserved niches where current keywords have low coverage
+Based on the above, propose 2-4 NEW problem spaces that DEEPEN the same lane.
+Focus on:
+1. Tighter failure modes inside the same buyer/workflow lane
+2. Different channels, edge cases, or exception paths within the same workflow
+3. Underserved same-lane variants where current keywords have low coverage
 
 Output ONLY the JSON object with this exact structure:
 {{
@@ -221,6 +235,61 @@ STRONG_FINDING_BUSINESS_RISK_TERMS = [
     "structuring msp business",
     "se fue un cliente",
 ]
+
+LANE_TOKEN_STOPWORDS = {
+    "about",
+    "across",
+    "after",
+    "almost",
+    "around",
+    "automation",
+    "automations",
+    "business",
+    "businesses",
+    "cleanup",
+    "close",
+    "company",
+    "customer",
+    "customers",
+    "daily",
+    "data",
+    "doing",
+    "every",
+    "error",
+    "errors",
+    "finance",
+    "founder",
+    "founders",
+    "issue",
+    "issues",
+    "manual",
+    "manually",
+    "monthly",
+    "operator",
+    "operators",
+    "operations",
+    "owner",
+    "owners",
+    "pain",
+    "problem",
+    "problems",
+    "process",
+    "processes",
+    "software",
+    "spreadsheet",
+    "spreadsheets",
+    "still",
+    "system",
+    "systems",
+    "team",
+    "teams",
+    "their",
+    "tool",
+    "tools",
+    "using",
+    "workflow",
+    "workflows",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +495,55 @@ def _is_operational_strong_finding(finding: Any) -> bool:
     return True
 
 
+def _lane_tokens(text: str) -> list[str]:
+    tokens = re.findall(r"[a-z]{4,}", (text or "").lower())
+    return [token for token in tokens if token not in LANE_TOKEN_STOPWORDS]
+
+
+def _build_lane_signature(context: dict[str, Any]) -> dict[str, Any]:
+    counter: Counter[str] = Counter()
+    anchor_sources: list[str] = []
+
+    for opp in context.get("opportunities", []):
+        title = str(opp.get("title", "") or "")
+        counter.update(_lane_tokens(title))
+        if title:
+            anchor_sources.append(title[:120])
+
+    for finding in context.get("strong_findings", []):
+        title = str(finding.get("title", "") or "")
+        summary = str(finding.get("summary", "") or "")
+        counter.update(_lane_tokens(title))
+        counter.update(_lane_tokens(summary))
+        if title:
+            anchor_sources.append(title[:120])
+
+    anchor_terms = [term for term, _count in counter.most_common(12)]
+    return {
+        "anchor_terms": anchor_terms,
+        "anchor_titles": anchor_sources[:6],
+    }
+
+
+def _proposal_matches_lane(proposal: dict[str, Any], lane_signature: dict[str, Any] | None) -> bool:
+    anchor_terms = list((lane_signature or {}).get("anchor_terms") or [])
+    if len(anchor_terms) < 2:
+        return True
+
+    proposal_parts = [
+        str(proposal.get("space_key", "") or ""),
+        str(proposal.get("label", "") or ""),
+        str(proposal.get("description", "") or ""),
+        str(proposal.get("semantic_summary", "") or ""),
+        " ".join(_normalize_string_list(proposal.get("keywords", []))),
+        " ".join(_normalize_string_list(proposal.get("web_queries", []))),
+        " ".join(_normalize_string_list(proposal.get("github_queries", []))),
+    ]
+    proposal_text = " ".join(part for part in proposal_parts if part).lower()
+    overlap = [term for term in anchor_terms if term in proposal_text]
+    return len(set(overlap)) >= 2
+
+
 # ---------------------------------------------------------------------------
 # LLMDiscoveryExpander
 # ---------------------------------------------------------------------------
@@ -527,6 +645,12 @@ class LLMDiscoveryExpander:
             "strong_findings": strong_finding_rows,
             "active_spaces": space_rows,
             "exhausted_space_keys": exhausted_keys,
+            "lane_signature": _build_lane_signature(
+                {
+                    "opportunities": opp_rows,
+                    "strong_findings": strong_finding_rows,
+                }
+            ),
             "search_coverage": {
                 "keywords_sample": keywords,
                 "subreddits_sample": subreddits,
@@ -552,6 +676,11 @@ class LLMDiscoveryExpander:
             )
         strong_findings_table = "\n".join(finding_lines) if finding_lines else "No strong recent pain findings."
 
+        lane_signature = context.get("lane_signature", {}) or {}
+        lane_terms = ", ".join(lane_signature.get("anchor_terms", [])[:10]) or "No lane anchors yet."
+        lane_titles = "\n".join(f"  - {title}" for title in lane_signature.get("anchor_titles", [])[:4])
+        lane_anchor_table = f"Anchor terms: {lane_terms}\nExample source titles:\n{lane_titles or '  - None'}"
+
         # Format current spaces table
         space_lines = []
         for space in context["active_spaces"]:
@@ -576,6 +705,7 @@ class LLMDiscoveryExpander:
         user_prompt = SPACE_PROPOSAL_USER.format(
             opportunities_table=opportunities_table,
             strong_findings_table=strong_findings_table,
+            lane_anchor_table=lane_anchor_table,
             current_spaces_table=current_spaces_table,
             exhausted_spaces_table=exhausted_table,
             search_coverage=search_coverage,
@@ -583,7 +713,7 @@ class LLMDiscoveryExpander:
 
         return SPACE_PROPOSAL_SYSTEM, user_prompt
 
-    def parse_proposals(self, raw: str) -> list[ProblemSpace]:
+    def parse_proposals(self, raw: str, lane_signature: dict[str, Any] | None = None) -> list[ProblemSpace]:
         """Parse LLM response into ProblemSpace objects."""
         data = _extract_json(raw)
         if not data:
@@ -599,6 +729,12 @@ class LLMDiscoveryExpander:
         spaces = []
         for proposal in proposals:
             if not isinstance(proposal, dict):
+                continue
+            if not _proposal_matches_lane(proposal, lane_signature):
+                logger.info(
+                    "Rejected out-of-lane LLM problem space proposal: %s",
+                    proposal.get("space_key") or proposal.get("label") or "<unknown>",
+                )
                 continue
             space_key = proposal.get("space_key", "")
             if not space_key:
@@ -767,7 +903,7 @@ class LLMDiscoveryExpander:
             return []
 
         # Step 3: Parse proposals
-        proposed_spaces = self.parse_proposals(raw)
+        proposed_spaces = self.parse_proposals(raw, context.get("lane_signature"))
         if not proposed_spaces:
             logger.info("LLM proposed no new problem spaces")
             return []
