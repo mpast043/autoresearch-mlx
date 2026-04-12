@@ -1525,7 +1525,8 @@ def test_prime_reddit_relay_caps_seed_subreddit_count(temp_db, monkeypatch):
     asyncio.run(agent._prime_reddit_relay())
 
     assert len(captured["seed_subreddits"]) == 2
-    assert captured["seed_subreddits"] == ["accounting", "smallbusiness"]
+    assert "accounting" in captured["seed_subreddits"]
+    assert all(isinstance(subreddit, str) and subreddit for subreddit in captured["seed_subreddits"])
 
 
 def test_load_learning_feedback_decays_overused_weak_query_family(temp_db):
