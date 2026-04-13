@@ -1479,6 +1479,22 @@ class Database:
         if not getattr(self._local, "batch_depth", 0):
             self._commit(conn)
 
+    def update_finding_screening(
+        self,
+        finding_id: int,
+        *,
+        status: str,
+        source_class: str,
+        evidence: dict[str, Any],
+    ) -> None:
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE findings SET status = ?, source_class = ?, evidence_json = ? WHERE id = ?",
+            (status, source_class, _json_dumps(evidence or {}), finding_id),
+        )
+        if not getattr(self._local, "batch_depth", 0):
+            self._commit(conn)
+
     def requalify_finding_for_evidence(
         self,
         finding_id: int,

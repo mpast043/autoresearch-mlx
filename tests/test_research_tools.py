@@ -287,6 +287,42 @@ def test_specific_manual_candidate_gets_expanded_recurrence_budget():
     assert profile["site_limit"] == 4
 
 
+def test_accounting_reconciliation_atoms_use_practitioner_subreddits_for_recurrence():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="controller",
+        job_to_be_done="close the books without reconciliation drift",
+        failure_mode="stripe payouts and qbo exports stay out of sync after csv imports",
+        trigger_event="during month end close",
+        current_workaround="manual spreadsheet reconciliation",
+        cost_consequence_clues="time loss and reporting delays",
+        current_tools="stripe qbo csv exports",
+    )
+
+    subreddits = toolkit._recurrence_subreddits(atom, limit=4)
+
+    assert subreddits == ["accounting", "Bookkeeping", "quickbooksonline", "Netsuite"]
+
+
+def test_multichannel_seller_reporting_atoms_use_operator_subreddits_for_recurrence():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="etsy sellers",
+        user_role="operator",
+        job_to_be_done="track which sales channel is actually profitable",
+        failure_mode="amazon shopify and etsy revenue tracking becomes a spreadsheet nightmare",
+        trigger_event="every week",
+        current_workaround="spreadsheets, manual work",
+        cost_consequence_clues="hours lost",
+        current_tools="Shopify Etsy Amazon spreadsheets",
+    )
+
+    subreddits = toolkit._recurrence_subreddits(atom, limit=4)
+
+    assert subreddits == ["ecommerce", "shopify", "EtsySellers", "smallbusiness"]
+
+
 def test_nontechnical_spreadsheet_atom_deprioritizes_github_site_plan():
     toolkit = ResearchToolkit()
     atom = SimpleNamespace(
@@ -495,6 +531,42 @@ def test_choose_corroboration_action_retries_high_specificity_web_confirmation_g
         family_confirmation_count=1,
         source_attempts_by_family={"web": 1, "reddit": 1},
         budget_profile={"target_sources": 2, "specificity_score": 0.92},
+        available_families=["web"],
+        current_family="web",
+        promotion_gap_class="corroboration_gap",
+    )
+
+    assert action.action == "RETRY_WITH_RESHAPED_QUERY"
+    assert action.reason == "high_specificity_cross_source_retry"
+
+
+def test_choose_corroboration_action_retries_practitioner_web_confirmation_gap_below_ultra_high_specificity():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="controller",
+        job_to_be_done="close the books without reconciliation drift",
+        failure_mode="stripe payouts and qbo exports stay out of sync after csv imports",
+        trigger_event="during month end close",
+        current_workaround="manual spreadsheet reconciliation",
+        cost_consequence_clues="reporting delays",
+        current_tools="stripe qbo csv exports",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["quickbooks stripe payout reconciliation"],
+        finding_kind="problem_signal",
+    )
+
+    action = toolkit._choose_corroboration_action(
+        atom=atom,
+        corroboration_plan=plan,
+        source_yield={"web": {"docs_retrieved": 0, "docs_strong_match": 0, "docs_partial_match": 0}},
+        matched_results_by_source={"reddit": 1, "web": 0},
+        partial_results_by_source={"reddit": 1, "web": 0},
+        family_confirmation_count=1,
+        source_attempts_by_family={"web": 1, "reddit": 1},
+        budget_profile={"target_sources": 2, "specificity_score": 0.78},
         available_families=["web"],
         current_family="web",
         promotion_gap_class="corroboration_gap",
@@ -1022,9 +1094,38 @@ def test_accounting_reconciliation_web_routing_prefers_practitioner_communities(
     assert sites[:3] == [
         ("community.intuit.com", "web"),
         ("quickbooks.intuit.com/learn-support", "web"),
-        ("community.sap.com", "web"),
+        ("community.oracle.com", "web"),
     ]
+    assert ("community.sap.com", "web") in sites
     assert (None, "web") in sites
+
+
+def test_multichannel_seller_reporting_web_routing_prefers_operator_communities():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="etsy sellers",
+        user_role="operator",
+        job_to_be_done="track which sales channel is actually profitable",
+        failure_mode="amazon shopify and etsy revenue tracking becomes a spreadsheet nightmare",
+        trigger_event="every week",
+        current_workaround="spreadsheets, manual work",
+        cost_consequence_clues="hours lost",
+        current_tools="Shopify Etsy Amazon spreadsheets",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["sales channel profitability spreadsheet"],
+        finding_kind="problem_signal",
+    )
+
+    sites, reason = toolkit._specialized_web_routing_sites(atom=atom, plan=plan, attempt_index=0)
+
+    assert reason == "seller_reporting_surface_first"
+    assert sites == [
+        ("community.shopify.com", "web"),
+        ("community.etsy.com", "web"),
+        (None, "web"),
+    ]
 
 
 def test_workflow_fragility_shared_workbook_conflict_counts_as_strong_web_match():
@@ -2173,13 +2274,13 @@ def test_gather_recurrence_evidence_warms_bridge_only_queries(monkeypatch):
     toolkit = ResearchToolkit({"reddit_bridge": {"enabled": True, "base_url": "https://bridge.example", "mode": "bridge_only"}})
 
     async def fake_warm(*, subreddits, queries):
-        assert subreddits == ["smallbusiness", "sysadmin"]
+        assert subreddits == ["accounting", "Bookkeeping", "quickbooksonline"]
         assert queries == ['"manual reconciliation" "small business"']
         return {
             "seed_runs": 1,
-            "seeded_pairs": 2,
-            "seeded_searches": 2,
-            "uncovered_before": 2,
+            "seeded_pairs": 3,
+            "seeded_searches": 3,
+            "uncovered_before": 3,
             "uncovered_after": 0,
         }
 
@@ -2210,9 +2311,9 @@ def test_gather_recurrence_evidence_warms_bridge_only_queries(monkeypatch):
         )
     )
 
-    assert len(docs) == 2
+    assert len(docs) == 3
     assert meta["warmed_validation_queries"]["seed_runs"] == 1
-    assert meta["warmed_validation_queries"]["seeded_pairs"] == 2
+    assert meta["warmed_validation_queries"]["seeded_pairs"] == 3
     assert meta["recurrence_failure_class"] == "single_source_only"
 
 

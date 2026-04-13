@@ -4211,6 +4211,13 @@ class ResearchToolkit:
             budget_profile=budget_profile,
             available_families=available_families,
         )
+        practitioner_retry_candidate = (
+            specificity_score >= 0.72
+            and (
+                self._is_accounting_reconciliation_cohort(atom=atom, plan=corroboration_plan)
+                or self._is_multichannel_seller_reporting_cohort(atom=atom, plan=corroboration_plan)
+            )
+        )
         if current_family:
             family_yield = source_yield.get(current_family, {})
             attempts = int(source_attempts_by_family.get(current_family, 0) or 0)
@@ -4218,7 +4225,7 @@ class ResearchToolkit:
             strong_matches = int(family_yield.get("docs_strong_match", 0) or 0)
             partial_matches = int(family_yield.get("docs_partial_match", 0) or 0)
             high_specificity_cross_source_retry = (
-                specificity_score >= 0.85
+                (specificity_score >= 0.85 or practitioner_retry_candidate)
                 and promotion_gap_class in {"corroboration_gap", "evidence_sufficiency_gap"}
                 and family_confirmation_count >= 1
                 and attempts < max_attempts
@@ -4760,6 +4767,54 @@ class ResearchToolkit:
         ]
         return any(marker in haystack for marker in drift_markers)
 
+    def _is_multichannel_seller_reporting_cohort(
+        self,
+        *,
+        atom: Optional[Any],
+        plan: Optional[CorroborationPlan],
+    ) -> bool:
+        if atom is None or plan is None:
+            return False
+        haystack = normalize_content(
+            " ".join(
+                [
+                    getattr(atom, "segment", "") or "",
+                    getattr(atom, "user_role", "") or "",
+                    getattr(atom, "job_to_be_done", "") or "",
+                    getattr(atom, "failure_mode", "") or "",
+                    getattr(atom, "current_workaround", "") or "",
+                    getattr(atom, "cost_consequence_clues", "") or "",
+                    getattr(atom, "current_tools", "") or "",
+                    " ".join(plan.signature_terms),
+                ]
+            )
+        )
+        seller_markers = [
+            "shopify",
+            "etsy",
+            "amazon",
+            "seller",
+            "merchant",
+            "store",
+            "orders",
+            "sales channel",
+            "channel",
+        ]
+        reporting_markers = [
+            "profitability",
+            "revenue",
+            "reconciliation",
+            "payout",
+            "bank deposit",
+            "spreadsheet",
+            "manual work",
+            "tracking",
+            "reporting",
+        ]
+        return any(marker in haystack for marker in seller_markers) and any(
+            marker in haystack for marker in reporting_markers
+        )
+
     def _specialized_operator_surface_queries(
         self,
         *,
@@ -4982,6 +5037,13 @@ class ResearchToolkit:
                 ]
             )
         )
+        if self._is_multichannel_seller_reporting_cohort(atom=atom, plan=plan):
+            sites = [
+                ("community.shopify.com", "web"),
+                ("community.etsy.com", "web"),
+                (None, "web"),
+            ]
+            return (sites, "seller_reporting_surface_first")
         if any(term in haystack for term in ["shopify", "merchant", "storefront", "app store"]):
             sites = [("community.shopify.com", "web")]
             if attempt_index > 0:
@@ -5001,6 +5063,7 @@ class ResearchToolkit:
             sites = [
                 ("community.intuit.com", "web"),
                 ("quickbooks.intuit.com/learn-support", "web"),
+                ("community.oracle.com", "web"),
                 ("community.sap.com", "web"),
                 (None, "web"),
             ]
@@ -5853,6 +5916,7 @@ class ResearchToolkit:
     def _recurrence_subreddits(self, atom: Optional[Any], *, limit: int = 5) -> list[str]:
         if atom is None:
             return []
+        plan = self._build_corroboration_plan(atom=atom, queries=[], finding_kind="problem_signal")
         haystack = normalize_content(
             " ".join(
                 [
@@ -5863,7 +5927,11 @@ class ResearchToolkit:
                 ]
             )
         )
-        if "compliance" in haystack:
+        if self._is_accounting_reconciliation_cohort(atom=atom, plan=plan):
+            subreddits = ["accounting", "Bookkeeping", "quickbooksonline", "Netsuite", "smallbusiness"]
+        elif self._is_multichannel_seller_reporting_cohort(atom=atom, plan=plan):
+            subreddits = ["ecommerce", "shopify", "EtsySellers", "smallbusiness", "accounting"]
+        elif "compliance" in haystack:
             subreddits = ["compliance", "sysadmin", "smallbusiness"]
         elif "developer" in haystack or "engineer" in haystack:
             subreddits = ["sysadmin", "devops", "webdev"]

@@ -212,6 +212,14 @@ SPECIFIC_FINANCE_FAILURE_HINTS = {
     "shared ledger",
 }
 
+PRACTITIONER_RECONCILIATION_PROMPTS = {
+    "is anyone doing this",
+    "anyone doing this",
+    "curious how people handle",
+    "how are people handling",
+    "how do you handle",
+}
+
 MANUAL_WORKFLOW_HINTS = list(CANONICAL_MANUAL_WORKFLOW_HINTS)
 MANUAL_WORKFLOW_STAKES_HINTS = list(CANONICAL_MANUAL_WORKFLOW_STAKES_HINTS)
 
@@ -266,6 +274,13 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
     has_manual_workflow = contains_any_phrase(text, MANUAL_WORKFLOW_HINTS)
     has_manual_stakes = contains_any_phrase(text, MANUAL_WORKFLOW_STAKES_HINTS)
     strong_manual_workflow_slice = has_specific_context and has_manual_workflow and has_manual_stakes
+    practitioner_reconciliation_question = (
+        contains_any_phrase(text, PRACTITIONER_RECONCILIATION_PROMPTS)
+        and has_specific_context
+        and has_manual_workflow
+        and any(hint in text for hint in SPECIFIC_FINANCE_FAILURE_HINTS)
+    )
+    narrow_operator_slice = strong_manual_workflow_slice or practitioner_reconciliation_question
 
     # Check 2b: Broad productivity sermons and multi-workflow bundles
     if any(re.search(pattern, text) for pattern in GENERIC_PROMPT_PATTERNS):
@@ -281,11 +296,11 @@ def is_wedge_ready_signal(finding_data: Dict[str, Any]) -> tuple[bool, str]:
 
     # Check 3: Contains concrete object
     has_object = any(obj in text for obj in CONCRETE_OBJECTS)
-    if not has_object and not strong_manual_workflow_slice:
+    if not has_object and not narrow_operator_slice:
         return False, "no_concrete_object"
 
     # Check 4: Contains failure verb/pattern
-    if not has_failure and not strong_manual_workflow_slice:
+    if not has_failure and not narrow_operator_slice:
         return False, "no_failure_pattern"
 
     # Check 5: Generic productivity talk (without specific failure)

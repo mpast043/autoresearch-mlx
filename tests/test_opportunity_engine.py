@@ -862,6 +862,148 @@ def test_classify_source_signal_rejects_broad_buying_prompt_even_with_recommenda
     assert "finance_tool_shopping_without_specific_failure" in classification["reasons"]
 
 
+def test_classify_source_signal_keeps_qbo_payout_reconciliation_question():
+    finding_data = {
+        "source": "reddit-problem/quickbooksonline",
+        "source_url": "https://reddit.com/r/quickbooksonline/comments/qbo",
+        "finding_kind": "problem_signal",
+    }
+    signal_payload = {
+        "title": "Shopify payout reconciliation: is anyone doing this without manual journal entries?",
+        "body_excerpt": (
+            "We are exporting Shopify payouts and matching them in QuickBooks every week. "
+            "Refunds and fees do not line up cleanly, so we keep falling back to manual journal entries "
+            "and spreadsheet cleanup before close."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"evidence": {}},
+    }
+    atom_payload = {
+        "user_role": "bookkeeper",
+        "segment": "small ecommerce finance ops",
+        "job_to_be_done": "reconcile Shopify payouts in QuickBooks without manual cleanup",
+        "trigger_event": "weekly close",
+        "pain_statement": "refunds and fees do not line up cleanly in QuickBooks",
+        "failure_mode": "Shopify payouts need manual journal entries to reconcile",
+        "current_workaround": "manual journal entries and spreadsheet cleanup",
+        "cost_consequence_clues": "",
+        "frequency_clues": "weekly",
+    }
+
+    classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    assert classification["source_class"] == "pain_signal"
+    assert classification["reasons"] == ["specific_structured_pain_evidence"]
+
+
+def test_classify_source_signal_keeps_netsuite_partial_refund_reconciliation_question():
+    finding_data = {
+        "source": "reddit-problem/Netsuite",
+        "source_url": "https://reddit.com/r/Netsuite/comments/ns",
+        "finding_kind": "problem_signal",
+    }
+    signal_payload = {
+        "title": "Curious how people handle Shopify -> NetSuite payout reconciliation with partial refunds?",
+        "body_excerpt": (
+            "Partial refunds keep leaving junk in the clearing account at month-end. "
+            "We are manually matching payouts and adjusting entries because the payout batches do not tie out."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"evidence": {}},
+    }
+    atom_payload = {
+        "user_role": "finance manager",
+        "segment": "ecommerce finance ops",
+        "job_to_be_done": "reconcile Shopify payout batches in NetSuite",
+        "trigger_event": "month-end close",
+        "pain_statement": "partial refunds leave junk in the clearing account",
+        "failure_mode": "payout batches do not tie out when partial refunds hit",
+        "current_workaround": "manually matching payouts and adjusting entries",
+        "cost_consequence_clues": "",
+        "frequency_clues": "monthly",
+    }
+
+    classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    assert classification["source_class"] == "pain_signal"
+    assert classification["reasons"] == ["specific_structured_pain_evidence"]
+
+
+def test_classify_source_signal_ignores_docs_links_in_comment_metadata_for_reconciliation_thread():
+    finding_data = {
+        "source": "reddit-problem/Netsuite",
+        "source_url": "https://reddit.com/r/Netsuite/comments/ns",
+        "finding_kind": "problem_signal",
+    }
+    signal_payload = {
+        "title": "Curious how people handle Shopify -> NetSuite payout reconciliation with partial refunds?",
+        "body_excerpt": (
+            "Matching payouts to orders is a huge manual headache. "
+            "Partial refunds and clearing accounts do not tie out at month-end, "
+            "so we are still reconciling in spreadsheets."
+        ),
+        "source_type": "forum",
+        "metadata_json": {
+            "evidence": {
+                "comments": [
+                    {
+                        "text": "Have you looked at Celigo's docs? https://docs.celigo.com/hc/en-us/articles/example"
+                    }
+                ]
+            }
+        },
+    }
+    atom_payload = {
+        "user_role": "finance manager",
+        "segment": "ecommerce finance ops",
+        "job_to_be_done": "reconcile Shopify payout batches in NetSuite",
+        "trigger_event": "month-end close",
+        "pain_statement": "partial refunds leave junk in the clearing account",
+        "failure_mode": "payout batches do not tie out when partial refunds hit",
+        "current_workaround": "manually matching payouts and adjusting entries",
+        "cost_consequence_clues": "",
+        "frequency_clues": "monthly",
+    }
+
+    classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    assert classification["source_class"] == "pain_signal"
+    assert "help_or_generic_summary_content" not in classification["reasons"]
+
+
+def test_classify_source_signal_still_rejects_generic_reconciliation_tool_shopping_question():
+    finding_data = {
+        "source": "reddit-problem/smallbusiness",
+        "source_url": "https://reddit.com/r/smallbusiness/comments/tools",
+        "finding_kind": "problem_signal",
+    }
+    signal_payload = {
+        "title": "How are people handling reconciliation these days? Best tool?",
+        "body_excerpt": (
+            "We are shopping around and curious what everyone likes best. "
+            "Open to QuickBooks, Xero, or whatever else works."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"evidence": {}},
+    }
+    atom_payload = {
+        "user_role": "owner",
+        "segment": "small business",
+        "job_to_be_done": "find a reconciliation tool",
+        "trigger_event": "",
+        "pain_statement": "want something better",
+        "failure_mode": "",
+        "current_workaround": "",
+        "cost_consequence_clues": "",
+        "frequency_clues": "",
+    }
+
+    classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    assert classification["source_class"] == "low_signal_summary"
+    assert "practitioner_reconciliation_question_with_manual_exception" not in classification["reasons"]
+
+
 def test_qualify_problem_signal_keeps_github_transferable_workflow_failure():
     finding_data = {
         "source": "github-issue/example/repo",
@@ -894,6 +1036,40 @@ def test_qualify_problem_signal_keeps_github_transferable_workflow_failure():
 
     assert screening["accepted"] is True
     assert "github_without_external_workflow_context" not in screening["negative_signals"]
+
+
+def test_qualify_problem_signal_keeps_reconciliation_process_question_without_explicit_stakes():
+    finding_data = {
+        "source": "reddit-problem/Netsuite",
+        "source_url": "https://reddit.com/r/Netsuite/comments/ns",
+        "finding_kind": "problem_signal",
+        "source_class": "pain_signal",
+    }
+    signal_payload = {
+        "title": "Curious how people handle Shopify -> NetSuite payout reconciliation with partial refunds?",
+        "body_excerpt": (
+            "Partial refunds keep leaving junk in the clearing account at month-end. "
+            "We are manually matching payouts and adjusting entries because the payout batches do not tie out."
+        ),
+        "source_type": "forum",
+        "metadata_json": {"source_class": "pain_signal", "evidence": {}},
+    }
+    atom_payload = {
+        "job_to_be_done": "reconcile Shopify payout batches in NetSuite",
+        "trigger_event": "month-end close",
+        "pain_statement": "partial refunds leave junk in the clearing account",
+        "failure_mode": "payout batches do not tie out when partial refunds hit",
+        "current_workaround": "manually matching payouts and adjusting entries",
+        "urgency_clues": "",
+        "frequency_clues": "",
+        "cost_consequence_clues": "",
+        "why_now_clues": "",
+    }
+
+    screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+
+    assert screening["accepted"] is True
+    assert "advice_seeking_without_actionable_stakes" not in screening["negative_signals"]
 
 
 def test_qualify_problem_signal_rejects_finance_tool_shopping_prompt():
