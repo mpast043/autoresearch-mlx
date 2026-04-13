@@ -1,32 +1,17 @@
-.DS_Store
+```
+# Python
 __pycache__/
 *.pyc
-.pytest_cache/
-.venv/
-.claude/
+*.pyo
+*.pyd
 
-node_modules/
-dashboard/node_modules/
-.agent/cache/
+# Logs
+*.log
 
-.env
-.env.*
-!.env.example
-bridges/reddit-devvit/.git
-
+# Databases
 *.db
-*.sqlite
-autoresearcher.log
-output/
-outputs/deep_research/
-data/backups/
-data/generated_projects/
-data/unseeded_results/
 
-recovery.py
-recovery2.py
+# Test cache
+.pytest_cache/
 
-data/discovery_expansion.json
-data/*.json
-recovery_artifacts/
-tmp/*.yaml
+```

@@ -50,6 +50,11 @@ CURATED_OPERATOR_KEYWORDS = [
     "Copy paste error spreadsheet",
     "Reconciliation fails after import",
     "Payment not matching invoice",
+    # Operator workflow keywords
+    "month end close spreadsheet",
+    "sales channel reconciliation spreadsheet",
+    "invoice reminder spreadsheet workflow",
+    "pdf collaboration version control",
 ]
 META_REDDIT_SUBREDDITS = [
     "projectmanagement",

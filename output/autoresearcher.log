@@ -1,0 +1,1017 @@
+2026-04-13T17:57:30 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T17:57:30 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T17:57:30 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T17:57:30 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T17:57:35 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T17:57:35 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T17:57:35 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T17:57:36 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='140655186843344'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T17:57:36 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='140655188684160'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T17:57:36 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='140655188684160'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T17:57:36 ERROR utils.retry: Max retries (2) exceeded for <Mock id='140655188684160'>: still broken
+2026-04-13T17:57:36 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='140655186892448'>
+2026-04-13T17:57:36 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T17:58:58 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T17:58:58 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T17:58:58 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T17:58:58 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T17:59:03 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T17:59:03 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T17:59:03 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T17:59:04 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='140370954155840'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T17:59:04 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='140370954155840'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T17:59:04 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='140370954155840'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T17:59:04 ERROR utils.retry: Max retries (2) exceeded for <Mock id='140370954155840'>: still broken
+2026-04-13T17:59:04 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='140370954265440'>
+2026-04-13T17:59:04 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T17:59:16 [20260413T175916692492] INFO __main__: run: discovery wave 1 starting (continuous_waves=True, retry_interval_seconds=0.0)
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.discovery_expander: Winning patterns: 0 keywords, 0 subreddits (filtered by state)
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.discovery_expander: Found 0 winning keywords, 0 winning subreddits
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.discovery_expander: Generated 0 keyword candidates (filtered), 0 subreddit candidates (filtered)
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.discovery_expander: Generated 0 new keyword candidates, 0 subreddit candidates
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.discovery_expander: Expansion complete: added 0 keywords, 0 subreddits
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.agents.discovery: Discovery expanded: +0 keywords, +0 subreddits
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:16 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='month end close spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:16 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='month end close spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:16 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:16 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Transaction mismatch'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='month end close spreadsheet'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='manual reconciliation'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='manual reconciliation'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='month end close spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='month end close spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Invoice does not match payment'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Transaction mismatch'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query="Bank statement doesn't match"
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Data duplicated after import'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query="Bank statement doesn't match"
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Wrong totals after import'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Wrong totals after import'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='month end close spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='month end close spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Data duplicated after import'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='pdf collaboration version control'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Payment not matching invoice'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Payment not matching invoice'
+2026-04-13T17:59:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='month end close spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='month end close spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=smallbusiness query='manual reconciliation'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=smallbusiness query='month end close spreadsheet'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='manual reconciliation'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='pdf collaboration version control'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=smallbusiness query='Transaction mismatch'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='Invoice does not match payment'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='pdf collaboration version control' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='pdf collaboration version control'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=smallbusiness query="Bank statement doesn't match"
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=smallbusiness query='Data duplicated after import'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='pdf collaboration version control' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='pdf collaboration version control'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query="Bank statement doesn't match"
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='Transaction mismatch'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='Data duplicated after import'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=smallbusiness query='Wrong totals after import'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=ecommerce query='manual reconciliation'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=smallbusiness query='pdf collaboration version control'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=ecommerce query='Transaction mismatch'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=smallbusiness query='Payment not matching invoice'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=ecommerce query="Bank statement doesn't match"
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='pdf collaboration version control'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='Payment not matching invoice'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=ecommerce query='Data duplicated after import'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=ecommerce query='Payment not matching invoice'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=ecommerce query='pdf collaboration version control'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='Wrong totals after import'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='month end close spreadsheet'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=ecommerce query='Wrong totals after import'
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:18 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query='Transaction mismatch'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query='manual reconciliation'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query='Invoice does not match payment'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query='month end close spreadsheet'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query='manual reconciliation'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query="Bank statement doesn't match"
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query='Transaction mismatch'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query='Wrong totals after import'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query='Data duplicated after import'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query="Bank statement doesn't match"
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query='Payment not matching invoice'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query='Data duplicated after import'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query='Wrong totals after import'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='manual reconciliation'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query='pdf collaboration version control'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query='Payment not matching invoice'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='Invoice does not match payment'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query='pdf collaboration version control'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query="Bank statement doesn't match"
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=26 cached_searches=26 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=26 cached_searches=26 cached_threads=0 uncovered_pairs=0
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='Transaction mismatch'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='Data duplicated after import'
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:19 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:19 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='Wrong totals after import'
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='Payment not matching invoice'
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='pdf collaboration version control'
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=32 cached_searches=32 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=32 cached_searches=32 cached_threads=0 uncovered_pairs=0
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:20 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:20 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:21 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T17:59:21 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:21 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T17:59:21 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:24 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T17:59:28 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T17:59:31 [20260413T175916692492] WARNING src.llm_discovery_expander: Ollama generation failed: <urlopen error [Errno 111] Connection refused>
+2026-04-13T17:59:31 [20260413T175916692492] INFO src.llm_discovery_expander: LLM atom extraction failed, keeping heuristic values
+2026-04-13T17:59:31 [20260413T175916692492] INFO src.opportunity_engine: LLM atom extraction enhanced fields for atom from: Commissioner keeper and economic history CSV import workflow
+2026-04-13T17:59:31 [20260413T175916692492] INFO src.agents.discovery: screened out finding 1 (problem_signal): score=-4 negatives=source_class_low_signal_summary,github_internal_maintenance_issue
+2026-04-13T17:59:32 [20260413T175916692492] WARNING src.llm_discovery_expander: Ollama generation failed: <urlopen error [Errno 111] Connection refused>
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.llm_discovery_expander: LLM atom extraction failed, keeping heuristic values
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.opportunity_engine: LLM atom extraction enhanced fields for atom from: [nightly] Missing unit tests for all 7 CSV importers
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.agents.discovery: screened out finding 2 (problem_signal): score=-5 negatives=source_class_low_signal_summary,github_internal_maintenance_issue
+2026-04-13T17:59:32 [20260413T175916692492] WARNING src.llm_discovery_expander: Ollama generation failed: <urlopen error [Errno 111] Connection refused>
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.llm_discovery_expander: LLM atom extraction failed, keeping heuristic values
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.opportunity_engine: LLM atom extraction enhanced fields for atom from: Issue #4 — Coding/Automation Task
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.agents.discovery: screened out finding 10 (problem_signal): score=-3 negatives=source_class_low_signal_summary,github_without_external_workflow_context
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 25 keyword state changes
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T17:59:32 [20260413T175916692492] INFO __main__: pipeline drain wait state: {'queue_empty': True, 'queue_size': 0, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {'discovery': 0, 'evidence': 0, 'validation': 0, 'solution_framing': 0, 'experiment_design': 0, 'spec_generation': 0, 'ideation': 0, 'builder': 0}, 'drained': True}
+2026-04-13T17:59:32 [20260413T175916692492] INFO __main__: continuous_waves: wave 1 done; no sleep before next wave (retry_interval_seconds=0)
+2026-04-13T17:59:32 [20260413T175916692492] INFO __main__: run: discovery wave 2 starting (continuous_waves=True, retry_interval_seconds=0.0)
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='manual reconciliation'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Transaction mismatch'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query="Bank statement doesn't match"
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Data duplicated after import'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Wrong totals after import'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Payment not matching invoice'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='pdf collaboration version control'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=shopify query='manual reconciliation'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=shopify query='Transaction mismatch'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=shopify query="Bank statement doesn't match"
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=shopify query='Data duplicated after import'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=shopify query='Wrong totals after import'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=shopify query='Payment not matching invoice'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=shopify query='pdf collaboration version control'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='spreadsheet reconciliation process' mode=bridge_with_fallback
+2026-04-13T17:59:32 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='spreadsheet reconciliation process'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Formulas break when copying' mode=bridge_with_fallback
+2026-04-13T17:59:32 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Formulas break when copying'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query="Bank statement doesn't match" mode=bridge_with_fallback
+2026-04-13T17:59:32 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query="Bank statement doesn't match"; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Formulas break when copying'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query='manual reconciliation'
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='spreadsheet reconciliation process' mode=bridge_with_fallback
+2026-04-13T17:59:32 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='spreadsheet reconciliation process'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Formulas break when copying' mode=bridge_with_fallback
+2026-04-13T17:59:32 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Formulas break when copying'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:32 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=shopify query='Formulas break when copying'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query="Bank statement doesn't match" mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query="Bank statement doesn't match"; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query='Formulas break when copying'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query='Transaction mismatch'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Data duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Data duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='spreadsheet reconciliation process' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='spreadsheet reconciliation process'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query="Bank statement doesn't match"
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='spreadsheet reconciliation process' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='spreadsheet reconciliation process'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query='Data duplicated after import'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Data duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Data duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query='Wrong totals after import'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Formulas break when copying' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Formulas break when copying'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query='Payment not matching invoice'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query="Bank statement doesn't match" mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query="Bank statement doesn't match"; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Data duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Data duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Formulas break when copying' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Formulas break when copying'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query='manual reconciliation'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query='pdf collaboration version control'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query='Formulas break when copying'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Data duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Data duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='spreadsheet reconciliation process' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='spreadsheet reconciliation process'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query="Bank statement doesn't match" mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query="Bank statement doesn't match"; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query='Transaction mismatch'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query="Bank statement doesn't match"
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 4 keyword state changes
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.agents.discovery: discovery cycle produced 0 findings
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query='Data duplicated after import'
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='spreadsheet reconciliation process' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='spreadsheet reconciliation process'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Formulas break when copying' mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Formulas break when copying'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:33 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query="Bank statement doesn't match" mode=bridge_with_fallback
+2026-04-13T17:59:33 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query="Bank statement doesn't match"; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query='Wrong totals after import'
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Formulas break when copying' mode=bridge_with_fallback
+2026-04-13T17:59:34 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Formulas break when copying'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query='pdf collaboration version control'
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query='Payment not matching invoice'
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query="Bank statement doesn't match" mode=bridge_with_fallback
+2026-04-13T17:59:34 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query="Bank statement doesn't match"; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Data duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:34 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Data duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=18 cached_searches=18 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=18 cached_searches=18 cached_threads=0 uncovered_pairs=0
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='spreadsheet reconciliation process' mode=bridge_with_fallback
+2026-04-13T17:59:34 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='spreadsheet reconciliation process'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Formulas break when copying' mode=bridge_with_fallback
+2026-04-13T17:59:34 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Formulas break when copying'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Data duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:34 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Data duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Formulas break when copying' mode=bridge_with_fallback
+2026-04-13T17:59:34 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Formulas break when copying'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:34 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='spreadsheet reconciliation process' mode=bridge_with_fallback
+2026-04-13T17:59:34 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='spreadsheet reconciliation process'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:35 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query="Bank statement doesn't match" mode=bridge_with_fallback
+2026-04-13T17:59:35 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query="Bank statement doesn't match"; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:35 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Data duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:35 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Data duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:35 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query="Bank statement doesn't match" mode=bridge_with_fallback
+2026-04-13T17:59:35 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query="Bank statement doesn't match"; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:35 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Data duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:35 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Data duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:40 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T17:59:43 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 0 keyword state changes
+2026-04-13T17:59:43 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T17:59:43 [20260413T175916692492] INFO __main__: pipeline drain wait state: {'queue_empty': True, 'queue_size': 0, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {'discovery': 0, 'evidence': 0, 'validation': 0, 'solution_framing': 0, 'experiment_design': 0, 'spec_generation': 0, 'ideation': 0, 'builder': 0}, 'drained': True}
+2026-04-13T17:59:44 [20260413T175916692492] INFO __main__: continuous_waves: wave 2 done; no sleep before next wave (retry_interval_seconds=0)
+2026-04-13T17:59:44 [20260413T175916692492] INFO __main__: run: discovery wave 3 starting (continuous_waves=True, retry_interval_seconds=0.0)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='manual reconciliation'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Transaction mismatch'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Formulas break when copying'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query="Bank statement doesn't match"
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Data duplicated after import'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Wrong totals after import'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Payment not matching invoice'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='pdf collaboration version control'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=EtsySellers query='manual reconciliation'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=EtsySellers query='Transaction mismatch'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=EtsySellers query="Bank statement doesn't match"
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=EtsySellers query='Data duplicated after import'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=EtsySellers query='Wrong totals after import'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=EtsySellers query='Payment not matching invoice'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=EtsySellers query='pdf collaboration version control'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=EtsySellers query='Formulas break when copying'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query='Transaction mismatch'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query='manual reconciliation'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query='Formulas break when copying'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query="Bank statement doesn't match"
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query='Data duplicated after import'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query='Payment not matching invoice'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query='Wrong totals after import'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query='pdf collaboration version control'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='pdf collaboration version control' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='pdf collaboration version control'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query='manual reconciliation'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query='Transaction mismatch'
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T17:59:44 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:44 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query='Formulas break when copying'
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='pdf collaboration version control' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='pdf collaboration version control'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query="Bank statement doesn't match"
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query='Data duplicated after import'
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query='Wrong totals after import'
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query='Payment not matching invoice'
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query='pdf collaboration version control'
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=17 cached_searches=17 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=17 cached_searches=17 cached_threads=0 uncovered_pairs=0
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:45 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='copy paste workflow' mode=bridge_with_fallback
+2026-04-13T17:59:45 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='copy paste workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:52 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 2 keyword state changes
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T17:59:54 [20260413T175916692492] INFO __main__: pipeline drain wait state: {'queue_empty': True, 'queue_size': 0, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {'discovery': 0, 'evidence': 0, 'validation': 0, 'solution_framing': 0, 'experiment_design': 0, 'spec_generation': 0, 'ideation': 0, 'builder': 0}, 'drained': True}
+2026-04-13T17:59:54 [20260413T175916692492] INFO __main__: continuous_waves: wave 3 done; no sleep before next wave (retry_interval_seconds=0)
+2026-04-13T17:59:54 [20260413T175916692492] INFO __main__: run: discovery wave 4 starting (continuous_waves=True, retry_interval_seconds=0.0)
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='manual reconciliation'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Data duplicated after import'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Formulas break when copying'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Transaction mismatch'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Wrong totals after import'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Payment not matching invoice'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='pdf collaboration version control'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=sysadmin query='manual reconciliation'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=sysadmin query='Data duplicated after import'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='bank deposit reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:54 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='bank deposit reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T17:59:54 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:54 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='Formulas break when copying'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T17:59:54 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=sysadmin query='Transaction mismatch'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sysadmin query='CSV import creates duplicates'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=sysadmin query='Wrong totals after import'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=sysadmin query='Payment not matching invoice'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='CSV import creates duplicates'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='bank deposit reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:54 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='bank deposit reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=sysadmin query='pdf collaboration version control'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:54 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T17:59:54 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=airtable query='manual reconciliation'
+2026-04-13T17:59:54 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='bank deposit reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:54 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='bank deposit reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=airtable query='Formulas break when copying'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=airtable query='Data duplicated after import'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='bank deposit reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='bank deposit reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=airtable query='CSV import creates duplicates'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=airtable query='Transaction mismatch'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=airtable query='Wrong totals after import'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=airtable query='Payment not matching invoice'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='bank deposit reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='bank deposit reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=airtable query='pdf collaboration version control'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=webdev query='manual reconciliation'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=webdev query='Data duplicated after import'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='bank deposit reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='bank deposit reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=webdev query='Formulas break when copying'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=webdev query='CSV import creates duplicates'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=webdev query='Transaction mismatch'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=webdev query='Wrong totals after import'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=webdev query='Payment not matching invoice'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=webdev query='pdf collaboration version control'
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=19 cached_searches=19 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=19 cached_searches=19 cached_threads=0 uncovered_pairs=0
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:55 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T17:59:55 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:56 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='bank deposit reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:56 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='bank deposit reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:56 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T17:59:56 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:56 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:56 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:56 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T17:59:56 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:56 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='bank deposit reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T17:59:56 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='bank deposit reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:56 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T17:59:56 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:56 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T17:59:56 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T17:59:56 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T17:59:56 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:02 [20260413T175916692492] WARNING src.agents.discovery: github discovery timed out after 6.0s; continuing without GitHub findings
+2026-04-13T18:00:02 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 4 keyword state changes
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T18:00:05 [20260413T175916692492] INFO __main__: pipeline drain wait state: {'queue_empty': True, 'queue_size': 0, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {'discovery': 0, 'evidence': 0, 'validation': 0, 'solution_framing': 0, 'experiment_design': 0, 'spec_generation': 0, 'ideation': 0, 'builder': 0}, 'drained': True}
+2026-04-13T18:00:05 [20260413T175916692492] INFO __main__: continuous_waves: wave 4 done; no sleep before next wave (retry_interval_seconds=0)
+2026-04-13T18:00:05 [20260413T175916692492] INFO __main__: run: discovery wave 5 starting (continuous_waves=True, retry_interval_seconds=0.0)
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='manual reconciliation'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Payment not matching invoice'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Formulas break when copying'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='CSV import creates duplicates'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Transaction mismatch'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query="Bank statement doesn't match"
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Data duplicated after import'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='pdf collaboration version control'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=msp query='manual reconciliation'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=msp query='Payment not matching invoice'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=msp query='Formulas break when copying'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=msp query='Transaction mismatch'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=msp query="Bank statement doesn't match"
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=msp query='Data duplicated after import'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=msp query='pdf collaboration version control'
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T18:00:05 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T18:00:05 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:05 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T18:00:05 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=msp query='CSV import creates duplicates'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=selfhosted query='Payment not matching invoice'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=selfhosted query='manual reconciliation'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='returns workflow spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='returns workflow spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=selfhosted query='Formulas break when copying'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=selfhosted query='CSV import creates duplicates'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=selfhosted query='Transaction mismatch'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='returns workflow spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='returns workflow spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=selfhosted query='pdf collaboration version control'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=selfhosted query='Data duplicated after import'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=selfhosted query="Bank statement doesn't match"
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sales query='manual reconciliation'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='returns workflow spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='returns workflow spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sales query='Payment not matching invoice'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sales query='Formulas break when copying'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='returns workflow spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='returns workflow spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sales query='CSV import creates duplicates'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sales query='Transaction mismatch'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sales query="Bank statement doesn't match"
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='returns workflow spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='returns workflow spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sales query='Data duplicated after import'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=sales query='pdf collaboration version control'
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=17 cached_searches=17 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=17 cached_searches=17 cached_threads=0 uncovered_pairs=0
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='returns workflow spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='returns workflow spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:06 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T18:00:06 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:07 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T18:00:07 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:07 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T18:00:07 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:07 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T18:00:07 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:07 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Invoice does not match payment' mode=bridge_with_fallback
+2026-04-13T18:00:07 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Invoice does not match payment'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:07 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Orders duplicated after import' mode=bridge_with_fallback
+2026-04-13T18:00:07 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Orders duplicated after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:07 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='CSV import creates duplicates' mode=bridge_with_fallback
+2026-04-13T18:00:07 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='CSV import creates duplicates'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:13 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T18:00:16 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 1 keyword state changes
+2026-04-13T18:00:16 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T18:00:16 [20260413T175916692492] INFO __main__: pipeline drain wait state: {'queue_empty': True, 'queue_size': 0, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {'discovery': 0, 'evidence': 0, 'validation': 0, 'solution_framing': 0, 'experiment_design': 0, 'spec_generation': 0, 'ideation': 0, 'builder': 0}, 'drained': True}
+2026-04-13T18:00:17 [20260413T175916692492] INFO __main__: continuous_waves: wave 5 done; no sleep before next wave (retry_interval_seconds=0)
+2026-04-13T18:00:17 [20260413T175916692492] INFO __main__: run: discovery wave 6 starting (continuous_waves=True, retry_interval_seconds=0.0)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='manual reconciliation'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='pdf collaboration version control'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='CSV import creates duplicates'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Transaction mismatch'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query="Bank statement doesn't match"
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Data duplicated after import'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Wrong totals after import'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Payment not matching invoice'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=devops query='manual reconciliation'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=devops query='pdf collaboration version control'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=devops query='Transaction mismatch'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=devops query="Bank statement doesn't match"
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=devops query='Data duplicated after import'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=devops query='Wrong totals after import'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=devops query='Payment not matching invoice'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Reconciliation fails after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Reconciliation fails after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=devops query='CSV import creates duplicates'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=freelance query='pdf collaboration version control'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=freelance query='manual reconciliation'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Reconciliation fails after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Reconciliation fails after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=freelance query='CSV import creates duplicates'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=freelance query="Bank statement doesn't match"
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=freelance query='Transaction mismatch'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='"order received" "label printed" whatsapp spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='"order received" "label printed" whatsapp spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=freelance query='Data duplicated after import'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=freelance query='Wrong totals after import'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Reconciliation fails after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Reconciliation fails after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=freelance query='Payment not matching invoice'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=projectmanagement query='manual reconciliation'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Reconciliation fails after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Reconciliation fails after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=projectmanagement query='pdf collaboration version control'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=projectmanagement query='CSV import creates duplicates'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='"order received" "label printed" whatsapp spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='"order received" "label printed" whatsapp spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=projectmanagement query='Transaction mismatch'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=projectmanagement query="Bank statement doesn't match"
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=projectmanagement query='Data duplicated after import'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='"order received" "label printed" whatsapp spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='"order received" "label printed" whatsapp spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Reconciliation fails after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Reconciliation fails after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=projectmanagement query='Payment not matching invoice'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=projectmanagement query='Wrong totals after import'
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=17 cached_searches=17 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=17 cached_searches=17 cached_threads=0 uncovered_pairs=0
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Reconciliation fails after import' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Reconciliation fails after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:17 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='"order received" "label printed" whatsapp spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:17 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='"order received" "label printed" whatsapp spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='"order received" "label printed" whatsapp spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='"order received" "label printed" whatsapp spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Reconciliation fails after import' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Reconciliation fails after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='"order received" "label printed" whatsapp spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='"order received" "label printed" whatsapp spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Reconciliation fails after import' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Reconciliation fails after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual handoff workflow' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual handoff workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:18 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:18 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:25 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 3 keyword state changes
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T18:00:27 [20260413T175916692492] INFO __main__: pipeline drain wait state: {'queue_empty': True, 'queue_size': 0, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {'discovery': 0, 'evidence': 0, 'validation': 0, 'solution_framing': 0, 'experiment_design': 0, 'spec_generation': 0, 'ideation': 0, 'builder': 0}, 'drained': True}
+2026-04-13T18:00:27 [20260413T175916692492] INFO __main__: continuous_waves: wave 6 done; no sleep before next wave (retry_interval_seconds=0)
+2026-04-13T18:00:27 [20260413T175916692492] INFO __main__: run: discovery wave 7 starting (continuous_waves=True, retry_interval_seconds=0.0)
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='manual reconciliation'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Transaction mismatch'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query="Bank statement doesn't match"
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Data duplicated after import'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Wrong totals after import'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Payment not matching invoice'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='pdf collaboration version control'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=excel query='manual reconciliation'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=excel query='Transaction mismatch'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=excel query="Bank statement doesn't match"
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=excel query='Data duplicated after import'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=excel query='Wrong totals after import'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=excel query='Payment not matching invoice'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=excel query='pdf collaboration version control'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T18:00:27 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:27 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T18:00:27 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='copy paste workflow'
+2026-04-13T18:00:27 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=excel query='copy paste workflow'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=automation query='manual reconciliation'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=automation query='Transaction mismatch'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=automation query='copy paste workflow'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=automation query='Data duplicated after import'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=automation query="Bank statement doesn't match"
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=automation query='Payment not matching invoice'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=automation query='pdf collaboration version control'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=automation query='Wrong totals after import'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=productivity query='manual reconciliation'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=productivity query='copy paste workflow'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=productivity query='Transaction mismatch'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=productivity query="Bank statement doesn't match"
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=productivity query='Data duplicated after import'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=productivity query='Wrong totals after import'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=productivity query='pdf collaboration version control'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=productivity query='Payment not matching invoice'
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=18 cached_searches=18 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=18 cached_searches=18 cached_threads=0 uncovered_pairs=0
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Payment not matching invoice' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Payment not matching invoice'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Wrong totals after import' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Wrong totals after import'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:28 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T18:00:28 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:29 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='manual reconciliation' mode=bridge_with_fallback
+2026-04-13T18:00:29 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='manual reconciliation'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:36 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 1 keyword state changes
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T18:00:38 [20260413T175916692492] INFO __main__: pipeline drain wait state: {'queue_empty': True, 'queue_size': 0, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {'discovery': 0, 'evidence': 0, 'validation': 0, 'solution_framing': 0, 'experiment_design': 0, 'spec_generation': 0, 'ideation': 0, 'builder': 0}, 'drained': True}
+2026-04-13T18:00:38 [20260413T175916692492] INFO __main__: continuous_waves: wave 7 done; no sleep before next wave (retry_interval_seconds=0)
+2026-04-13T18:00:38 [20260413T175916692492] INFO __main__: run: discovery wave 8 starting (continuous_waves=True, retry_interval_seconds=0.0)
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='manual reconciliation'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Transaction mismatch'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query="Bank statement doesn't match"
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Data duplicated after import'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Wrong totals after import'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='Payment not matching invoice'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=accounting query='pdf collaboration version control'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=notion query='manual reconciliation'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=notion query='Transaction mismatch'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=notion query="Bank statement doesn't match"
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=notion query='Data duplicated after import'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=notion query='Wrong totals after import'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=notion query='Payment not matching invoice'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed skipping fresh cache subreddit=notion query='pdf collaboration version control'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='invoice reminder spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:38 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='invoice reminder spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T18:00:38 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='invoice reminder spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:38 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='invoice reminder spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=notion query='Orders duplicated after import'
+2026-04-13T18:00:38 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=accounting query='Orders duplicated after import'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=accounting query='invoice reminder spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=accounting query='invoice reminder spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='invoice reminder spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='invoice reminder spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=Entrepreneur query='manual reconciliation'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=Entrepreneur query='Transaction mismatch'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=Entrepreneur query='Orders duplicated after import'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=Entrepreneur query="Bank statement doesn't match"
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=Entrepreneur query='Data duplicated after import'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=smallbusiness query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=smallbusiness query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=Entrepreneur query='Wrong totals after import'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=Entrepreneur query='Payment not matching invoice'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=Entrepreneur query='pdf collaboration version control'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=indiehackers query='manual reconciliation'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=indiehackers query='Orders duplicated after import'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=indiehackers query='Transaction mismatch'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=indiehackers query="Bank statement doesn't match"
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=ecommerce query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=ecommerce query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=indiehackers query='Data duplicated after import'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=indiehackers query='Wrong totals after import'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=indiehackers query='Payment not matching invoice'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed no docs subreddit=indiehackers query='pdf collaboration version control'
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.reddit_seed: reddit_seed completed total_pairs=32 searched_pairs=18 cached_searches=18 cached_threads=0 unique_urls=0 uncovered_pairs=0
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.agents.discovery: reddit relay primed total_pairs=32 searched_pairs=18 cached_searches=18 cached_threads=0 uncovered_pairs=0
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='sales channel reconciliation spreadsheet' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='sales channel reconciliation spreadsheet'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='Transaction mismatch' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='Transaction mismatch'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:39 [20260413T175916692492] INFO src.research_tools: reddit_search bridge unavailable subreddit=shopify query='supplier data spreadsheet workflow' mode=bridge_with_fallback
+2026-04-13T18:00:39 [20260413T175916692492] WARNING src.research_tools: reddit_search bridge failure code=bridge_disabled subreddit=shopify query='supplier data spreadsheet workflow'; falling back to legacy/public path (reddit bridge is disabled)
+2026-04-13T18:00:46 [20260413T175916692492] WARNING src.agents.discovery: market-problem discovery timed out after 8.0s; continuing without findings
+2026-04-13T18:00:50 [20260413T175916692492] INFO src.agents.discovery: Term lifecycle: 1 keyword state changes
+2026-04-13T18:00:50 [20260413T175916692492] INFO src.llm_discovery_expander: No validated opportunities yet, skipping LLM expansion
+2026-04-13T18:01:32 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:01:32 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:01:32 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T18:01:32 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:01:37 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:01:37 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:01:37 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:01:38 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='139802106042112'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T18:01:38 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='139802107811632'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:01:38 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='139802107811632'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:01:38 ERROR utils.retry: Max retries (2) exceeded for <Mock id='139802107811632'>: still broken
+2026-04-13T18:01:38 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='139802106022416'>
+2026-04-13T18:01:38 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T18:02:02 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:02:02 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:02:02 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T18:02:02 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:02:07 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:02:07 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:02:07 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:02:08 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='140267329050992'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T18:02:08 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='140267329054688'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:02:08 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='140267329054688'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:02:08 ERROR utils.retry: Max retries (2) exceeded for <Mock id='140267329054688'>: still broken
+2026-04-13T18:02:08 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='140267328609536'>
+2026-04-13T18:02:08 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T18:02:31 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:02:32 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:02:32 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T18:02:32 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:02:37 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:02:37 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:02:37 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:02:38 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='139989567224768'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T18:02:38 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='139989566895360'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:02:38 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='139989566895360'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:02:38 ERROR utils.retry: Max retries (2) exceeded for <Mock id='139989566895360'>: still broken
+2026-04-13T18:02:38 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='139989567345376'>
+2026-04-13T18:02:38 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T18:03:06 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:03:06 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:03:06 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T18:03:06 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:03:11 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:03:11 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:03:11 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:03:12 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='139701413118224'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T18:03:12 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='139701440231664'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:03:12 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='139701440231664'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:03:12 ERROR utils.retry: Max retries (2) exceeded for <Mock id='139701440231664'>: still broken
+2026-04-13T18:03:12 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='139701413486208'>
+2026-04-13T18:03:12 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T18:03:46 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:03:46 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:03:46 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T18:03:46 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:03:51 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:03:51 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:03:51 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:03:53 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='139809446259664'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T18:03:53 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='139809447860544'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:03:53 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='139809447860544'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:03:53 ERROR utils.retry: Max retries (2) exceeded for <Mock id='139809447860544'>: still broken
+2026-04-13T18:03:53 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='139809448233152'>
+2026-04-13T18:03:53 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T18:07:34 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:07:34 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:07:34 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T18:07:35 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:07:40 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:07:40 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:07:40 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:07:41 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='139650930772640'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T18:07:41 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='139650930511168'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:07:41 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='139650930511168'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:07:41 ERROR utils.retry: Max retries (2) exceeded for <Mock id='139650930511168'>: still broken
+2026-04-13T18:07:41 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='139650930360544'>
+2026-04-13T18:07:41 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T18:09:47 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:09:47 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:09:47 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T18:09:47 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:09:52 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:09:52 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:09:52 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:09:53 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='140055061215280'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T18:09:53 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='140055061215136'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:09:53 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='140055061215136'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:09:53 ERROR utils.retry: Max retries (2) exceeded for <Mock id='140055061215136'>: still broken
+2026-04-13T18:09:53 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='140055061428608'>
+2026-04-13T18:09:53 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
+2026-04-13T18:25:10 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:25:10 INFO run: requeued 1 qualified findings for evidence
+2026-04-13T18:25:10 INFO run: run_once: discovery-only mode enabled; skipping qualified backlog requeue
+2026-04-13T18:25:10 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:25:15 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 3, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:25:15 INFO run: pipeline drain wait state: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:25:15 WARNING run: treating stable idle queue as drained: {'queue_empty': False, 'queue_size': 2, 'open_qualified': 0, 'actual_open_qualified': 0, 'evidence_busy': 0, 'validation_busy': 0, 'total_busy': 0, 'busy_agents': {}, 'drained': False}
+2026-04-13T18:25:16 WARNING utils.retry: Transient error on attempt 1/3 for <Mock id='139670745861680'>: temporary. Retrying in 0.00 seconds...
+2026-04-13T18:25:16 WARNING utils.retry: Transient error on attempt 1/2 for <Mock id='139670747601120'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:25:16 WARNING utils.retry: Transient error on attempt 2/2 for <Mock id='139670747601120'>: still broken. Retrying in 0.00 seconds...
+2026-04-13T18:25:16 ERROR utils.retry: Max retries (2) exceeded for <Mock id='139670747601120'>: still broken
+2026-04-13T18:25:16 ERROR utils.retry: Permanent error occurred, not retrying: <Mock id='139670746003312'>
+2026-04-13T18:25:16 WARNING utils.retry: Transient error on attempt 1/2 for wrapped_func: try again. Retrying in 0.00 seconds...
