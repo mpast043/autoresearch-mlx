@@ -119,6 +119,10 @@ AI_TOOL_KEYWORDS = [
     "bolt",
 ]
 
+_RECURRENCE_SPLIT_TERM_REPAIRS: tuple[tuple[str, str], ...] = (
+    (r"\breconcil\s+iation\b", "reconciliation"),
+)
+
 
 def clean_extracted_web_text(text: str, *, limit: int | None = None) -> str:
     """Normalize fetched web text before hashing or atom extraction.
@@ -936,6 +940,8 @@ def _clean_recurrence_text(text: str, *, limit: int = 160) -> str:
     cleaned = re.sub(r"\b(hey everyone|hope [a-z\s]{0,30} well|question for|anyone else|i want to complain|man alive)\b", " ", cleaned)
     cleaned = re.sub(r"\b(contact|logs stored|doctor output|issue checklist|provide as much information as possible)\b", " ", cleaned)
     cleaned = re.sub(r"[^a-z0-9\s&/-]+", " ", cleaned)
+    for pattern, replacement in _RECURRENCE_SPLIT_TERM_REPAIRS:
+        cleaned = re.sub(pattern, replacement, cleaned)
     return " ".join(cleaned.split())
 
 
@@ -3417,6 +3423,28 @@ class ResearchToolkit:
                 queries.append(normalized)
 
         if atom is not None:
+            cohort_haystack = normalize_content(
+                " ".join(
+                    [
+                        title or "",
+                        summary or "",
+                        getattr(atom, "segment", "") or "",
+                        getattr(atom, "user_role", "") or "",
+                        getattr(atom, "job_to_be_done", "") or "",
+                        getattr(atom, "failure_mode", "") or "",
+                        getattr(atom, "trigger_event", "") or "",
+                        getattr(atom, "current_workaround", "") or "",
+                        getattr(atom, "current_tools", "") or "",
+                    ]
+                )
+            )
+            accounting_focus = any(marker in cohort_haystack for marker in [
+                "reconciliation", "bank", "deposit", "invoice", "payment", "payout", "quickbooks", "qbo", "month end", "close",
+            ])
+            seller_reporting_focus = (
+                any(marker in cohort_haystack for marker in ["shopify", "amazon", "etsy", "seller", "merchant", "store"])
+                and any(marker in cohort_haystack for marker in ["profitability", "revenue", "payout", "bank deposit", "spreadsheet", "reporting", "reconciliation"])
+            )
             role_terms = self._recurrence_role_terms(getattr(atom, "user_role", "") or "")
             segment_terms = self._recurrence_segment_terms(getattr(atom, "segment", "") or "")
             job_terms = _query_term_span(getattr(atom, "job_to_be_done", "") or "", max_terms=5)
@@ -3426,6 +3454,23 @@ class ResearchToolkit:
             trigger_phrase = self._recurrence_focus_phrase(getattr(atom, "trigger_event", "") or "", max_words=5)
             workaround_phrase = self._recurrence_focus_phrase(getattr(atom, "current_workaround", "") or "", max_words=4)
             cost_phrase = self._recurrence_focus_phrase(getattr(atom, "cost_consequence_clues", "") or "", max_words=3)
+
+            if seller_reporting_focus:
+                for query in [
+                    '"shopify amazon etsy" "payout reconciliation"',
+                    '"sales channel profitability" spreadsheet',
+                    '"bank deposits" payouts spreadsheet',
+                    '"channel profitability reporting" spreadsheet',
+                ]:
+                    add(query)
+            elif accounting_focus:
+                for query in [
+                    '"manual reconciliation" "small business"',
+                    '"payment reconciliation" "small business"',
+                    '"bank deposits not matching invoices" spreadsheet',
+                    '"quickbooks payout reconciliation" forum',
+                ]:
+                    add(query)
 
             for parts in [
                 [failure_phrase, workaround_phrase or tool_terms, segment_terms],
@@ -3688,6 +3733,29 @@ class ResearchToolkit:
             ),
         }
         source_priority = ("reddit", "web", "github", "stackoverflow", "etsy")
+        max_attempts_per_family = 2
+        cohort_haystack = normalize_content(
+            " ".join(
+                [
+                    getattr(atom, "segment", "") or "",
+                    getattr(atom, "user_role", "") or "",
+                    getattr(atom, "job_to_be_done", "") or "",
+                    getattr(atom, "failure_mode", "") or "",
+                    getattr(atom, "current_workaround", "") or "",
+                    getattr(atom, "cost_consequence_clues", "") or "",
+                    getattr(atom, "current_tools", "") or "",
+                    " ".join(signature_terms),
+                    " ".join(ecosystem_hints),
+                ]
+            )
+        ) if atom is not None else ""
+        accounting_focus = any(marker in cohort_haystack for marker in [
+            "reconciliation", "bank", "deposit", "month end", "close", "invoice", "payment", "payout", "quickbooks", "qbo", "stripe",
+        ])
+        seller_reporting_focus = (
+            any(marker in cohort_haystack for marker in ["shopify", "etsy", "amazon", "seller", "merchant", "sales channel", "channel"])
+            and any(marker in cohort_haystack for marker in ["profitability", "revenue", "reconciliation", "payout", "bank deposit", "spreadsheet", "reporting"])
+        )
         if atom is not None and not self._atom_supports_github_recurrence(
             atom=atom,
             role_terms=role_terms,
@@ -3700,10 +3768,16 @@ class ResearchToolkit:
             budget_profile = self._recurrence_budget_profile(atom)
             meaningful = self._meaningful_candidate_snapshot(atom)
             if meaningful["meaningful_candidate"] and float(budget_profile.get("specificity_score", 0.0) or 0.0) >= 0.72:
-                if self._atom_supports_stackoverflow_recurrence(atom):
+                if accounting_focus or seller_reporting_focus:
+                    source_priority = ("reddit", "web", "github", "stackoverflow", "etsy")
+                    max_attempts_per_family = 1
+                elif self._atom_supports_stackoverflow_recurrence(atom):
                     source_priority = ("web", "stackoverflow", "github", "reddit", "etsy")
                 else:
                     source_priority = ("web", "github", "reddit", "stackoverflow", "etsy")
+            elif accounting_focus or seller_reporting_focus:
+                source_priority = ("reddit", "web", "github", "stackoverflow", "etsy")
+                max_attempts_per_family = 1
         if finding_kind == "pain_point":
             source_priority = ("web", "github", "reddit", "stackoverflow", "etsy")
         return CorroborationPlan(
@@ -3716,6 +3790,7 @@ class ResearchToolkit:
             cost_terms=cost_terms,
             ecosystem_hints=ecosystem_hints,
             family_queries=family_queries,
+            max_attempts_per_family=max_attempts_per_family,
             source_priority=source_priority,
         )
 

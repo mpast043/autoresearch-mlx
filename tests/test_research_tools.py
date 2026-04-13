@@ -863,6 +863,107 @@ def test_spreadsheet_operator_admin_queries_prioritize_accounting_reconciliation
     assert any("sales tax payment reconciliation workflow" in query for query in queries[:4])
 
 
+def test_recurrence_query_seed_repairs_split_reconciliation_term():
+    toolkit = ResearchToolkit()
+
+    assert toolkit._recurrence_query_seed("the reconcil iation is manual", max_terms=4) == "reconciliation manual"
+    assert toolkit._normalize_recurrence_query("the reconcil iation is manual") == "reconciliation manual"
+
+
+def test_build_corroboration_plan_keeps_reddit_first_for_accounting_reconciliation_cohort():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="operations lead",
+        job_to_be_done="the reconciliation is manual",
+        failure_mode="the reconciliation is manual, slow, and error-prone",
+        trigger_event="when clients pay me through multiple channels",
+        current_workaround="manual work",
+        cost_consequence_clues="time loss",
+        current_tools="quickbooks stripe bank",
+    )
+
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["manual reconciliation"],
+        finding_kind="problem_signal",
+    )
+
+    assert plan.source_priority[:2] == ("reddit", "web")
+    assert plan.max_attempts_per_family == 1
+
+
+def test_build_corroboration_plan_keeps_reddit_first_for_multichannel_seller_reporting_cohort():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="ecommerce seller operations",
+        user_role="operator",
+        job_to_be_done="track channel profitability without manual reconciliation",
+        failure_mode="amazon shopify and etsy payouts all land in one bank account and require spreadsheet reporting",
+        trigger_event="weekly payouts",
+        current_workaround="spreadsheets and manual work",
+        cost_consequence_clues="time loss",
+        current_tools="shopify amazon etsy",
+    )
+
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=["sales channel reconciliation spreadsheet"],
+        finding_kind="problem_signal",
+    )
+
+    assert plan.source_priority[:2] == ("reddit", "web")
+    assert plan.max_attempts_per_family == 1
+
+
+def test_build_recurrence_queries_prioritize_accounting_reconciliation_terms():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="operations lead",
+        job_to_be_done="the reconciliation is manual",
+        failure_mode="clients pay me through multiple channels and the reconciliation is slow and error-prone",
+        trigger_event="when payments hit different systems",
+        current_workaround="manual work in spreadsheets",
+        current_tools="quickbooks stripe bank",
+        cost_consequence_clues="time loss",
+    )
+
+    queries = toolkit.build_recurrence_queries(
+        title="",
+        summary="Clients pay me through multiple channels and bank deposits do not match invoices cleanly.",
+        atom=atom,
+    )
+
+    assert queries[0] == '"manual reconciliation" "small business"'
+    assert any("payment reconciliation" in query for query in queries[:4])
+    assert any("bank deposits" in query and "invoices" in query for query in queries[:4])
+
+
+def test_build_recurrence_queries_prioritize_multichannel_seller_reporting_terms():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="ecommerce seller operations",
+        user_role="operator",
+        job_to_be_done="processing Shopify orders",
+        failure_mode="tracking channel profitability across Amazon Shopify and Etsy is a nightmare",
+        trigger_event="weekly payouts",
+        current_workaround="spreadsheets and manual work",
+        current_tools="shopify amazon etsy",
+        cost_consequence_clues="time loss",
+    )
+
+    queries = toolkit.build_recurrence_queries(
+        title="",
+        summary="All the money goes into one bank account and I pull reports from each platform to match payouts manually.",
+        atom=atom,
+    )
+
+    assert queries[0] == '"shopify amazon etsy" "payout reconciliation"'
+    assert any("sales channel profitability" in query for query in queries[:4])
+    assert any("bank deposits" in query and "payouts" in query for query in queries[:4])
+
+
 def test_spreadsheet_operator_admin_queries_prioritize_channel_profitability_cases():
     toolkit = ResearchToolkit()
     atom = SimpleNamespace(
