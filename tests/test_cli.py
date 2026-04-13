@@ -22,6 +22,7 @@ from cli import (
     resolve_database_path_from_config,
     render_watch_snapshot,
 )
+from src.database import Database, Finding
 
 
 async def _fake_deep_research_run(self, max_signals_per_source=1):
@@ -528,3 +529,59 @@ def test_cli_command_import_paths_use_src_modules(monkeypatch, capsys, argv, mod
 
     output = capsys.readouterr().out
     assert expected_fragment in output
+
+
+def test_cmd_rescreen_revives_pre_atom_reconciliation_signal(monkeypatch, tmp_path):
+    db_path = tmp_path / "autoresearch.db"
+    db = Database(str(db_path))
+    db.init_schema()
+    finding_id = db.insert_finding(
+        Finding(
+            source="reddit-problem/quickbooksonline",
+            source_url="https://reddit.com/r/quickbooksonline/comments/1sevrzs/shopify_payout_reconciliation_is_anyone_doing/",
+            product_built="Shopify payout reconciliation: is anyone doing this without manual journal entries?",
+            outcome_summary=(
+                "We are exporting Shopify payouts and matching them in QuickBooks every week. "
+                "Refunds and fees do not line up cleanly, so we keep falling back to manual journal entries "
+                "and spreadsheet cleanup before close."
+            ),
+            content_hash="rescreen-test-hash",
+            status="screened_out",
+            finding_kind="problem_signal",
+            source_class="low_signal_summary",
+            evidence={
+                "run_id": "run-1",
+                "discovery_query": "shopify payout reconciliation",
+                "source_plan": "reddit-problem",
+                "pre_atom_filter": {"accepted": False, "reason": "no_failure_pattern"},
+                "screening": {
+                    "accepted": False,
+                    "score": 0.0,
+                    "positive_signals": [],
+                    "negative_signals": ["pre_atom_filter:no_failure_pattern"],
+                    "source_class": "low_signal_summary",
+                },
+            },
+        )
+    )
+    db.close()
+
+    monkeypatch.setattr(cli, "resolve_database_path_from_config", lambda _config: db_path)
+    args = SimpleNamespace(config="ignored", finding_id=finding_id, limit=25)
+
+    asyncio.run(cli.cmd_rescreen(args, None))
+
+    db = Database(str(db_path))
+    db.init_schema()
+    finding = db.get_finding(finding_id)
+    raw_signals = db.get_raw_signals_by_finding(finding_id)
+    atoms = db.get_problem_atoms_by_finding(finding_id)
+
+    assert finding is not None
+    assert finding.status == "qualified"
+    assert finding.source_class == "pain_signal"
+    assert (finding.evidence or {}).get("pre_atom_filter", {}).get("accepted") is True
+    assert (finding.evidence or {}).get("screening", {}).get("accepted") is True
+    assert len(raw_signals) == 1
+    assert len(atoms) == 1
+    db.close()

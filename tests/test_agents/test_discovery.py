@@ -478,6 +478,22 @@ def test_is_wedge_ready_signal_accepts_specific_manual_workflow_without_explicit
     assert reason == "passed"
 
 
+def test_is_wedge_ready_signal_accepts_practitioner_reconciliation_question_without_stakes_language():
+    finding_data = {
+        "product_built": "Shopify payout reconciliation: is anyone doing this without manual journal entries?",
+        "outcome_summary": (
+            "We are exporting Shopify payouts and matching them in QuickBooks every week. "
+            "Refunds and fees do not line up cleanly, so we keep falling back to manual journal entries "
+            "and spreadsheet cleanup before close."
+        ),
+    }
+
+    is_ready, reason = is_wedge_ready_signal(finding_data)
+
+    assert is_ready is True
+    assert reason == "passed"
+
+
 def test_is_wedge_ready_signal_rejects_broad_finance_prompt():
     finding_data = {
         "product_built": "Growing team looking for the best virtual credit card for expense automation",

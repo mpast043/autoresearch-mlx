@@ -1033,6 +1033,234 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
     db.close()
 
 
+async def cmd_rescreen(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    from datetime import datetime, timezone
+
+    from src.agents.discovery import _serialize_atom_json, is_wedge_ready_signal
+    from src.database import Database, ProblemAtom, RawSignal
+    from src.high_leverage import score_high_leverage_finding
+    from src.opportunity_engine import (
+        build_problem_atom,
+        build_raw_signal_payload,
+        classify_source_signal,
+        qualify_problem_signal,
+    )
+
+    db_path = resolve_database_path_from_config(args.config)
+    if not db_path.exists():
+        print(f"No database found at {db_path}")
+        return
+
+    db = Database(str(db_path))
+    db.init_schema()
+
+    candidates = []
+    if args.finding_id:
+        finding = db.get_finding(args.finding_id)
+        if not finding:
+            print_json({"requested": [args.finding_id], "processed": 0, "error": "finding_not_found"})
+            db.close()
+            return
+        candidates = [finding]
+    else:
+        candidates = db.get_findings(status="screened_out", limit=max(args.limit, 1))
+
+    summary = {
+        "processed": 0,
+        "qualified": [],
+        "still_screened_out": [],
+        "skipped": [],
+    }
+
+    with db.batch():
+        for finding in candidates:
+            finding_id = int(finding.id or 0)
+            if finding_id <= 0:
+                continue
+
+            raw_signals = db.get_raw_signals_by_finding(finding_id)
+            problem_atoms = db.get_problem_atoms_by_finding(finding_id)
+            if raw_signals or problem_atoms:
+                summary["skipped"].append({"finding_id": finding_id, "reason": "existing_artifacts"})
+                continue
+
+            evidence = dict(finding.evidence or {})
+            finding_data = {
+                "source": finding.source,
+                "source_url": finding.source_url,
+                "entrepreneur": finding.entrepreneur,
+                "tool_used": finding.tool_used,
+                "product_built": finding.product_built,
+                "monetization_method": finding.monetization_method,
+                "outcome_summary": finding.outcome_summary,
+                "finding_kind": finding.finding_kind,
+                "source_class": finding.source_class,
+                "recurrence_key": finding.recurrence_key,
+                "evidence": evidence,
+            }
+
+            is_ready, reject_reason = is_wedge_ready_signal(finding_data)
+            if not is_ready:
+                evidence["pre_atom_filter"] = {"accepted": False, "reason": reject_reason}
+                evidence["screening"] = {
+                    "accepted": False,
+                    "score": 0.0,
+                    "positive_signals": [],
+                    "negative_signals": [f"pre_atom_filter:{reject_reason}"],
+                    "source_class": "low_signal_summary",
+                }
+                evidence["rescreen"] = {
+                    "attempted_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                    "accepted": False,
+                    "reason": reject_reason,
+                }
+                db.update_finding_screening(
+                    finding_id,
+                    status="screened_out",
+                    source_class="low_signal_summary",
+                    evidence=evidence,
+                )
+                summary["still_screened_out"].append({"finding_id": finding_id, "reason": reject_reason})
+                summary["processed"] += 1
+                continue
+
+            signal_payload = build_raw_signal_payload(finding_data)
+            atom_payload = build_problem_atom(signal_payload, finding_data)
+            source_classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+            finding_data["source_class"] = source_classification["source_class"]
+            signal_payload.setdefault("metadata_json", {})["source_class"] = source_classification["source_class"]
+            screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
+            screening["source_class"] = source_classification["source_class"]
+
+            evidence["pre_atom_filter"] = {"accepted": True, "reason": "passed"}
+            evidence["screening"] = screening
+            evidence["source_classification"] = source_classification
+
+            temp_signal = RawSignal(
+                finding_id=finding_id,
+                source_name=signal_payload["source_name"],
+                source_type=signal_payload["source_type"],
+                source_class=source_classification["source_class"],
+                source_url=signal_payload["source_url"],
+                title=signal_payload["title"],
+                body_excerpt=signal_payload["body_excerpt"],
+                quote_text=signal_payload["quote_text"],
+                role_hint=signal_payload["role_hint"],
+                published_at=signal_payload["published_at"],
+                timestamp_hint=signal_payload["timestamp_hint"],
+                content_hash=finding.content_hash,
+                metadata=signal_payload["metadata_json"],
+            )
+            temp_atom = ProblemAtom(
+                signal_id=0,
+                finding_id=finding_id,
+                cluster_key=atom_payload["cluster_key"],
+                segment=atom_payload["segment"],
+                user_role=atom_payload["user_role"],
+                job_to_be_done=atom_payload["job_to_be_done"],
+                trigger_event=atom_payload["trigger_event"],
+                pain_statement=atom_payload["pain_statement"],
+                failure_mode=atom_payload["failure_mode"],
+                current_workaround=atom_payload["current_workaround"],
+                current_tools=atom_payload["current_tools"],
+                urgency_clues=atom_payload["urgency_clues"],
+                frequency_clues=atom_payload["frequency_clues"],
+                emotional_intensity=atom_payload["emotional_intensity"],
+                cost_consequence_clues=atom_payload["cost_consequence_clues"],
+                why_now_clues=atom_payload["why_now_clues"],
+                confidence=atom_payload["confidence"],
+                platform=atom_payload.get("platform", ""),
+                specificity_score=atom_payload.get("specificity_score", 0.0),
+                consequence_score=atom_payload.get("consequence_score", 0.0),
+                atom_extraction_method=atom_payload.get("atom_extraction_method", "heuristic"),
+                atom_json=_serialize_atom_json(atom_payload),
+            )
+            high_leverage = score_high_leverage_finding(finding, temp_signal, temp_atom, evidence)
+            evidence["high_leverage"] = high_leverage
+            evidence["rescreen"] = {
+                "attempted_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "accepted": bool(screening["accepted"]),
+                "reason": "qualified" if screening["accepted"] else ",".join(screening.get("negative_signals", [])),
+            }
+
+            if screening["accepted"]:
+                signal_payload.setdefault("metadata_json", {})["high_leverage"] = high_leverage
+                signal = RawSignal(
+                    finding_id=finding_id,
+                    source_name=signal_payload["source_name"],
+                    source_type=signal_payload["source_type"],
+                    source_class=source_classification["source_class"],
+                    source_url=signal_payload["source_url"],
+                    title=signal_payload["title"],
+                    body_excerpt=signal_payload["body_excerpt"],
+                    quote_text=signal_payload["quote_text"],
+                    role_hint=signal_payload["role_hint"],
+                    published_at=signal_payload["published_at"],
+                    timestamp_hint=signal_payload["timestamp_hint"],
+                    content_hash=finding.content_hash,
+                    metadata=signal_payload["metadata_json"],
+                )
+                signal_id = db.insert_raw_signal(signal)
+                atom = ProblemAtom(
+                    signal_id=signal_id,
+                    raw_signal_id=signal_id,
+                    finding_id=finding_id,
+                    cluster_key=atom_payload["cluster_key"],
+                    segment=atom_payload["segment"],
+                    user_role=atom_payload["user_role"],
+                    job_to_be_done=atom_payload["job_to_be_done"],
+                    trigger_event=atom_payload["trigger_event"],
+                    pain_statement=atom_payload["pain_statement"],
+                    failure_mode=atom_payload["failure_mode"],
+                    current_workaround=atom_payload["current_workaround"],
+                    current_tools=atom_payload["current_tools"],
+                    urgency_clues=atom_payload["urgency_clues"],
+                    frequency_clues=atom_payload["frequency_clues"],
+                    emotional_intensity=atom_payload["emotional_intensity"],
+                    cost_consequence_clues=atom_payload["cost_consequence_clues"],
+                    why_now_clues=atom_payload["why_now_clues"],
+                    confidence=atom_payload["confidence"],
+                    platform=atom_payload.get("platform", ""),
+                    specificity_score=atom_payload.get("specificity_score", 0.0),
+                    consequence_score=atom_payload.get("consequence_score", 0.0),
+                    atom_extraction_method=atom_payload.get("atom_extraction_method", "heuristic"),
+                    atom_json=_serialize_atom_json(atom_payload),
+                )
+                db.insert_problem_atom(atom)
+                db.update_finding_screening(
+                    finding_id,
+                    status="qualified",
+                    source_class=source_classification["source_class"],
+                    evidence=evidence,
+                )
+                summary["qualified"].append(
+                    {
+                        "finding_id": finding_id,
+                        "source_class": source_classification["source_class"],
+                        "screening_score": screening.get("score", 0.0),
+                    }
+                )
+            else:
+                db.update_finding_screening(
+                    finding_id,
+                    status="screened_out",
+                    source_class=source_classification["source_class"],
+                    evidence=evidence,
+                )
+                summary["still_screened_out"].append(
+                    {
+                        "finding_id": finding_id,
+                        "source_class": source_classification["source_class"],
+                        "negative_signals": screening.get("negative_signals", []),
+                    }
+                )
+
+            summary["processed"] += 1
+
+    print_json(summary)
+    db.close()
+
+
 async def cmd_rescore_v4(args: argparse.Namespace, _app: AutoResearcher) -> None:
     import sqlite3
     from datetime import datetime
@@ -1407,6 +1635,7 @@ COMMANDS: dict[str, Callable[..., Awaitable[None]]] = {
     "patterns": cmd_patterns,
     "scoring-report": cmd_scoring_report,
     "revalidate": cmd_revalidate,
+    "rescreen": cmd_rescreen,
     "rescore-v4": cmd_rescore_v4,
     "run": cmd_run,
     "run-once": cmd_run_once,
@@ -1459,6 +1688,7 @@ async def main() -> None:
             "patterns",
             "scoring-report",
             "revalidate",
+            "rescreen",
             "rescore-v4",
             "term-lifecycle",
             "term-state",

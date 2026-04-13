@@ -767,6 +767,95 @@ def _has_specific_finance_failure_shape(text: str) -> bool:
     return _has_phrase(lowered, SPECIFIC_FINANCE_FAILURE_TERMS) or _is_failure_event_atom(lowered)
 
 
+def _has_practitioner_reconciliation_question_shape(
+    text: str,
+    atom_payload: dict[str, Any] | None = None,
+) -> bool:
+    lowered = _normalized(
+        " ".join(
+            [
+                text,
+                str((atom_payload or {}).get("job_to_be_done", "") or ""),
+                str((atom_payload or {}).get("trigger_event", "") or ""),
+                str((atom_payload or {}).get("pain_statement", "") or ""),
+                str((atom_payload or {}).get("failure_mode", "") or ""),
+                str((atom_payload or {}).get("current_workaround", "") or ""),
+                str((atom_payload or {}).get("cost_consequence_clues", "") or ""),
+            ]
+        )
+    )
+    advice_prompt = (
+        _has_phrase(lowered, ADVICE_SEEKING_PATTERNS)
+        or "curious how" in lowered
+        or "is anyone doing" in lowered
+        or "anyone doing" in lowered
+        or "how are people handling" in lowered
+    )
+    if not advice_prompt:
+        return False
+
+    finance_artifact = _has_phrase(
+        lowered,
+        [
+            "quickbooks",
+            "shopify",
+            "netsuite",
+            "stripe",
+            "paypal",
+            "payout",
+            "payouts",
+            "refund",
+            "refunds",
+            "clearing account",
+            "clearing accounts",
+            "journal entry",
+            "journal entries",
+            "bank deposit",
+            "bank deposits",
+            "credit memo",
+            "invoice",
+            "invoices",
+            "payment",
+            "payments",
+            "month end",
+            "month-end",
+            "reconciliation",
+        ],
+    )
+    manual_exception = bool((atom_payload or {}).get("current_workaround")) or _has_phrase(
+        lowered,
+        [
+            "manual",
+            "manually",
+            "spreadsheet",
+            "spreadsheets",
+            "excel",
+            "matching",
+            "cleanup",
+            "split rows",
+            "partial refund",
+            "partial refunds",
+            "clearing account",
+            "clearing accounts",
+            "journal entry",
+            "journal entries",
+        ],
+    )
+    failure_or_edge_case = bool((atom_payload or {}).get("failure_mode")) or _has_phrase(
+        lowered,
+        SPECIFIC_WEDGE_SLICE_TERMS
+        + [
+            "partial refund",
+            "partial refunds",
+            "clearing account",
+            "clearing accounts",
+            "journal entry",
+            "journal entries",
+        ],
+    )
+    return finance_artifact and manual_exception and failure_or_edge_case
+
+
 def _has_operational_wedge_shape(text: str) -> bool:
     lowered = _normalized(text)
     return _has_phrase(
@@ -2315,7 +2404,7 @@ def classify_source_signal(
     if record_origin in {"listing", "app_description", "marketing_copy"}:
         reasons.append("listing_or_marketing_copy")
         return {"source_class": "low_signal_summary", "reasons": reasons}
-    if _has_phrase(text, HELP_PAGE_PATTERNS):
+    if _has_phrase(origin_text, HELP_PAGE_PATTERNS):
         reasons.append("help_or_generic_summary_content")
         return {"source_class": "low_signal_summary", "reasons": reasons}
     demand_patterns = DEMAND_SIGNAL_PATTERNS
@@ -2400,11 +2489,11 @@ def classify_source_signal(
     )
     has_consequence = bool(atom_payload.get("cost_consequence_clues") or atom_payload.get("urgency_clues"))
     has_structure = bool(atom_payload.get("failure_mode")) and bool(atom_payload.get("current_workaround") or has_consequence)
+    practitioner_reconciliation_question = _has_practitioner_reconciliation_question_shape(text, atom_payload)
 
     if (
         finding_data.get("finding_kind") in {"pain_point", "problem_signal"}
-        and specificity >= 5
-        and has_structure
+        and (specificity >= 5 and has_structure or practitioner_reconciliation_question)
         and "review_product_specific_issue" not in reasons
         and "github_product_specific_issue" not in reasons
         and "youtube_commentary_without_concrete_workflow" not in reasons
@@ -2412,7 +2501,11 @@ def classify_source_signal(
     ):
         return {
             "source_class": "pain_signal",
-            "reasons": ["specific_structured_pain_evidence"],
+            "reasons": [
+                "practitioner_reconciliation_question_with_manual_exception"
+                if practitioner_reconciliation_question and not (specificity >= 5 and has_structure)
+                else "specific_structured_pain_evidence"
+            ],
             **_source_policy_profile_payload(review_profile, github_profile, include_issue_types=False),
         }
 
@@ -2475,6 +2568,7 @@ def qualify_problem_signal(
         )
     )
     actionable_workflow = _has_phrase(workflow_context, ACTIONABLE_WORKFLOW_HINTS)
+    practitioner_reconciliation_question = _has_practitioner_reconciliation_question_shape(workflow_context, atom_payload)
     github_source = "github" in source_name.lower() or "github" in source_type
     review_source = "review" in source_name.lower() or "review" in source_type
     youtube_source = "youtube" in source_name.lower() or "youtube" in source_type
@@ -2562,7 +2656,12 @@ def qualify_problem_signal(
     if _has_phrase(text, GENERIC_REQUEST_PATTERNS):
         negative_signals.append("generic_request_or_vendor_shopping")
         score -= 3
-    if _has_phrase(text, ADVICE_SEEKING_PATTERNS) and stakes_signal_count == 0 and not actionable_workflow:
+    if (
+        _has_phrase(text, ADVICE_SEEKING_PATTERNS)
+        and stakes_signal_count == 0
+        and not actionable_workflow
+        and not practitioner_reconciliation_question
+    ):
         negative_signals.append("advice_seeking_without_actionable_stakes")
         score -= 4
     if _has_phrase(text, GENERIC_PROMPT_PATTERNS) and not atom_payload.get("current_workaround"):
