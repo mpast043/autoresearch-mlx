@@ -6,6 +6,10 @@ import re
 from typing import Iterable, Optional
 from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 
+_RECURRENCE_SPLIT_TERM_REPAIRS: tuple[tuple[str, str], ...] = (
+    (r"\breconcil\s+iation\b", "reconciliation"),
+)
+
 
 def compact_text(text: str, limit: int = 500) -> str:
     return " ".join((text or "").split())[:limit]
@@ -37,6 +41,10 @@ def normalize_search_url(url: str) -> str:
     raw = unwrap_search_result_url(url)
     if not raw:
         return ""
+    if raw.startswith("/r/"):
+        raw = f"https://reddit.com{raw}"
+    elif raw.startswith("r/"):
+        raw = f"https://reddit.com/{raw}"
     parsed = urlparse(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
@@ -111,6 +119,8 @@ def _clean_recurrence_text(text: str, *, limit: int = 160) -> str:
     cleaned = re.sub(r"\b(hey everyone|hope [a-z\s]{0,30} well|question for|anyone else|i want to complain|man alive)\b", " ", cleaned)
     cleaned = re.sub(r"\b(contact|logs stored|doctor output|issue checklist|provide as much information as possible)\b", " ", cleaned)
     cleaned = re.sub(r"[^a-z0-9\s&/-]+", " ", cleaned)
+    for pattern, replacement in _RECURRENCE_SPLIT_TERM_REPAIRS:
+        cleaned = re.sub(pattern, replacement, cleaned)
     return " ".join(cleaned.split())
 
 

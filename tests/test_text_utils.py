@@ -156,6 +156,10 @@ class TestNormalizeSearchUrl:
     def test_invalid_scheme(self):
         assert normalize_search_url("ftp://example.com/page") == ""
 
+    def test_reddit_relative_permalink_becomes_absolute(self):
+        result = normalize_search_url("/r/Accounting/comments/1s91wk1/qbo_refunded_payment_outside_system_now_have/")
+        assert result == "https://reddit.com/r/Accounting/comments/1s91wk1/qbo_refunded_payment_outside_system_now_have/"
+
 
 # ---------- query_phrases ----------
 
@@ -309,6 +313,10 @@ class TestCleanRecurrenceText:
         long_text = "word " * 200
         result = _clean_recurrence_text(long_text, limit=50)
         assert len(result) <= 50
+
+    def test_repairs_split_reconciliation_term(self):
+        result = _clean_recurrence_text("the reconcil iation is manual")
+        assert result == "the reconciliation is manual"
 
 
 # ---------- topical_overlap ----------
