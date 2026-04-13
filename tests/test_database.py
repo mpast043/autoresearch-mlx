@@ -614,7 +614,7 @@ class TestDatabase(unittest.TestCase):
                 Finding(
                     source="thread_test",
                     source_url="https://example.com/thread",
-                    content_hash=f"thread_hash_{threading.current_thread().ident}",
+                    content_hash=f"thread_hash_{threading.current_thread().native_id}",
                 )
             )
             results.append(fid)
