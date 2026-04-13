@@ -8,6 +8,44 @@ The active runtime path is:
 
 Optional downstream stages exist for ideation and code generation, but they sit behind validation and build-prep gates. Optional agents (SecurityAgent, SREAgent, TechnicalWriterAgent, DeepResearchAgent) can be enabled in `config.yaml`.
 
+## Branch Focus
+
+This branch, `codex/reconciliation-narrow-mode`, is intentionally narrower than the broader multi-source system described in some older docs and commits.
+
+Current branch defaults:
+
+- `discovery.sources = ["reddit"]`
+- `discovery.auto_expand = false`
+- `discovery.llm_expansion.enabled = false`
+- `discovery.reddit.use_r_all = false`
+- `discovery.reddit.search_sorts = ["new"]`
+- discovery is centered on reconciliation / payout mismatch / spreadsheet-heavy finance and seller reporting workflows
+
+The default practitioner subreddit pack on this branch is:
+
+- `accounting`
+- `Bookkeeping`
+- `quickbooksonline`
+- `Netsuite`
+- `smallbusiness`
+
+The default keyword pack on this branch is also intentionally narrow:
+
+- `manual reconciliation`
+- `invoice reconciliation`
+- `payment reconciliation`
+- `shopify payout reconciliation`
+- `stripe payout reconciliation`
+- `quickbooks reconciliation`
+- `bank deposit reconciliation`
+- `month end close spreadsheet`
+- `invoice does not match payment`
+- `bank deposits not matching invoices`
+- `partial payment reconciliation`
+- `csv cleanup before import`
+- `accounts receivable follow up spreadsheet`
+- `credit memo tracking spreadsheet`
+
 ## What The System Does
 
 - Discovers candidate pain signals from Reddit, web search, GitHub, WordPress reviews, Shopify reviews, and YouTube lanes.
@@ -21,6 +59,12 @@ Optional downstream stages exist for ideation and code generation, but they sit 
 - Monitors wedge health and detects regressions (SREAgent).
 - Auto-generates documentation for build-ready opportunities (TechnicalWriterAgent).
 - Supports targeted deep research across multiple sources for specific verticals (DeepResearchAgent).
+
+On this branch, the most important runtime capability is narrower:
+
+- replaying screened-out or parked reconciliation-style findings through `review-mark` and `rescreen`
+- validating whether practitioner-style process questions survive recurrence and corroboration
+- keeping discovery disciplined inside a small boring-money lane instead of broad adjacent-space exploration
 
 ## Quick Start
 
@@ -76,6 +120,8 @@ autoresearch scoring-report
 autoresearch backlog-workbench --limit 20
 autoresearch review-queue
 autoresearch review-mark --finding-id 10 --label needs_more_evidence --note "plausible but thin"
+autoresearch rescreen --finding-id 10
+autoresearch rescreen --limit 1000
 
 # Operator workbenches
 autoresearch workbench
@@ -178,21 +224,36 @@ Run-scoped history is preserved for validations, experiments, corroborations, ma
 
 ## Discovery And Expansion
 
-Reddit discovery is now practitioner-first by default. Curated operator-heavy subreddits are front-loaded in capped waves:
+On this branch, Reddit discovery is intentionally narrow and practitioner-first. Curated operator-heavy subreddits are front-loaded in capped waves:
 
 - `accounting`
+- `Bookkeeping`
+- `quickbooksonline`
+- `Netsuite`
 - `smallbusiness`
-- `ecommerce`
-- `shopify`
-- `EtsySellers`
 
-Broader communities such as `projectmanagement`, `automation`, and `indiehackers` can still participate, but they are pushed later in rotation.
+Broad Reddit exploration is intentionally disabled here:
 
-Autonomous expansion is still enabled through `discovery.auto_expand`. Expanded subreddits and keywords are merged into the runtime pool, then discovery planning ranks and rotates them alongside the curated base set. The result is:
+- `use_r_all = false`
+- `auto_expand = false`
+- `llm_expansion.enabled = false`
 
-- curated practitioner lanes stay available every run
-- expanded lanes can enter future waves
-- low-yield pairs can be cooled down instead of permanently polluting the front of the queue
+This branch is meant to answer a much narrower question:
+
+- can the system repeatedly find and confirm reconciliation / payout / close-cleanup pain from practitioner communities?
+
+That means the discovery loop is optimized for:
+
+- named incumbent systems
+- recurring finance or seller operations workflows
+- spreadsheet-heavy manual cleanup
+- operator-style “how are you handling this?” threads
+
+It is not optimized here for:
+
+- broad adjacent-market discovery
+- generic startup-idea generation
+- multi-source novelty hunting across web / GitHub / review lanes
 
 ## Configuration
 
@@ -210,12 +271,9 @@ Important sections:
 - `database.path`
 - `output_dir`
 - `discovery.sources`
-- `discovery.source_selection`
-- `discovery.expansion`
 - `discovery.reddit`
-- `discovery.web`
-- `discovery.shopify_reviews`
-- `discovery.wordpress_reviews`
+- `discovery.candidate_filter`
+- `discovery.llm_expansion`
 - `orchestration`
 - `validation`
 - `builder`
@@ -237,6 +295,17 @@ Important runtime artifacts:
 - Status JSON: [output/pipeline_status.json](/Users/meganpastore/Projects/autoresearch-mlx/output/pipeline_status.json)
 
 Use these together with `python cli.py report`, `python cli.py gate-diagnostics`, and `python cli.py pipeline-health` when tuning discovery or validation.
+
+For this branch specifically, the most useful operator loop is:
+
+1. `autoresearch run-once --verbose`
+2. `autoresearch pipeline-health`
+3. `autoresearch review-queue`
+4. `autoresearch review-mark --finding-id ... --label needs_more_evidence`
+5. `autoresearch rescreen --finding-id ...` or `autoresearch rescreen --limit 1000`
+6. `autoresearch run-once --verbose` again to replay the newly qualified backlog
+
+`rescreen` matters on this branch because many of the fixes are about admitting or replaying older practitioner-style findings under newer source-policy and recurrence rules. `rescore-v4` and `revalidate` do not replace that workflow; they operate on later-stage opportunity state.
 
 ## Documentation Map
 
