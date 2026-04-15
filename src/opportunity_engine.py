@@ -3341,7 +3341,7 @@ def score_opportunity(
         "threshold_version": CURRENT_THRESHOLD_VERSION,
         "cluster_signal_count": int(cluster_signal_count or 0),
         "cluster_atom_count": int(cluster_summary.get("atom_count", 0) or 0),
-        "cluster_source_type_diversity": int(len(source_types)),
+        "cluster_source_type_diversity": int(len(cluster_summary.get("summary_json", {}).get("source_types", {"web": 1}) or {"web": 1})),
         "problem_truth_score": round(problem_truth_score, 4),
         "revenue_readiness_score": round(revenue_readiness_score, 4),
         "decision_score": round(decision_score, 4),

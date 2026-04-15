@@ -65,6 +65,8 @@ class RedditBridgeClient:
         config = config or {}
         self.base_url = _resolve_env(config.get("base_url", "")).rstrip("/")
         self.auth_token = _resolve_env(config.get("auth_token", ""))
+        self.devvit_app_url = _resolve_env(config.get("devvit_app_url", "")).rstrip("/")
+        self.devvit_enabled = bool(self.devvit_app_url)
         self.timeout_seconds = float(config.get("timeout_seconds", 20))
         self.connection_limit = max(1, int(config.get("connection_limit", 8)))
         self.enabled = bool(config.get("enabled", False) and self.base_url)
@@ -239,6 +241,53 @@ class RedditBridgeClient:
         if not isinstance(items, list):
             raise BridgeError("bad_response_shape", "comments response is missing items")
         return [normalize_reddit_item(item, expected_kind="comment") for item in items]
+
+    async def fetch_thread_from_devvit(self, *, post_id: str) -> dict[str, Any] | None:
+        """Ask the Devvit app to fetch a thread using authenticated Reddit API.
+
+        The Devvit app uses RedditAPIClient (authenticated) to get the post
+        and its comments, then pushes results into the relay cache. This avoids
+        the unauthenticated live-fetch path that gets rate-limited.
+
+        Returns the thread data on success, or None on failure.
+        """
+        if not self.devvit_enabled:
+            return None
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"{self.devvit_app_url}/api/fetch-thread",
+                json={"postId": post_id},
+                headers=self._auth_headers(),
+                timeout=aiohttp.ClientTimeout(total=self.timeout_seconds),
+            ) as response:
+                if response.status != 200:
+                    body = await response.json() if response.content_type == "application/json" else {}
+                    logger.warning("devvit fetch-thread failed status=%s postId=%s", response.status, post_id)
+                    return None
+                body = await response.json()
+                if not body.get("ok"):
+                    return None
+                # Devvit already pushed to relay cache — retry the relay read
+                return body
+        except Exception as exc:
+            logger.warning("devvit fetch-thread error postId=%s error=%s", post_id, exc)
+            return None
+
+    async def push_seed_subreddits(self, subreddits: list[str]) -> bool:
+        """Push the expanded subreddit list to the relay so Devvit cron can pick it up."""
+        if not self.enabled:
+            return False
+        try:
+            await self._post(
+                "/api/reddit/seed-config",
+                {"key": "subreddits", "value": subreddits},
+            )
+            logger.info("pushed %d subreddits to relay seed-config", len(subreddits))
+            return True
+        except Exception as exc:
+            logger.warning("failed to push seed subreddits to relay: %s", exc)
+            return False
 
     async def health(self) -> dict[str, Any]:
         if not self.enabled:

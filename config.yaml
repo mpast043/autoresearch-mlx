@@ -63,9 +63,9 @@ discovery:
     - youtube
     - youtube-comments
   candidate_filter:
-    min_score: 2
+    min_score: 1
     behavioral_min_signals: 1
-    behavioral_penalty: 1
+    behavioral_penalty: 0
   # App/plugin review lanes (1–2 star pain). Tune slugs/handles to niches you care about.
   shopify_reviews:
     # Public storefront HTML scrape (no Shopify Partner/Admin API). Slugs: https://apps.shopify.com/<handle>
@@ -99,9 +99,9 @@ discovery:
   # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
   reddit:
     # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
-    search_time_filter: year
+    search_time_filter: month
     # false = search curated operator/problem subreddits instead of noisy r/all.
-    use_r_all: false
+    use_r_all: true
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
     max_subreddits_per_wave: 6
     max_keywords_per_wave: 6
@@ -228,8 +228,8 @@ build_prep:
     timeout_seconds: 60
 
 validation:
-  promotion_threshold: 0.42
-  park_threshold: 0.15
+  promotion_threshold: 0.25
+  park_threshold: 0.10
   sharp_research:
     decision_margin_below_park: 0.035
     decision_floor_min: 0.10
@@ -274,6 +274,7 @@ reddit_bridge:
   seed_on_miss: true
   base_url: ${REDDIT_BRIDGE_BASE_URL}
   auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}
+  devvit_app_url: ${REDDIT_DEVVIT_APP_URL}
 
 reddit_relay:
   auth_token: ${REDDIT_RELAY_AUTH_TOKEN}

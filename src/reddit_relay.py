@@ -116,6 +116,12 @@ class RedditRelayStore:
                     payload_json TEXT NOT NULL,
                     collected_at INTEGER NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS reddit_seed_config (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
                 """
             )
 
@@ -530,6 +536,37 @@ class RedditRelayStore:
         items = json.loads(row["payload_json"])
         return {"items": items[:limit], "collected_at": row["collected_at"]}
 
+    def put_seed_config(self, *, key: str, value: Any) -> None:
+        """Store a seed config value (e.g. subreddit list) for Devvit cron to read."""
+        updated_at = int(time.time())
+        value_json = json.dumps(value)
+        def _op() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO reddit_seed_config (key, value_json, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value_json = excluded.value_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, value_json, updated_at),
+                )
+        self._with_schema_retry(_op)
+
+    def get_seed_config(self, *, key: str) -> dict[str, Any] | None:
+        """Retrieve a seed config value."""
+        def _op():
+            with self._connect() as conn:
+                return conn.execute(
+                    "SELECT value_json, updated_at FROM reddit_seed_config WHERE key = ?",
+                    (key,),
+                ).fetchone()
+        row = self._with_schema_retry(_op)
+        if row is None:
+            return None
+        return {"value": json.loads(row["value_json"]), "updated_at": row["updated_at"]}
+
 
 STORE_KEY = web.AppKey("store", RedditRelayStore)
 AUTH_TOKEN_KEY = web.AppKey("auth_token", str)
@@ -769,6 +806,28 @@ async def cached_comments(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "items": result["items"], "collected_at": result["collected_at"]})
 
 
+async def put_seed_config(request: web.Request) -> web.Response:
+    """Store seed config (e.g. expanded subreddit list) for Devvit cron to read."""
+    body = await request.json()
+    key = str(body.get("key", "subreddits") or "subreddits")
+    value = body.get("value")
+    if value is None:
+        return _json_error(400, "missing_value", "value field is required")
+    store = request.app[STORE_KEY]
+    store.put_seed_config(key=key, value=value)
+    return web.json_response({"ok": True, "key": key})
+
+
+async def get_seed_config(request: web.Request) -> web.Response:
+    """Retrieve seed config for Devvit cron."""
+    key = request.query.get("key", "subreddits")
+    store = request.app[STORE_KEY]
+    result = store.get_seed_config(key=key)
+    if result is None:
+        return _json_error(404, "no_config", f"no config for key={key}", value=None)
+    return web.json_response({"ok": True, "key": key, "value": result["value"], "updated_at": result["updated_at"]})
+
+
 def build_relay_app(config: dict[str, Any] | None = None) -> web.Application:
     config = config or {}
     relay_config = config.get("reddit_relay", config)
@@ -788,6 +847,8 @@ def build_relay_app(config: dict[str, Any] | None = None) -> web.Application:
     app.router.add_post("/api/reddit/search-posts", cached_search)
     app.router.add_post("/api/reddit/post-thread", cached_thread)
     app.router.add_post("/api/reddit/comments", cached_comments)
+    app.router.add_post("/api/reddit/seed-config", put_seed_config)
+    app.router.add_get("/api/reddit/seed-config", get_seed_config)
 
     async def _cleanup(app: web.Application) -> None:
         await app[STORE_KEY].close()

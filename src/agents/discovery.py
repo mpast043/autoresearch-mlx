@@ -2020,6 +2020,13 @@ class DiscoveryAgent(BaseAgent):
             len(new_web_queries), len(new_github_queries),
         )
 
+        # Push expanded subreddit list to relay so Devvit cron can seed them
+        if new_subreddits and hasattr(self, 'toolkit') and hasattr(self.toolkit, 'reddit_bridge'):
+            try:
+                await self.toolkit.reddit_bridge.push_seed_subreddits(merged_subreddits)
+            except Exception:
+                pass  # non-critical; Devvit falls back to hardcoded list
+
         # Refresh toolkit with updated config
         await self._refresh_toolkit(get_expanded_config(self.base_config))
 
