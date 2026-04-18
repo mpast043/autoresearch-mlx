@@ -59,6 +59,40 @@ GENERALIZABLE_WORKFLOW_TERMS = {
     "pricing",
     "review",
     "email",
+    "automate",
+    "automation",
+    "export",
+    "import",
+    "migration",
+    "convert",
+    "cleaning",
+    "cleanup",
+    "organizing",
+    "format",
+    "formatting",
+    "reformat",
+    "upload",
+    "download",
+    "csv",
+    "contacts",
+    "calendar",
+    "frustrating",
+    "annoying",
+    "cumbersome",
+    "tedious",
+    "workaround",
+    "plugin",
+    "extension",
+    "integration",
+    "bug",
+    "broken",
+    "crash",
+    "error",
+    "missing",
+    "slow",
+    "timeout",
+    "hang",
+    "freeze",
 }
 
 BACKUP_RESTORE_TERMS = {
@@ -238,7 +272,7 @@ def _doc_source(doc: Any) -> str:
     return str(getattr(doc, "source", "") or "")
 
 
-def _doc_matches_signature(doc: Any, signature_terms: list[str]) -> bool:
+def _doc_matches_signature(doc: Any, signature_terms: list[str], *, origin_family: str = "") -> bool:
     if not signature_terms:
         return False
     text = _doc_text(doc)
@@ -247,6 +281,13 @@ def _doc_matches_signature(doc: Any, signature_terms: list[str]) -> bool:
         return True
     if len(hits) == 1 and any(term in text for term in GENERALIZABLE_WORKFLOW_TERMS):
         return True
+    # Cross-source docs from a different family than the origin only need 1 hit
+    # — corroboration from an independent source is inherently valuable even if
+    # the vocabulary differs.
+    if len(hits) >= 1 and origin_family:
+        doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
+        if doc_family and doc_family != origin_family:
+            return True
     return False
 
 
@@ -562,9 +603,26 @@ class EvidenceAgent(BaseAgent):
         self._inflight: set[asyncio.Task] = set()
 
     async def stop(self) -> None:
-        for task in list(self._inflight):
+        inflight = list(self._inflight)
+        for task in inflight:
             task.cancel()
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
         await super().stop()
+
+    def _harvest_completed_tasks(self, tasks: set[asyncio.Task]) -> None:
+        for task in tasks:
+            if task.cancelled():
+                continue
+            try:
+                task.result()
+            except Exception as exc:
+                self._error_count += 1
+                logger.exception("evidence task failed: %s", exc)
+                if self.status_tracker:
+                    self.status_tracker.log(f"evidence_task_failed error={exc}")
+                if self._error_count >= self._max_errors:
+                    self.status = AgentStatus.ERROR
 
     async def _run_loop(self) -> None:
         while self.status in (AgentStatus.RUNNING, AgentStatus.PAUSED):
@@ -574,10 +632,17 @@ class EvidenceAgent(BaseAgent):
                 if self.status == AgentStatus.STOPPED:
                     break
 
-                self._inflight = {task for task in self._inflight if not task.done()}
+                completed = {task for task in self._inflight if task.done()}
+                self._harvest_completed_tasks(completed)
+                self._inflight.difference_update(completed)
+                if self.status == AgentStatus.ERROR:
+                    break
                 if len(self._inflight) >= self.max_concurrency:
                     done, _ = await asyncio.wait(self._inflight, return_when=asyncio.FIRST_COMPLETED)
+                    self._harvest_completed_tasks(done)
                     self._inflight.difference_update(done)
+                    if self.status == AgentStatus.ERROR:
+                        break
                     continue
 
                 # Try non-blocking receive first
@@ -585,7 +650,10 @@ class EvidenceAgent(BaseAgent):
                 if message is None:
                     if self._inflight:
                         done, _ = await asyncio.wait(self._inflight, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
+                        self._harvest_completed_tasks(done)
                         self._inflight.difference_update(done)
+                        if self.status == AgentStatus.ERROR:
+                            break
                     else:
                         await asyncio.sleep(0.1)
                     continue
@@ -824,7 +892,8 @@ class EvidenceAgent(BaseAgent):
         domain_count = int(evidence.get("recurrence_domain_count", 0) or 0)
         results_by_query = evidence.get("recurrence_results_by_query", {}) or {}
         results_by_source = evidence.get("recurrence_results_by_source", {}) or {}
-        recurrence_docs = evidence.get("recurrence_docs", []) or []
+        # Use full doc list for signature matching, not the truncated sample
+        recurrence_docs = evidence.get("_all_recurrence_docs") or evidence.get("recurrence_docs", []) or []
         source_diversity = sum(1 for count in results_by_source.values() if count)
         query_breadth = sum(1 for count in results_by_query.values() if count)
         confirmation_depth_score = min(doc_count, 8) / 8.0
@@ -845,13 +914,21 @@ class EvidenceAgent(BaseAgent):
         matched_family_counts: dict[str, int] = {}
         cross_source_match_count = 0
         for doc in recurrence_docs:
-            if not _doc_matches_signature(doc, signature_terms):
+            if not _doc_matches_signature(doc, signature_terms, origin_family=origin_source_family):
                 continue
             cross_source_match_count += 1
             doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
             matched_doc_families.append(doc_family)
             matched_doc_groups.append(_source_family_group(doc_family))
             matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
+        # The origin source family is itself confirming evidence — if
+        # cross-source docs matched, the origin finding + the matching
+        # cross-source docs constitute multi-family corroboration.
+        if origin_source_family and cross_source_match_count > 0:
+            if origin_source_family not in matched_doc_families:
+                matched_doc_families.append(origin_source_family)
+                matched_doc_groups.append(_source_family_group(origin_source_family))
+            matched_family_counts.setdefault(origin_source_family, 0)
         source_families = sorted(set(matched_doc_families))
         source_groups = sorted(set(matched_doc_groups))
         source_family_diversity = len(source_families)

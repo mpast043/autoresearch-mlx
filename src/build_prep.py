@@ -538,6 +538,13 @@ def determine_selection_state(
     # core_source_family_diversity (only "core" origin sources). A finding confirmed
     # by Reddit + Web should count as multi-family support regardless of origin.
     core_family_diversity = int(corroboration.get("source_family_diversity", 0) or 0)
+    # Cluster-level diversity aggregates source families across ALL cluster member
+    # findings — a Reddit-origin finding + a web-origin finding in the same cluster
+    # counts as multi-family even if each individual finding has diversity=1.
+    cluster_family_diversity = int(corroboration.get("cluster_source_family_diversity", 0) or 0)
+    cluster_origin_diversity = int(corroboration.get("cluster_origin_family_diversity", 0) or 0)
+    # Effective diversity: use the max of per-finding and cluster-level diversity.
+    effective_family_diversity = max(core_family_diversity, cluster_family_diversity, cluster_origin_diversity)
     generalizability_class = str(corroboration.get("generalizability_class", "") or "")
     recurrence_state = str(corroboration.get("recurrence_state", "") or "")
     evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
@@ -556,7 +563,7 @@ def determine_selection_state(
     reasons: list[str] = []
     blocked_by: list[str] = []
 
-    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or core_family_diversity >= 2
+    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or effective_family_diversity >= 2
     if minimum_cluster_ok:
         reasons.append("cluster_size_threshold_met")
     else:
@@ -567,7 +574,7 @@ def determine_selection_state(
     else:
         blocked_by.append("not_generalizable_enough")
 
-    if core_family_diversity >= 2:
+    if effective_family_diversity >= 2:
         reasons.append("multi_family_support")
     else:
         blocked_by.append("single_family_support")
@@ -604,19 +611,36 @@ def determine_selection_state(
         decision == "promote"
         and generalizability_class == "reusable_workflow_pain"
         and minimum_cluster_ok
-        and core_family_diversity >= 2
+        and effective_family_diversity >= 2
         and corroboration_score >= 0.3
         and evidence_quality >= 0.4
     )
 
-    if decision == "promote" and promote_requalified:
+    # A single finding with strong multi-source corroboration can also
+    # qualify as prototype_candidate — the multi-family evidence itself
+    # substitutes for multiple cluster members.
+    promote_single_signal_multifamily = (
+        decision == "promote"
+        and generalizability_class == "reusable_workflow_pain"
+        and not minimum_cluster_ok
+        and effective_family_diversity >= 2
+        and corroboration_score >= 0.5
+        and evidence_quality >= 0.5
+    )
+
+    if decision == "promote" and (promote_requalified or promote_single_signal_multifamily):
+        gate_reason = (
+            "promotion_requalification_passed"
+            if promote_requalified
+            else "promotion_single_signal_multifamily"
+        )
         return (
             "prototype_candidate",
             "validated_selection_gate",
             {
                 "eligible": True,
                 "gate_version": BUILD_PREP_RULE_VERSION,
-                "reasons": ["validation_recommended_promote", "promotion_requalification_passed"],
+                "reasons": ["validation_recommended_promote", gate_reason],
                 "blocked_by": [],
             },
         )
@@ -624,7 +648,7 @@ def determine_selection_state(
     eligible = (
         generalizability_class == "reusable_workflow_pain"
         and minimum_cluster_ok
-        and core_family_diversity >= 2
+        and effective_family_diversity >= 2
         and corroboration_score >= 0.6
         and value_support >= 0.55
         and evidence_quality >= 0.6
@@ -636,14 +660,14 @@ def determine_selection_state(
     exploratory_recurrence_ok = recurrence_state in {"thin", "supported", "strong"}
     timeout_checkpoint_candidate = (
         recurrence_state == "timeout"
-        and core_family_diversity >= 2
+        and effective_family_diversity >= 2
         and corroboration_score >= 0.45
         and value_support >= 0.6
         and evidence_quality >= 0.5
         and composite_score >= 0.4
     )
     sharp_checkpoint_candidate = (
-        core_family_diversity >= 2
+        effective_family_diversity >= 2
         and recurrence_state in {"thin", "timeout", "supported", "strong"}
         and corroboration_score >= 0.22
         and cross_source_match_score >= 0.16
@@ -662,7 +686,7 @@ def determine_selection_state(
         and minimum_cluster_ok
         and (
             (
-                core_family_diversity >= 2
+                effective_family_diversity >= 2
                 and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
                 and corroboration_score >= 0.25
                 and value_support >= 0.55
@@ -673,7 +697,7 @@ def determine_selection_state(
                 sharp_checkpoint_candidate
             )
             or (
-                core_family_diversity == 1
+                effective_family_diversity == 1
                 and exploratory_recurrence_ok
                 and corroboration_score >= 0.3
                 and value_support >= 0.5
@@ -698,7 +722,7 @@ def determine_selection_state(
     if exploratory_candidate:
         exploratory_reasons = list(dict.fromkeys(reasons))
         if sharp_checkpoint_candidate and not (
-            core_family_diversity >= 2
+            effective_family_diversity >= 2
             and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
             and corroboration_score >= 0.25
             and value_support >= 0.55
@@ -706,7 +730,7 @@ def determine_selection_state(
             and composite_score >= 0.34
         ):
             exploratory_reasons.append("prototype_candidate_sharp_checkpoint")
-        elif core_family_diversity >= 2:
+        elif effective_family_diversity >= 2:
             exploratory_reasons.append("prototype_candidate_multifamily_near_miss")
         else:
             exploratory_reasons.append("prototype_candidate_single_family_exception")
@@ -753,6 +777,9 @@ def explain_selection_gate_detail(
     # core_source_family_diversity (only "core" origin sources). A finding confirmed
     # by Reddit + Web should count as multi-family support regardless of origin.
     core_family_diversity = int(corroboration.get("source_family_diversity", 0) or 0)
+    cluster_family_diversity = int(corroboration.get("cluster_source_family_diversity", 0) or 0)
+    cluster_origin_diversity = int(corroboration.get("cluster_origin_family_diversity", 0) or 0)
+    effective_family_diversity = max(core_family_diversity, cluster_family_diversity, cluster_origin_diversity)
     generalizability_class = str(corroboration.get("generalizability_class", "") or "")
     recurrence_state = str(corroboration.get("recurrence_state", "") or "")
     evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
@@ -767,19 +794,19 @@ def explain_selection_gate_detail(
     cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
     generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
     wedge_active = bool(market_enrichment.get("wedge_active"))
-    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or core_family_diversity >= 2
+    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or effective_family_diversity >= 2
 
     exploratory_recurrence_ok = recurrence_state in {"thin", "supported", "strong"}
     timeout_checkpoint_candidate = (
         recurrence_state == "timeout"
-        and core_family_diversity >= 2
+        and effective_family_diversity >= 2
         and corroboration_score >= 0.45
         and value_support >= 0.6
         and evidence_quality >= 0.5
         and composite_score >= 0.4
     )
     sharp_checkpoint_candidate = (
-        core_family_diversity >= 2
+        effective_family_diversity >= 2
         and recurrence_state in {"thin", "timeout", "supported", "strong"}
         and corroboration_score >= 0.22
         and cross_source_match_score >= 0.16
@@ -807,9 +834,9 @@ def explain_selection_gate_detail(
             "need": "reusable_workflow_pain",
         },
         {
-            "id": "core_source_family_diversity",
-            "pass": core_family_diversity >= 2,
-            "actual": core_family_diversity,
+            "id": "source_family_diversity",
+            "pass": effective_family_diversity >= 2,
+            "actual": effective_family_diversity,
             "need": ">= 2",
         },
         {
@@ -841,7 +868,7 @@ def explain_selection_gate_detail(
     multifamily_explore = (
         minimum_cluster_ok
         and
-        core_family_diversity >= 2
+        effective_family_diversity >= 2
         and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
         and corroboration_score >= 0.25
         and value_support >= 0.55
@@ -851,7 +878,7 @@ def explain_selection_gate_detail(
     single_family_explore = (
         minimum_cluster_ok
         and
-        core_family_diversity == 1
+        effective_family_diversity == 1
         and exploratory_recurrence_ok
         and corroboration_score >= 0.3
         and value_support >= 0.5

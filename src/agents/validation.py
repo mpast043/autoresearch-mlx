@@ -135,10 +135,33 @@ class ValidationAgent(BaseAgent):
 
         cluster_id, cluster, cluster_atoms = self._cluster_atoms(anchor_atom)
         review_feedback = self.db.get_review_feedback_summary(finding_id=finding_id, cluster_id=cluster_id)
+        corroboration = finding_data.get("corroboration") or {}
+        # Compute cluster-level source family diversity by aggregating across
+        # all cluster member findings.  A cluster with a Reddit finding and a
+        # Web finding has cluster-level diversity 2 even if each individual
+        # finding only has single-family corroboration.
+        cluster_source_families: set[str] = set()
+        cluster_origin_families: set[str] = set()
+        for atom in cluster_atoms:
+            fid = atom.finding_id
+            if not fid:
+                continue
+            c = self.db.get_latest_corroboration(fid)
+            if c:
+                c_ej = c.evidence_json if isinstance(c.evidence_json, dict) else (json.loads(c.evidence_json) if c.evidence_json else {})
+                for fam in (c_ej.get("source_families") or []):
+                    cluster_source_families.add(fam)
+                of = c_ej.get("origin_source_family", "")
+                if of:
+                    cluster_origin_families.add(of)
+        corroboration["cluster_source_family_diversity"] = len(cluster_source_families)
+        corroboration["cluster_source_families"] = sorted(cluster_source_families)
+        corroboration["cluster_origin_family_diversity"] = len(cluster_origin_families)
+        corroboration["cluster_origin_families"] = sorted(cluster_origin_families)
         validation_payload = {
             "scores": evidence_scores,
             "evidence": evidence_scores["evidence"],
-            "corroboration": finding_data.get("corroboration") or {},
+            "corroboration": corroboration,
             "market_enrichment": finding_data.get("market_enrichment") or {},
             "review_feedback": review_feedback,
         }
@@ -260,6 +283,8 @@ class ValidationAgent(BaseAgent):
                 "market_gap": market_gap,
                 "counterevidence": counterevidence,
                 "cluster_summary": cluster.summary,
+                "corroboration": validation_payload.get("corroboration") or {},
+                "market_enrichment": validation_payload.get("market_enrichment") or {},
             },
         )
         opportunity.selection_status = selection_status

@@ -24,10 +24,11 @@ def test_reddit_problem_keywords_merge_curated_operator_pack():
 
     assert keywords[0] == "manual reconciliation"
     assert "custom niche pain" in keywords
-    assert "month end close spreadsheet" in keywords
-    assert "sales channel reconciliation spreadsheet" in keywords
-    assert "invoice reminder spreadsheet workflow" in keywords
-    assert "pdf collaboration version control" in keywords
+    # Curated operator keywords are appended after user keywords
+    assert "Invoice does not match payment" in keywords
+    assert "CSV import creates duplicates" in keywords
+    assert "Reconciliation fails after import" in keywords
+    assert "Payment not matching invoice" in keywords
 
 
 def test_reddit_problem_subreddits_prioritize_practitioner_lanes_ahead_of_meta():

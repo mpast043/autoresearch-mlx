@@ -144,6 +144,17 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
+    async def test_completed_inflight_errors_increment_error_count(self):
+        async def fail():
+            raise RuntimeError("boom")
+
+        task = asyncio.create_task(fail())
+        await asyncio.sleep(0)
+
+        self.agent._harvest_completed_tasks({task})
+
+        self.assertEqual(self.agent._error_count, 1)
+
     async def test_enrichment_passes_structured_atom_into_recurrence_gathering(self):
         observed = {}
 

@@ -31,7 +31,8 @@ def compute_pipeline_health(db: Database) -> dict[str, Any]:
         )
     if actionable == 0 and by_status.get("qualified", 0) == 0:
         hints.append(
-            "Discovery skips inserts when content_hash already exists — Reddit/GitHub will look 'stuck' until new URLs appear."
+            "Content hash dedup now allows re-discovery of screened-out findings. "
+            "Seed cache auto-bypasses when pipeline is idle. If still stuck, try: python cli.py run-once --fresh"
         )
 
     return {

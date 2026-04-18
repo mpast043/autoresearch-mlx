@@ -906,6 +906,19 @@ class DiscoveryAgent(BaseAgent):
         if not relay_config.get("auto_seed_on_discovery", True):
             return
 
+        # Auto-bypass seed cache when pipeline is idle (no actionable findings).
+        # This prevents the pipeline from locking itself out: seed cache marks
+        # queries as "fresh" for 6 hours, but if all findings are in terminal
+        # states, there's no point waiting — re-search to find new content.
+        should_bypass = self.bypass_cache
+        if not should_bypass:
+            actionable = self.db.count_findings_by_status(
+                ("new", "qualified")
+            )
+            if actionable == 0:
+                should_bypass = True
+                logger.info("reddit_seed auto-bypassing cache: no actionable findings in pipeline")
+
         subreddits = reddit_discovery_subreddits(self.config)
         reddit_config = self.config.get("discovery", {}).get("reddit", {}) or {}
         try:
@@ -960,7 +973,7 @@ class DiscoveryAgent(BaseAgent):
         queries = merged_queries[:seed_limit]
         self._cycle_counts["reddit-relay-seed"] = self._cycle_counts.get("reddit-relay-seed", 0) + 1
         try:
-            seeder = RedditSeeder(self.config, bypass_cache=self.bypass_cache)
+            seeder = RedditSeeder(self.config, bypass_cache=should_bypass)
             summary = await seeder.seed(subreddits=subreddits, queries=queries)
             self._last_reddit_seed_summary = {
                 "seeded_total_pairs": summary.total_pairs,
@@ -1003,8 +1016,15 @@ class DiscoveryAgent(BaseAgent):
 
         existing = self.db.get_finding_by_hash(content_hash)
         if existing:
-            self._seen_hashes.add(content_hash)
-            return None
+            # Screened-out findings may be re-evaluated on later runs — the
+            # source policy, atom extraction, and scoring heuristics may have
+            # improved since the original rejection.
+            if existing.status not in ("screened_out", "killed"):
+                self._seen_hashes.add(content_hash)
+                return None
+            # Allow re-discovery of previously screened-out/killed content.
+            # Remove the stale row so the UNIQUE constraint accepts the new insert.
+            self.db.delete_finding(existing.id)
 
         evidence = dict(finding_data.get("evidence", {}) or {})
         evidence.setdefault("run_id", self.db.get_active_run_id())

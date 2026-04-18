@@ -942,9 +942,26 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
             validation = db.get_validation(brief.validation_id) if brief and brief.validation_id else None
             validation_evidence = validation.evidence_dict if validation else {}
             corroboration = validation_evidence.get("corroboration", {}) or {}
+            if not corroboration:
+                corroboration = notes.get("corroboration", {}) or {}
+            # Also check latest corroboration record from DB — it may have
+            # been updated after the opportunity was first validated.
+            if not corroboration and cluster_atoms:
+                latest_cor = db._get_connection().execute(
+                    "SELECT evidence_json FROM corroborations WHERE finding_id = ? ORDER BY id DESC LIMIT 1",
+                    (cluster_atoms[0].finding_id,),
+                ).fetchone()
+                if latest_cor and latest_cor[0]:
+                    import json as _json
+                    try:
+                        corroboration = _json.loads(latest_cor[0])
+                    except Exception:
+                        pass
             market_enrichment = validation_evidence.get("market_enrichment", {}) or {}
+            if not market_enrichment:
+                market_enrichment = notes.get("market_enrichment", {}) or {}
 
-            if validation:
+            if validation or corroboration:
                 selection_status, selection_reason, _ = determine_selection_state(
                     decision=decision["recommendation"],
                     scorecard=scorecard,

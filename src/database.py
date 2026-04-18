@@ -1453,6 +1453,28 @@ class Database:
         row = conn.execute("SELECT * FROM findings WHERE content_hash = ?", (content_hash,)).fetchone()
         return self._row_to_finding(row) if row else None
 
+    def delete_finding(self, finding_id: int) -> None:
+        """Delete a finding and its cascaded rows so the content_hash slot is freed."""
+        conn = self._get_connection()
+        # Cascade: all tables that reference finding_id
+        for table in (
+            "problem_atoms", "raw_signals", "corroborations",
+            "market_enrichments", "validations", "review_feedback",
+        ):
+            conn.execute(f"DELETE FROM {table} WHERE finding_id = ?", (finding_id,))
+        conn.execute("DELETE FROM findings WHERE id = ?", (finding_id,))
+        conn.commit()
+
+    def count_findings_by_status(self, statuses: tuple[str, ...]) -> int:
+        """Count findings matching any of the given statuses."""
+        conn = self._get_connection()
+        placeholders = ",".join("?" * len(statuses))
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM findings WHERE status IN ({placeholders})",
+            statuses,
+        ).fetchone()
+        return int(row[0]) if row else 0
+
     def get_finding(self, finding_id: int) -> Optional[Finding]:
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM findings WHERE id = ?", (finding_id,)).fetchone()
@@ -2325,6 +2347,15 @@ class Database:
         row = conn.execute(
             "SELECT * FROM corroborations WHERE run_id = ? AND finding_id = ? ORDER BY id DESC LIMIT 1",
             (rid, finding_id),
+        ).fetchone()
+        return CorroborationRecord(**dict(row)) if row else None
+
+    def get_latest_corroboration(self, finding_id: int) -> Optional[CorroborationRecord]:
+        """Return the most recent corroboration for a finding across all runs."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM corroborations WHERE finding_id = ? ORDER BY updated_at DESC LIMIT 1",
+            (finding_id,),
         ).fetchone()
         return CorroborationRecord(**dict(row)) if row else None
 
@@ -3820,9 +3851,19 @@ class Database:
             "atom_json": atom_evidence,
         }
         source_classification = classify_source_signal(finding_data, signal_payload, atom_payload)
-        refreshed_finding = {**finding_data, "source_class": source_classification.get("source_class", "")}
-        screening = qualify_problem_signal(refreshed_finding, signal_payload, atom_payload)
-        if source_classification.get("source_class") != "pain_signal" or not screening.get("accepted"):
+        # Trust the stored source_class for deep-research findings — the agent
+        # already classified and scored them; re-classifying with sparse content
+        # (empty body_excerpt) would incorrectly downgrade pain_signal to
+        # low_signal_summary.  Skip re-screening as well since the deep-research
+        # agent's own classification is the authoritative signal.
+        if finding.source == "deep_research" and finding.source_class == "pain_signal":
+            effective_source_class = "pain_signal"
+            screening = {"accepted": True, "score": 5.0, "reason": "deep_research_pain_signal_prequalified"}
+        else:
+            effective_source_class = source_classification.get("source_class", "")
+            refreshed_finding = {**finding_data, "source_class": effective_source_class}
+            screening = qualify_problem_signal(refreshed_finding, signal_payload, atom_payload)
+        if effective_source_class != "pain_signal" or not screening.get("accepted"):
             return None
 
         review_feedback = self.get_review_feedback_summary(finding_id=int(finding.id))

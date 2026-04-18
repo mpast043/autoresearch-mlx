@@ -233,7 +233,7 @@ def test_validate_problem_degrades_gracefully_when_inner_budgets_timeout():
     assert result["evidence"]["competitor_docs"] == []
 
 
-def test_generic_manual_prompt_uses_narrower_recurrence_budget():
+def test_generic_manual_prompt_keeps_exploratory_recurrence_budget():
     toolkit = ResearchToolkit()
     atom = type(
         "Atom",
@@ -258,7 +258,7 @@ def test_generic_manual_prompt_uses_narrower_recurrence_budget():
     subreddits = toolkit._recurrence_subreddits(atom, limit=profile["subreddit_limit"])
     sites = toolkit._recurrence_site_plan(atom, subreddit_plan=subreddits, limit=profile["site_limit"])
 
-    assert len(queries) == 2
+    assert len(queries) == 3
     assert len(subreddits) == 2
     assert sites == [(None, "web")]
 
@@ -890,7 +890,7 @@ def test_build_corroboration_plan_keeps_reddit_first_for_accounting_reconciliati
     )
 
     assert plan.source_priority[:2] == ("reddit", "web")
-    assert plan.max_attempts_per_family == 1
+    assert plan.max_attempts_per_family == 2
 
 
 def test_build_corroboration_plan_keeps_reddit_first_for_multichannel_seller_reporting_cohort():
@@ -913,7 +913,7 @@ def test_build_corroboration_plan_keeps_reddit_first_for_multichannel_seller_rep
     )
 
     assert plan.source_priority[:2] == ("reddit", "web")
-    assert plan.max_attempts_per_family == 1
+    assert plan.max_attempts_per_family == 2
 
 
 def test_build_recurrence_queries_prioritize_accounting_reconciliation_terms():
@@ -2418,7 +2418,7 @@ def test_gather_recurrence_evidence_warms_bridge_only_queries(monkeypatch):
     assert meta["recurrence_failure_class"] == "single_source_only"
 
 
-def test_gather_recurrence_evidence_stops_early_on_generic_probe_miss(monkeypatch):
+def test_gather_recurrence_evidence_branches_on_generic_probe_miss(monkeypatch):
     toolkit = ResearchToolkit()
     reddit_calls = []
     web_calls = []
@@ -2457,9 +2457,9 @@ def test_gather_recurrence_evidence_stops_early_on_generic_probe_miss(monkeypatc
     assert meta["recurrence_gap_reason"] in {"search_breadth_likely_insufficient", "no_independent_confirmations"}
     assert meta["recurrence_failure_class"] in {"breadth_limited", "no_corroboration_found"}
     assert meta["recurrence_probe_summary"]["probe_hit_count"] == 0
-    assert meta["recurrence_probe_summary"]["branched_after_probe"] is False
-    assert len(reddit_calls) == 1
-    assert len(web_calls) == 1
+    assert meta["recurrence_probe_summary"]["branched_after_probe"] is True
+    assert len(reddit_calls) > 1
+    assert len(web_calls) > 1
 
 
 def test_gather_recurrence_evidence_branches_after_specific_probe_miss(monkeypatch):

@@ -1083,7 +1083,7 @@ class ResearchToolkit:
         self.validation_query_terms = max(8, int(validation_search.get("query_terms", 14)))
         self.validation_recurrence_limit = max(4, int(validation_search.get("recurrence_results", 6)))
         self.validation_competitor_limit = max(6, int(validation_search.get("competitor_results", 8)))
-        self.validation_evidence_sample = max(4, int(validation_search.get("evidence_sample", 5)))
+        self.validation_evidence_sample = max(8, int(validation_search.get("evidence_sample", 20)))
         self.validation_recurrence_budget_seconds = float(validation_search.get("recurrence_budget_seconds", 8.0))
         self.validation_competitor_budget_seconds = float(
             validation_search.get("competitor_budget_seconds", 6.0)
@@ -1985,6 +1985,29 @@ class ResearchToolkit:
                 phrases.append(label)
         return phrases[:3]
 
+    @staticmethod
+    def _source_diverse_sample(docs: list, limit: int) -> list:
+        """Sample docs round-robin from each source family for diversity."""
+        if len(docs) <= limit:
+            return docs
+        by_source: dict[str, list[Any]] = {}
+        for doc in docs:
+            src = getattr(doc, "source", "") or (doc.get("source", "") if isinstance(doc, dict) else "")
+            by_source.setdefault(src, []).append(doc)
+        result: list[Any] = []
+        sources = list(by_source.keys())
+        idx = {s: 0 for s in sources}
+        while len(result) < limit:
+            added = False
+            for s in sources:
+                if idx[s] < len(by_source[s]) and len(result) < limit:
+                    result.append(by_source[s][idx[s]])
+                    idx[s] += 1
+                    added = True
+            if not added:
+                break
+        return result
+
     def _is_relevant_search_result(
         self,
         *,
@@ -2006,14 +2029,22 @@ class ResearchToolkit:
 
         if intent == "validation_recurrence":
             haystack = f"{title} {snippet} {domain} {url}".lower()
+            # High topical overlap is itself strong evidence of recurrence —
+            # a result closely matching the problem query corroborates
+            # the problem even without explicit pain language or on a
+            # blog-like page.  Accept these before other filters run.
+            if overlap >= 3:
+                if not self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
+                    return True
             if any(pattern in haystack for pattern in BLOG_LIKE_PATTERNS):
                 return False
             if self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
                 return False
-            return overlap >= 2 and (
+            pain_ok = (
                 self._pain_score(haystack) >= 1
                 or self._has_any_term(haystack, WORKAROUND_SIGNAL_TERMS + COST_SIGNAL_TERMS)
             )
+            return overlap >= 2 and pain_ok
 
         if intent == "validation_competitor":
             haystack = f"{title} {snippet} {domain} {url}".lower()
@@ -3344,7 +3375,8 @@ class ResearchToolkit:
             "query": evidence_query,
             "recurrence_queries": recurrence_queries,
             "competitor_query": competitor_query,
-            "recurrence_docs": [doc.__dict__ for doc in recurrence_docs[: self.validation_evidence_sample]],
+            "recurrence_docs": [doc.__dict__ for doc in self._source_diverse_sample(recurrence_docs, self.validation_evidence_sample)],
+            "_all_recurrence_docs": [doc.__dict__ for doc in recurrence_docs],
             "competitor_docs": [doc.__dict__ for doc in competitor_docs[: self.validation_evidence_sample]],
             "recurrence_domains": sorted(recurrence_domains),
             "competitor_domains": sorted(competitor_domains),
@@ -3480,6 +3512,19 @@ class ResearchToolkit:
             ]:
                 add(" ".join(part for part in parts if part))
 
+            # Add broader, concept-level queries that generalize beyond the
+            # specific finding.  These use the core problem nouns/verbs rather
+            # than exact phrases, so they find corroborating pain signals even
+            # when the vocabulary differs.
+            core_concepts = self._extract_core_problem_concepts(atom)
+            if core_concepts:
+                for combo in [
+                    " ".join(core_concepts[:3]),
+                    " ".join(core_concepts[:2]) + " pain point",
+                    " ".join(core_concepts[:2]) + " frustration",
+                ]:
+                    add(combo)
+
         base_query = self._build_validation_query(title, summary)
         if not queries:
             add(base_query)
@@ -3607,11 +3652,67 @@ class ResearchToolkit:
             if token not in QUERY_STOPWORDS
             and token not in WEAK_VALIDATION_TERMS
             and token not in RECURRENCE_NOISE_TERMS
+            and token not in self._PERSONAL_NARRATIVE_TERMS
             and len(token) > 2
         ]
         if len(terms) < 2:
             return ""
         return '"' + " ".join(terms[:max_words]) + '"'
+
+    # Terms that signal a specific first-person narrative rather than a
+    # generalizable problem concept.  When these dominate, the extracted
+    # focus phrase is unlikely to match external corroborating docs.
+    _PERSONAL_NARRATIVE_TERMS = frozenset({
+        "ive", "id", "im", "my", "myself", "kept", "telling",
+        "tried", "finally", "decided", "wanted",
+        "years", "day", "one", "wish", "wished",
+    })
+
+    def _extract_core_problem_concepts(self, atom: Optional[Any]) -> list[str]:
+        """Extract generalized problem-concept nouns/verbs from the atom.
+
+        These are domain-agnostic terms that describe WHAT hurts (e.g.,
+        "google contacts backup", "manual csv export") rather than the
+        specific narrative (e.g., "years kept telling myself").
+        """
+        if atom is None:
+            return []
+        # Combine job_to_be_done + failure_mode + trigger_event, but
+        # strip personal-narrative noise and pick the most meaningful
+        # noun-like tokens.
+        raw = " ".join([
+            getattr(atom, "job_to_be_done", "") or "",
+            getattr(atom, "trigger_event", "") or "",
+            getattr(atom, "failure_mode", "") or "",
+            getattr(atom, "current_workaround", "") or "",
+            getattr(atom, "current_tools", "") or "",
+        ])
+        cleaned = _clean_recurrence_text(raw)
+        if not cleaned:
+            return []
+        tokens = [
+            t for t in re.findall(r"[a-z0-9&/-]+", cleaned)
+            if t not in QUERY_STOPWORDS
+            and t not in RECURRENCE_NOISE_TERMS
+            and t not in WEAK_VALIDATION_TERMS
+            and t not in self._PERSONAL_NARRATIVE_TERMS
+            and len(t) > 2
+        ]
+        # Prioritize domain/product nouns (capitalized in original) and
+        # action verbs.  Simple heuristic: longer tokens and those that
+        # appear in the job_to_be_done are more likely core concepts.
+        jtbd_tokens = set(
+            re.findall(r"[a-z0-9]+", (getattr(atom, "job_to_be_done", "") or "").lower())
+        )
+        scored = sorted(
+            tokens,
+            key=lambda t: (
+                2 if t in jtbd_tokens else 0,
+                min(len(t), 8),
+            ),
+            reverse=True,
+        )
+        return scored[:5]
 
     def _recurrence_role_terms(self, text: str) -> str:
         cleaned = _clean_recurrence_text(text)
@@ -3767,10 +3868,14 @@ class ResearchToolkit:
         if atom is not None:
             budget_profile = self._recurrence_budget_profile(atom)
             meaningful = self._meaningful_candidate_snapshot(atom)
-            if meaningful["meaningful_candidate"] and float(budget_profile.get("specificity_score", 0.0) or 0.0) >= 0.72:
+            specificity_score = float(budget_profile.get("specificity_score", 0.0) or 0.0)
+            if meaningful["meaningful_candidate"] and specificity_score >= 0.72:
                 if accounting_focus or seller_reporting_focus:
                     source_priority = ("reddit", "web", "github", "stackoverflow", "etsy")
-                    max_attempts_per_family = 1
+                    # Preserve retry slot: high-specificity atoms need at least 2
+                    # attempts so _choose_corroboration_action can reach the
+                    # high_specificity_cross_source_retry / practitioner_retry path.
+                    max_attempts_per_family = 2
                 elif self._atom_supports_stackoverflow_recurrence(atom):
                     source_priority = ("web", "stackoverflow", "github", "reddit", "etsy")
                 else:
@@ -5737,7 +5842,7 @@ class ResearchToolkit:
         probe_hit_count = len(probe_docs)
         branched_after_probe = False
 
-        if probe_hit_count == 0 and budget_profile["specificity_score"] < 0.45:
+        if probe_hit_count == 0 and budget_profile["specificity_score"] < 0.25:
             recurrence_docs = []
             results_by_query = {query: 0 for query in selected_queries}
             results_by_source = dict(probe_results_by_source)
@@ -5749,7 +5854,7 @@ class ResearchToolkit:
                 "added_docs": 0,
                 "source_attempts": [],
                 "last_action": "PARK",
-                "last_transition_reason": "probe_miss_low_specificity",
+                "last_transition_reason": "probe_miss_very_low_specificity",
                 "chosen_family": "",
                 "expected_gain_class": "low",
                 "source_attempts_snapshot": {},
@@ -5769,7 +5874,7 @@ class ResearchToolkit:
                 "candidate_meaningful": self._meaningful_candidate_snapshot(atom),
             }
         else:
-            if probe_hit_count == 0 and budget_profile["specificity_score"] >= 0.45:
+            if probe_hit_count == 0 and budget_profile["specificity_score"] >= 0.25:
                 if len(selected_queries) > len(probe_queries):
                     branched_after_probe = True
                 if len(all_subreddits) > len(branch_subreddits):
@@ -6134,15 +6239,15 @@ class ResearchToolkit:
             }
         return {
             "specificity_score": round(specificity, 4),
-            "query_limit": 2,
+            "query_limit": 3,
             "subreddit_limit": 2,
-            "site_limit": 1,
+            "site_limit": 2,
             "probe_query_limit": 1,
             "probe_subreddit_limit": 1,
             "probe_site_limit": 1,
             "probe_max_results": 2,
             "target_docs": 4,
-            "target_sources": 1,
+            "target_sources": 2,
             "early_stop_docs": max(4, self.validation_recurrence_limit - 1),
         }
 
@@ -6302,8 +6407,8 @@ class ResearchToolkit:
         }
 
 
-    def _active_recurrence_source_labels(self, results_by_source: dict[str, int]) -> set[str]:
-        return {label for label, count in results_by_source.items() if count}
+    def _active_recurrence_source_labels(self, results_by_source: dict[str, int], *, min_per_source: int = 1) -> set[str]:
+        return {label for label, count in results_by_source.items() if count >= min_per_source}
 
     def _merge_recurrence_results(
         self,
@@ -6649,7 +6754,7 @@ class ResearchToolkit:
                 "candidate_meaningful": self._meaningful_candidate_snapshot(atom),
             }
 
-        active_sources = self._active_recurrence_source_labels(current_results_by_source)
+        active_sources = self._active_recurrence_source_labels(current_results_by_source, min_per_source=2)
         target_sources = max(2, int(budget_profile.get("target_sources", 1) or 1))
         corroboration_plan = corroboration_plan or self._build_corroboration_plan(
             atom=atom,

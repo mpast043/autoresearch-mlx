@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.agents.base import BaseAgent
-from src.database import Database, Finding
+from src.database import Database, Finding, ProblemAtom, RawSignal
 from src.messaging import MessageQueue, MessageType
 
 logger = logging.getLogger(__name__)
@@ -112,6 +112,39 @@ class DeepResearchAgent(BaseAgent):
     def _get_tavily_key(self) -> Optional[str]:
         import os
         return os.getenv("TAVILY_API_KEY")
+
+    # ── Lightweight text extraction ────────────────────────────────────────────
+
+    _PAIN_KEYWORDS = (
+        "hate", "frustrat", "annoying", "broken", "can't", "cannot", "unable",
+        "struggle", "painful", "waste", "slow", "manual", "tedious", "error",
+        "bug", "fail", "crash", "missing", "wrong", "doesn't work", "doesn't support",
+        "no way to", "impossible", "ridiculous", "horrible", "terrible",
+        "have to", "forced to", "workaround", "hack",
+    )
+
+    def _extract_failure_mode(self, text: str) -> str:
+        """Extract the most failure-like sentence from the body text."""
+        sentences = [s.strip() for s in text.replace("\n", ".").split(".") if len(s.strip()) > 20]
+        if not sentences:
+            return ""
+        best = ""
+        best_count = 0
+        for s in sentences[:20]:
+            count = sum(1 for kw in self._PAIN_KEYWORDS if kw in s.lower())
+            if count > best_count:
+                best_count = count
+                best = s
+        return best[:300]
+
+    def _extract_pain_statement(self, text: str) -> str:
+        """Extract the most pain-relevant text from the body."""
+        # Prefer failure mode if found, otherwise first meaningful sentence
+        failure = self._extract_failure_mode(text)
+        if failure:
+            return failure
+        sentences = [s.strip() for s in text.replace("\n", ".").split(".") if len(s.strip()) > 15]
+        return sentences[0][:500] if sentences else ""
 
     # ── BaseAgent abstract method ─────────────────────────────────────────────
 
@@ -206,7 +239,7 @@ class DeepResearchAgent(BaseAgent):
     # ── Source fetchers ─────────────────────────────────────────────────────
 
     async def _search_reddit(self, limit: int) -> list[PainSignal]:
-        """Search Reddit via ddgs (site:reddit.com format)."""
+        """Search Reddit via ddgs (site:reddit.com format), then fetch thread content."""
         import ddgs
 
         signals: list[PainSignal] = []
@@ -226,6 +259,70 @@ class DeepResearchAgent(BaseAgent):
                     ))
             except Exception as exc:
                 logger.warning("[DeepResearch] reddit query '%s' failed: %s", query, exc)
+
+        # Enrich top Reddit signals with actual thread content so atoms have
+        # real pain language instead of empty body_excerpts.
+        signals = await self._enrich_reddit_threads(signals)
+        return signals
+
+    async def _enrich_reddit_threads(
+        self, signals: list[PainSignal], max_enrich: int = 20
+    ) -> list[PainSignal]:
+        """Fetch actual thread content for Reddit signals that lack body_excerpt.
+
+        Uses the public JSON API (no auth required) to get post selftext
+        and top comments. Caps at max_enrich to avoid rate-limiting.
+        """
+        import aiohttp
+
+        to_enrich = [
+            s for s in signals
+            if s.source == "reddit" and s.url and not s.body_excerpt
+        ][:max_enrich]
+        if not to_enrich:
+            return signals
+
+        enriched_count = 0
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as session:
+            for sig in to_enrich:
+                # Convert reddit.com URL to .json endpoint
+                url = sig.url.rstrip("/")
+                if not url.startswith("http"):
+                    continue
+                json_url = url + ".json"
+                try:
+                    async with session.get(
+                        json_url,
+                        headers={"User-Agent": "autoresearch-deep-research/1.0"},
+                    ) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json(content_type=None)
+                        # Extract selftext + top comments
+                        parts: list[str] = []
+                        if isinstance(data, list) and len(data) >= 1:
+                            post = data[0].get("data", {}).get("children", [])
+                            if post:
+                                selftext = post[0].get("data", {}).get("selftext", "")
+                                if selftext:
+                                    parts.append(selftext[:1000])
+                            # Top comments
+                            if len(data) >= 2:
+                                comments = data[1].get("data", {}).get("children", [])
+                                for c in comments[:5]:
+                                    body = c.get("data", {}).get("body", "")
+                                    if body and len(body) > 20:
+                                        parts.append(body[:500])
+                        if parts:
+                            sig.body_excerpt = "\n".join(parts)[:2000]
+                            enriched_count += 1
+                except Exception:
+                    continue
+
+        if enriched_count:
+            logger.info("[DeepResearch] enriched %d Reddit threads with body content", enriched_count)
         return signals
 
     async def _search_github(self, limit: int) -> list[PainSignal]:
@@ -352,17 +449,23 @@ class DeepResearchAgent(BaseAgent):
         self, signals: list[PainSignal], run_id: str
     ) -> int:
         """Write signals to DB, cluster into findings, return count created."""
-        from database import RawSignal
+        from src.database import RawSignal
 
         finding_ids: list[int] = []
         for sig in signals:
             if not sig.url:
                 continue
 
-            # Persist raw signal
+            # Create or update finding first (need the ID for signal + atom)
             content_hash = hashlib.sha256(sig.url.encode()).hexdigest()[:16]
+            finding_id = self._upsert_finding(sig, run_id, content_hash)
+            if not finding_id:
+                continue
+            finding_ids.append(finding_id)
+
+            # Persist raw signal linked to finding
             signal = RawSignal(
-                finding_id=None,
+                finding_id=finding_id,
                 source_name=sig.source,
                 source_type=sig.source,
                 source_url=sig.url,
@@ -381,34 +484,68 @@ class DeepResearchAgent(BaseAgent):
             try:
                 signal_id = self.db.insert_raw_signal(signal)
             except Exception:
-                # Already exists — that's fine for raw_signals
                 signal_id = None
 
-            # Create or update finding
-            finding_id = self._upsert_finding(sig, run_id, content_hash)
-            if finding_id:
-                finding_ids.append(finding_id)
+            # Create a problem atom so the finding is actionable by the pipeline.
+            # Extract structured fields from the signal content rather than dumping
+            # the raw body — the screening gate requires real pain language, failure
+            # modes, and workarounds to classify a finding as pain_signal.
+            if signal_id and not self.db.get_problem_atoms_by_finding(finding_id):
+                body_text = (sig.body_excerpt or sig.title or "")
+                title_text = (sig.title or "")
+                atom = ProblemAtom(
+                    finding_id=finding_id,
+                    raw_signal_id=int(signal_id) if signal_id else 0,
+                    signal_id=int(signal_id) if signal_id else 0,
+                    segment=sig.source or "",
+                    user_role="",
+                    job_to_be_done=title_text[:200],
+                    trigger_event="",
+                    failure_mode=self._extract_failure_mode(body_text) or title_text[:200],
+                    current_workaround="",
+                    current_tools="",
+                    pain_statement=self._extract_pain_statement(body_text) or body_text[:500],
+                    source_quote=body_text[:300],
+                    confidence=0.5,
+                    confidence_score=0.5,
+                    metadata={
+                        "run_id": run_id,
+                        "vertical": self.vertical,
+                        "auto_created": True,
+                    },
+                )
+                try:
+                    self.db.insert_problem_atom(atom)
+                except Exception:
+                    pass
 
         return finding_ids
 
     def _upsert_finding(self, sig: PainSignal, run_id: str, content_hash: str) -> Optional[int]:
-        """Create a finding from a pain signal. Returns finding_id."""
+        """Create a finding, raw signal, and problem atom from a pain signal.
+
+        Without the signal and atom records, the finding cannot enter the
+        backlog workbench or produce useful recurrence queries.  The deep-
+        research agent extracts enough structure from the signal to build a
+        heuristic atom.
+        """
         # Check if URL already has a finding
         existing = self.db.get_finding_by_url(sig.url)
         if existing is not None:
             return int(existing.id) if existing.id else None
 
+        source_label = sig.source or "web"
         finding = Finding(
             source="deep_research",
             source_url=sig.url,
             source_class="pain_signal",
-            finding_kind="reddit_post" if sig.source == "reddit" else "github_issue" if sig.source == "github" else "web_content",
+            finding_kind="problem_signal",
             product_built=sig.title[:200],
             outcome_summary=(sig.body_excerpt or sig.title)[:2000],
             entrepreneur="",
             monetization_method="",
             content_hash=content_hash,
-            status="discovery_filter",  # will be routed to validation
+            status="qualified",  # routed to evidence/validation
             evidence={
                 "run_id": run_id,
                 "vertical": self.vertical,
@@ -417,7 +554,55 @@ class DeepResearchAgent(BaseAgent):
             },
         )
         finding_id = self.db.insert_finding(finding)
-        return int(finding_id) if finding_id else None
+        if not finding_id:
+            return None
+        finding_id = int(finding_id)
+
+        # Create a raw_signal so the backlog workbench and evidence agent can
+        # reference it.
+        raw_signal = RawSignal(
+            finding_id=finding_id,
+            source_name=f"deep_research/{source_label}",
+            source_type=source_label,
+            source_url=sig.url,
+            title=sig.title[:200],
+            body_excerpt=(sig.body_excerpt or "")[:2000],
+            content_hash=content_hash,
+            source_class="pain_signal",
+            quote_text=(sig.body_excerpt or "")[:500],
+            role_hint="",
+            published_at=sig.timestamp or "",
+            timestamp_hint=sig.timestamp or "",
+            metadata={
+                "vertical": self.vertical,
+                "subreddit": sig.subreddit,
+                "author": sig.author,
+                "score": sig.score,
+                "num_comments": sig.num_comments,
+            },
+        )
+        signal_id = self.db.insert_raw_signal(raw_signal)
+
+        # Create a heuristic problem atom from the signal title and excerpt.
+        # This gives the evidence agent something to work with for recurrence
+        # queries, even though a full LLM extraction would be richer.
+        body_text = sig.body_excerpt or sig.title or ""
+        atom = ProblemAtom(
+            finding_id=finding_id,
+            raw_signal_id=signal_id,
+            signal_id=signal_id,
+            job_to_be_done=sig.title[:300],
+            pain_statement=body_text[:500],
+            failure_mode=body_text[:300],
+            source_quote=body_text[:500],
+            atom_extraction_method="deep_research_heuristic",
+            confidence=0.4,
+            confidence_score=0.4,
+            atom_json='{}',
+        )
+        self.db.insert_problem_atom(atom)
+
+        return finding_id
 
     # ── Dispatch ───────────────────────────────────────────────────────────
 
