@@ -366,19 +366,18 @@ def _doc_matches_signature(doc: Any, signature_terms: list[str], *, origin_famil
     if not signature_terms:
         return False
     text = _doc_text(doc)
-    hits = [term for term in signature_terms if term in text]
+    tool_set = set(tool_terms or [])
+    problem_terms = [term for term in signature_terms if term not in tool_set]
+    hits = [term for term in problem_terms if term in text]
     if len(hits) >= 2:
         return True
     if len(hits) == 1 and any(term in text for term in GENERALIZABLE_WORKFLOW_TERMS):
         return True
-    # Tool-name tier: a doc mentioning a tool from the atom + any generalizable
-    # workflow term is a strong same-problem signal.  A single tool match alone
-    # is not enough (too broad), but tool + workflow term is specific enough.
+    # Tool-name tier: tool names can strengthen problem-specific matches, but
+    # they cannot create confirmation by themselves.  "Excel formatting issue"
+    # should not corroborate an Excel billing reconciliation macro failure.
     if tool_terms:
         tool_hits = [t for t in tool_terms if t in text]
-        if tool_hits and any(term in text for term in GENERALIZABLE_WORKFLOW_TERMS):
-            return True
-        # Tool + any signature hit is also sufficient
         if tool_hits and hits:
             return True
     # Cross-source docs from a different family than the origin only need 1 hit
@@ -388,15 +387,6 @@ def _doc_matches_signature(doc: Any, signature_terms: list[str], *, origin_famil
         doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
         if doc_family and doc_family != origin_family:
             return True
-    # Cross-source + tool match: a doc from a different source family that
-    # mentions the same tool is a genuine corroboration signal, even without
-    # a signature term hit.
-    if tool_terms and origin_family:
-        tool_hits = [t for t in tool_terms if t in text]
-        if tool_hits:
-            doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
-            if doc_family and doc_family != origin_family:
-                return True
     return False
 
 
@@ -839,6 +829,13 @@ class EvidenceAgent(BaseAgent):
         )
         self.db.upsert_corroboration(corroboration)
         self.db.upsert_market_enrichment(market_enrichment)
+        evidence_attempts = evidence_scores.get("evidence", {}).get("evidence_attempts", []) or []
+        if evidence_attempts:
+            self.db.insert_evidence_attempts(
+                finding_id=int(finding_id),
+                attempts=evidence_attempts,
+                run_id=self.db.get_active_run_id(),
+            )
 
         self.db.insert_ledger_entry(
             EvidenceLedgerEntry(
@@ -867,6 +864,7 @@ class EvidenceAgent(BaseAgent):
                         "recurrence_results_by_source": evidence_scores["evidence"].get("recurrence_results_by_source", {}),
                         "matched_results_by_source": evidence_scores["evidence"].get("matched_results_by_source", {}),
                         "partial_results_by_source": evidence_scores["evidence"].get("partial_results_by_source", {}),
+                        "evidence_attempts": evidence_attempts,
                         "family_confirmation_count": evidence_scores["evidence"].get("family_confirmation_count", 0),
                         "source_yield": evidence_scores["evidence"].get("source_yield", {}),
                         "reshaped_query_history": evidence_scores["evidence"].get("reshaped_query_history", []),
@@ -966,6 +964,24 @@ class EvidenceAgent(BaseAgent):
                 "queries_executed": [],
                 "recurrence_budget_profile": budget_profile,
                 "candidate_meaningful": self.toolkit._meaningful_candidate_snapshot(atom),
+                "evidence_attempts": [
+                    {
+                        "query": "",
+                        "source_family": "",
+                        "source_name": "",
+                        "status": "timeout",
+                        "duration_ms": int(max(0, self.evidence_timeout_seconds) * 1000),
+                        "raw_count": 0,
+                        "filtered_count": 0,
+                        "kept_count": 0,
+                        "deduped_count": 0,
+                        "strong_match_count": 0,
+                        "partial_match_count": 0,
+                        "failure_class": "evidence_agent_timeout",
+                        "error": "evidence_agent_timeout",
+                        "metadata": {"budget_profile": budget_profile},
+                    }
+                ],
                 "last_action": "STOP_FOR_BUDGET",
                 "last_transition_reason": "evidence_agent_timeout",
                 "chosen_family": "",

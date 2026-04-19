@@ -86,6 +86,31 @@ def test_orchestrator_routes_prototype_candidate_to_solution_framing(temp_db):
     assert queued.payload["build_brief_id"] == 7
 
 
+def test_orchestrator_routes_spec_draft_to_solution_framing(temp_db):
+    orchestrator = Orchestrator(temp_db)
+    message = create_message(
+        from_agent="validation",
+        to_agent="orchestrator",
+        msg_type=MessageType.VALIDATION,
+        payload={
+            "finding_id": 1,
+            "decision": "promote",
+            "selection_status": "research_more",
+            "build_brief_id": 8,
+            "build_brief_purpose": "product_spec_draft",
+            "opportunity_id": 10,
+        },
+    )
+
+    asyncio.run(orchestrator._handle_orchestrator_message(message))
+
+    queued = asyncio.run(orchestrator._message_queue.get_for_agent("solution_framing"))
+    assert queued is not None
+    assert queued.msg_type == MessageType.BUILD_BRIEF
+    assert queued.payload["build_brief_id"] == 8
+    assert queued.payload["build_brief_purpose"] == "product_spec_draft"
+
+
 def test_stop_on_hit_matches_defaults():
     cfg = {"enabled": True}
     assert Orchestrator.stop_on_hit_matches(

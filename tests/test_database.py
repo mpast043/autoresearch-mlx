@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from src.database import (  # noqa: E402
     BuildBrief,
     Database,
+    EvidenceAttempt,
     EvidenceLedgerEntry,
     Finding,
     Opportunity,
@@ -99,6 +100,7 @@ class TestDatabase(unittest.TestCase):
             "validation_experiments",
             "experiments",
             "evidence_ledger",
+            "evidence_attempts",
             "corroborations",
             "market_enrichments",
             "review_feedback",
@@ -107,6 +109,67 @@ class TestDatabase(unittest.TestCase):
         }
         self.assertTrue(expected_tables.issubset(tables))
         conn.close()
+
+    def test_evidence_attempts_round_trip(self) -> None:
+        finding_id = self.db.insert_finding(
+            Finding(source="reddit", source_url="https://reddit.com/r/test/comments/1", content_hash="attempts")
+        )
+
+        attempt_id = self.db.insert_evidence_attempt(
+            EvidenceAttempt(
+                finding_id=finding_id,
+                run_id="test-run",
+                query='"manual csv cleanup"',
+                source_family="web",
+                source_name="web",
+                status="completed",
+                duration_ms=123,
+                raw_count=5,
+                filtered_count=3,
+                kept_count=2,
+                deduped_count=1,
+                strong_match_count=1,
+                partial_match_count=1,
+                failure_class="filtering_failure",
+                metadata={"provider": "ddg"},
+            )
+        )
+
+        rows = self.db.list_evidence_attempts(finding_id=finding_id, run_id="test-run")
+
+        self.assertGreater(attempt_id, 0)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].finding_id, finding_id)
+        self.assertEqual(rows[0].query, '"manual csv cleanup"')
+        self.assertEqual(rows[0].source_family, "web")
+        self.assertEqual(rows[0].raw_count, 5)
+        self.assertEqual(rows[0].filtered_count, 3)
+        self.assertEqual(rows[0].kept_count, 2)
+        self.assertEqual(rows[0].metadata["provider"], "ddg")
+
+    def test_delete_finding_removes_evidence_attempts(self) -> None:
+        finding_id = self.db.insert_finding(
+            Finding(source="reddit", source_url="https://reddit.com/r/test/comments/2", content_hash="attempt-delete")
+        )
+        self.db.insert_evidence_attempt(
+            EvidenceAttempt(
+                finding_id=finding_id,
+                run_id="test-run",
+                query='"manual csv cleanup"',
+                source_family="web",
+                source_name="web",
+                status="completed",
+                raw_count=5,
+                filtered_count=5,
+                kept_count=0,
+                failure_class="filtering_failure",
+            )
+        )
+
+        self.db.delete_finding(finding_id)
+
+        self.assertIsNone(self.db.get_finding(finding_id))
+        self.assertEqual(self.db.list_evidence_attempts(finding_id=finding_id), [])
 
     def test_insert_and_retrieve_finding(self) -> None:
         finding = Finding(

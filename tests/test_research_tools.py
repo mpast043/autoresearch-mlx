@@ -189,8 +189,10 @@ def test_validate_problem_builds_compact_query_and_caps_evidence():
     assert "feature" not in recurrence_query
     assert "request" not in recurrence_query
     assert competitor_query.endswith("software tool alternative")
-    assert len(result["evidence"]["recurrence_docs"]) == 5
-    assert len(result["evidence"]["competitor_docs"]) == 5
+    # evidence_sample is floored at 8 so source-diverse recurrence evidence is not
+    # accidentally truncated before corroboration diversity is computed.
+    assert len(result["evidence"]["recurrence_docs"]) == 6
+    assert len(result["evidence"]["competitor_docs"]) == 8
     assert result["evidence"]["query"]
 
 
@@ -229,8 +231,152 @@ def test_validate_problem_degrades_gracefully_when_inner_budgets_timeout():
     assert result["evidence"]["recurrence_timeout"] is True
     assert result["evidence"]["competitor_timeout"] is True
     assert result["evidence"]["recurrence_failure_class"] == "budget_exhausted"
+    assert result["evidence"]["evidence_attempts"]
+    assert result["evidence"]["evidence_attempts"][0]["status"] == "timeout"
+    assert result["evidence"]["evidence_attempts"][0]["failure_class"] == "recurrence_budget_timeout"
     assert result["evidence"]["recurrence_docs"] == []
     assert result["evidence"]["competitor_docs"] == []
+
+
+def test_validate_problem_timeout_preserves_partial_recurrence_docs():
+    toolkit = ResearchToolkit(
+        {
+            "validation": {
+                "search": {
+                    "recurrence_budget_seconds": 0.01,
+                    "competitor_budget_seconds": 0.01,
+                }
+            }
+        }
+    )
+
+    async def slow_gather(queries, finding_kind, atom=None):
+        toolkit._track_recurrence_attempt(
+            {
+                "query": queries[0],
+                "source_family": "reddit",
+                "source_name": "reddit",
+                "status": "completed",
+                "duration_ms": 1,
+                "raw_count": 1,
+                "filtered_count": 0,
+                "kept_count": 1,
+                "deduped_count": 1,
+                "strong_match_count": 0,
+                "partial_match_count": 0,
+                "failure_class": "retrieved",
+                "error": "",
+                "metadata": {},
+            }
+        )
+        toolkit._track_recurrence_doc(
+            SearchDocument(
+                title="Manual reconciliation pain",
+                url="https://reddit.com/r/accounting/comments/partial",
+                snippet="Bookkeepers still reconcile bank deposits against invoices in spreadsheets.",
+                source="reddit/accounting",
+                source_family="reddit",
+                retrieval_query=queries[0],
+            )
+        )
+        await asyncio.sleep(0.05)
+        return [], {}
+
+    async def fast_search(*args, **kwargs):
+        return []
+
+    toolkit.gather_recurrence_evidence = slow_gather
+    toolkit.search_web = fast_search
+
+    result = asyncio.run(
+        toolkit.validate_problem(
+            title="Manual reconciliation still takes hours",
+            summary="Bookkeepers still reconcile deposits and invoices in spreadsheets.",
+            finding_kind="pain_point",
+        )
+    )
+
+    assert result["evidence"]["recurrence_state"] == "thin"
+    assert result["evidence"]["recurrence_failure_class"] == "partial_retrieval_timeout"
+    assert result["evidence"]["recurrence_doc_count"] == 1
+    assert result["evidence"]["recurrence_results_by_source"]["reddit"] == 1
+    assert result["evidence"]["recurrence_docs"][0]["url"] == "https://reddit.com/r/accounting/comments/partial"
+
+
+def test_extract_core_problem_concepts_keeps_short_tech_terms_and_dedupes():
+    toolkit = ResearchToolkit({})
+    atom = SimpleNamespace(
+        pain_statement="CSV import creates duplicates and VBA cleanup scripts keep breaking.",
+        job_to_be_done="Import CSV files without duplicate rows.",
+        trigger_event="",
+        failure_mode="The VBA macro fails during CSV cleanup.",
+        current_workaround="",
+        current_tools="CSV VBA Excel",
+    )
+
+    concepts = toolkit._extract_core_problem_concepts(atom)
+
+    assert "csv" in concepts
+    assert "vba" in concepts
+    assert len(concepts) == len(set(concepts))
+
+
+def test_recurrence_source_task_timeout_allows_configured_search_stack():
+    toolkit = ResearchToolkit(
+        {
+            "validation": {
+                "search": {
+                    "recurrence_budget_seconds": 45,
+                    "provider_timeout_recurrence": 8,
+                    "request_timeout_recurrence": 10,
+                }
+            }
+        }
+    )
+
+    assert toolkit._recurrence_source_task_timeout() >= 18
+
+
+def test_recurrence_site_plan_prioritizes_general_web_before_specialized_sites():
+    toolkit = ResearchToolkit({})
+    atom = SimpleNamespace(
+        segment="small business operators",
+        user_role="bookkeeper",
+        job_to_be_done="reconcile bank deposits and invoice payments",
+        pain_statement="Manual reconciliation takes too long.",
+        trigger_event="month end close",
+        failure_mode="bank deposits do not match invoices",
+        current_workaround="spreadsheet and csv cleanup",
+        current_tools="QuickBooks Excel CSV",
+    )
+
+    site_plan = toolkit._recurrence_site_plan(atom, subreddit_plan=["accounting"], limit=4)
+    specialized_sites, _reason = toolkit._specialized_web_routing_sites(
+        atom=atom,
+        plan=toolkit._build_corroboration_plan(atom=atom, queries=[], finding_kind="problem_signal"),
+    )
+
+    assert site_plan[0] == (None, "web")
+    assert specialized_sites[0] == (None, "web")
+
+
+def test_broad_web_filtering_failure_detected_from_attempt_trace():
+    toolkit = ResearchToolkit({})
+
+    assert toolkit._has_broad_web_filtering_failure(
+        {
+            "evidence_attempts": [
+                {
+                    "source_family": "web",
+                    "source_name": "web",
+                    "status": "completed",
+                    "raw_count": 10,
+                    "kept_count": 0,
+                    "failure_class": "filtering_failure",
+                }
+            ]
+        }
+    )
 
 
 def test_generic_manual_prompt_keeps_exploratory_recurrence_budget():
@@ -1192,13 +1338,13 @@ def test_accounting_reconciliation_web_routing_prefers_practitioner_communities(
     sites, reason = toolkit._specialized_web_routing_sites(atom=atom, plan=plan, attempt_index=0)
 
     assert reason == "accounting_practitioner_surface_first"
-    assert sites[:3] == [
+    assert sites[:4] == [
+        (None, "web"),
         ("community.intuit.com", "web"),
         ("quickbooks.intuit.com/learn-support", "web"),
         ("community.oracle.com", "web"),
     ]
     assert ("community.sap.com", "web") in sites
-    assert (None, "web") in sites
 
 
 def test_multichannel_seller_reporting_web_routing_prefers_operator_communities():
@@ -1223,9 +1369,9 @@ def test_multichannel_seller_reporting_web_routing_prefers_operator_communities(
 
     assert reason == "seller_reporting_surface_first"
     assert sites == [
+        (None, "web"),
         ("community.shopify.com", "web"),
         ("community.etsy.com", "web"),
-        (None, "web"),
     ]
 
 
@@ -1386,6 +1532,47 @@ def test_validation_recurrence_site_search_can_fall_back_to_bing(monkeypatch):
     assert [doc.url for doc in docs] == [
         "https://community.atlassian.com/forums/App-Central-discussions/Which-spreadsheet-is-the-latest-version/td-p/123"
     ]
+
+
+def test_validation_recurrence_general_search_can_fall_back_to_bing(monkeypatch):
+    monkeypatch.setitem(sys.modules, "ddgs", types.SimpleNamespace(DDGS=FakeEmptyDDGS))
+    monkeypatch.setitem(sys.modules, "duckduckgo_search", types.SimpleNamespace(DDGS=FakeEmptyDDGS))
+    toolkit = ResearchToolkit({"validation": {"search": {"max_results_per_domain": 2, "ddgs_backend": "duckduckgo"}}})
+
+    class FakeResponse:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        if "html.duckduckgo.com" in url:
+            return FakeResponse("<html><body></body></html>")
+        if "bing.com/search" in url:
+            return FakeResponse(
+                """
+                <html><body>
+                  <li class='b_algo'>
+                    <h2><a href='https://ops.example.com/manual-reconciliation-small-business'>Manual reconciliation in small business finance workflows</a></h2>
+                    <div class='b_caption'><p>Bookkeepers still reconcile bank deposits against invoices in spreadsheets when payment feeds do not match.</p></div>
+                  </li>
+                </body></html>
+                """
+            )
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr("src.research_tools.requests.get", fake_get)
+
+    docs = asyncio.run(
+        toolkit.search_web(
+            '"manual reconciliation" "small business"',
+            max_results=5,
+            intent="validation_recurrence",
+        )
+    )
+
+    assert [doc.url for doc in docs] == ["https://ops.example.com/manual-reconciliation-small-business"]
 
 
 def test_validation_recurrence_stackexchange_site_search_returns_docs(monkeypatch):
@@ -2864,6 +3051,71 @@ def test_expand_recurrence_source_families_warms_reddit_branch_queries(monkeypat
     assert any("manual workflow" in query or "spreadsheet workaround" in query for query in queries)
 
 
+def test_expand_recurrence_source_families_skips_web_after_broad_filtering_failure(monkeypatch):
+    toolkit = ResearchToolkit()
+
+    async def fail_run_recurrence_collection(**_kwargs):
+        raise AssertionError("web expansion should not run after broad web filtering failure")
+
+    monkeypatch.setattr(toolkit, "_run_recurrence_collection", fail_run_recurrence_collection)
+
+    atom = SimpleNamespace(
+        segment="small business accounting",
+        user_role="controller",
+        job_to_be_done="close the books without reconciliation drift",
+        failure_mode="stripe payouts and qbo exports stay out of sync after csv imports",
+        trigger_event="during month end close",
+        current_workaround="manual spreadsheet reconciliation",
+        cost_consequence_clues="time loss and reporting delays",
+        current_tools="stripe qbo csv exports",
+    )
+    plan = toolkit._build_corroboration_plan(
+        atom=atom,
+        queries=['"manual reconciliation" "small business"'],
+        finding_kind="problem_signal",
+    )
+
+    docs, results_by_query, results_by_source, _collection_meta, branch = asyncio.run(
+        toolkit._expand_recurrence_source_families(
+            selected_queries=['"manual reconciliation" "small business"'],
+            atom=atom,
+            all_subreddits=[],
+            all_sites=[(None, "web")],
+            current_docs=[],
+            current_results_by_query={'"manual reconciliation" "small business"': 0},
+            current_results_by_source={"reddit": 2, "web": 0},
+            current_collection_meta={
+                "evidence_attempts": [
+                    {
+                        "query": '"manual reconciliation" "small business"',
+                        "source_family": "web",
+                        "source_name": "web",
+                        "status": "completed",
+                        "raw_count": 10,
+                        "filtered_count": 10,
+                        "kept_count": 0,
+                        "deduped_count": 0,
+                        "failure_class": "filtering_failure",
+                        "metadata": {"site": ""},
+                    }
+                ],
+            },
+            budget_profile={"target_sources": 2, "target_docs": 4, "early_stop_docs": 5},
+            corroboration_plan=plan,
+        )
+    )
+
+    assert docs == []
+    assert results_by_query == {'"manual reconciliation" "small business"': 0}
+    assert results_by_source == {"reddit": 2, "web": 0}
+    assert branch["triggered"] is True
+    assert branch["missing_sources"] == []
+    assert branch["source_attempts"] == []
+    assert branch["skipped_families"]["web"] == "broad_web_filtering_failure"
+    assert branch["last_action"] == "SKIP_SOURCE"
+    assert any(action["reason"] == "broad_web_filtering_failure" for action in branch["controller_actions"])
+
+
 def test_expand_recurrence_source_families_records_reshape_retry(monkeypatch):
     toolkit = ResearchToolkit({"validation": {"search": {"recurrence_results": 6}}})
     atom = SimpleNamespace(
@@ -3892,6 +4144,9 @@ def test_gather_recurrence_evidence_records_yield_fields(monkeypatch):
     assert "partial_docs_by_source" in meta
     assert "family_confirmation_count" in meta
     assert "reshaped_query_history" in meta
+    assert "evidence_attempts" in meta
+    assert any(attempt["source_family"] == "web" for attempt in meta["evidence_attempts"])
+    assert any(attempt["source_family"] == "reddit" for attempt in meta["evidence_attempts"])
     assert meta["source_yield"]["web"]["docs_retrieved"] >= 1
     assert meta["source_yield"]["web"]["docs_strong_match"] >= 0
     assert meta["matched_docs_by_source"]["web"]

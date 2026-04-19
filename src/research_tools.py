@@ -1067,6 +1067,8 @@ class ResearchToolkit:
         self._search_cache: dict[tuple[str, int, Optional[str], str], list[SearchDocument]] = {}
         self._fetch_cache: dict[str, dict[str, Any]] = {}
         self._recurrence_attempt_cache: dict[str, tuple[list[SearchDocument], dict[str, Any]]] = {}
+        self._last_recurrence_attempt_trace: list[dict[str, Any]] = []
+        self._last_recurrence_docs: list[SearchDocument] = []
         self._discovery_feedback: dict[str, dict[str, dict[str, Any]]] = {}
         self._cache_timestamps: dict[str, float] = {}
         self._cache_ttl: float = 3600.0  # 1 hour
@@ -1092,9 +1094,9 @@ class ResearchToolkit:
         self.validation_recurrence_limit = max(4, int(validation_search.get("recurrence_results", 6)))
         self.validation_competitor_limit = max(6, int(validation_search.get("competitor_results", 8)))
         self.validation_evidence_sample = max(8, int(validation_search.get("evidence_sample", 20)))
-        self.validation_recurrence_budget_seconds = float(validation_search.get("recurrence_budget_seconds", 8.0))
+        self.validation_recurrence_budget_seconds = float(validation_search.get("recurrence_budget_seconds", 45.0))
         self.validation_competitor_budget_seconds = float(
-            validation_search.get("competitor_budget_seconds", 6.0)
+            validation_search.get("competitor_budget_seconds", 20.0)
         )
         self.search_domain_cap = max(1, int(validation_search.get("max_results_per_domain", 2)))
         self.ddgs_backend = validation_search.get("ddgs_backend", "duckduckgo")
@@ -1104,12 +1106,12 @@ class ResearchToolkit:
         self.search_user_agent = str(
             validation_search.get("search_user_agent", "Mozilla/5.0 (compatible; AutoResearcher/1.0)")
         )
-        self.provider_timeout_recurrence = max(1, float(validation_search.get("provider_timeout_recurrence", 3)))
-        self.provider_timeout_competitor = max(1, float(validation_search.get("provider_timeout_competitor", 4)))
-        self.provider_timeout_general = max(1, float(validation_search.get("provider_timeout_general", 8)))
-        self.request_timeout_recurrence = max(1, float(validation_search.get("request_timeout_recurrence", 4)))
-        self.request_timeout_competitor = max(1, float(validation_search.get("request_timeout_competitor", 5)))
-        self.request_timeout_general = max(1, float(validation_search.get("request_timeout_general", 12)))
+        self.provider_timeout_recurrence = max(1, float(validation_search.get("provider_timeout_recurrence", 8)))
+        self.provider_timeout_competitor = max(1, float(validation_search.get("provider_timeout_competitor", 10)))
+        self.provider_timeout_general = max(1, float(validation_search.get("provider_timeout_general", 12)))
+        self.request_timeout_recurrence = max(1, float(validation_search.get("request_timeout_recurrence", 10)))
+        self.request_timeout_competitor = max(1, float(validation_search.get("request_timeout_competitor", 12)))
+        self.request_timeout_general = max(1, float(validation_search.get("request_timeout_general", 20)))
         # YouTube API key
         self.youtube_api_key = os.environ.get("YOUTUBE_API_KEY", "")
         self._session: aiohttp.ClientSession | None = None
@@ -2170,16 +2172,43 @@ class ResearchToolkit:
         max_results: int = 8,
         site: Optional[str] = None,
         intent: str = "general",
+        diagnostics: Optional[dict[str, Any]] = None,
     ) -> list[SearchDocument]:
         cache_key = (query, max_results, site, intent)
         cached = self._cache_get(self._search_cache, cache_key)
         if cached is not None:
+            if diagnostics is not None:
+                diagnostics.update(
+                    {
+                        "query": query,
+                        "site": site or "",
+                        "intent": intent,
+                        "cache_hit": True,
+                        "raw_count": len(cached),
+                        "accepted_count": len(cached),
+                        "filtered_count": 0,
+                        "provider_errors": [],
+                    }
+                )
             return list(cached)
 
         full_query = f"site:{site} {query}" if site else query
         results: list[SearchDocument] = []
         seen_urls: set[str] = set()
         domain_counts: Counter[str] = Counter()
+        if diagnostics is not None:
+            diagnostics.update(
+                {
+                    "query": query,
+                    "site": site or "",
+                    "intent": intent,
+                    "cache_hit": False,
+                    "raw_count": 0,
+                    "accepted_count": 0,
+                    "filtered_count": 0,
+                    "provider_errors": [],
+                }
+            )
         validation_intent = intent.startswith("validation_")
         if intent == "validation_recurrence":
             provider_timeout = self.provider_timeout_recurrence
@@ -2192,14 +2221,20 @@ class ResearchToolkit:
             request_timeout = self.request_timeout_general
 
         def _append_result(title: str, url: str, snippet: str) -> bool:
+            if diagnostics is not None:
+                diagnostics["raw_count"] = int(diagnostics.get("raw_count", 0) or 0) + 1
             normalized_url = normalize_search_url(url)
             if not normalized_url:
+                if diagnostics is not None:
+                    diagnostics["filtered_count"] = int(diagnostics.get("filtered_count", 0) or 0) + 1
                 return False
             domain = domain_for(normalized_url)
             if not domain or domain in NOISY_SEARCH_DOMAINS or domain in SEARCH_ENGINE_RESULT_DOMAINS:
                 logger.debug(
                     "[search_dbg] NOISY/ENGINE domain=%s query=%r", domain, query[:60]
                 )
+                if diagnostics is not None:
+                    diagnostics["filtered_count"] = int(diagnostics.get("filtered_count", 0) or 0) + 1
                 return False
             relevant = self._is_relevant_search_result(
                 query=query,
@@ -2215,8 +2250,12 @@ class ResearchToolkit:
                     "[search_dbg] FILTERED intent=%s overlap=%d domain=%s title=%r query=%r",
                     intent, ov, domain, title[:60], query[:60],
                 )
+                if diagnostics is not None:
+                    diagnostics["filtered_count"] = int(diagnostics.get("filtered_count", 0) or 0) + 1
                 return False
             if normalized_url in seen_urls or domain_counts[domain] >= self.search_domain_cap:
+                if diagnostics is not None:
+                    diagnostics["filtered_count"] = int(diagnostics.get("filtered_count", 0) or 0) + 1
                 return False
             results.append(
                 SearchDocument(
@@ -2228,6 +2267,8 @@ class ResearchToolkit:
             )
             seen_urls.add(normalized_url)
             domain_counts[domain] += 1
+            if diagnostics is not None:
+                diagnostics["accepted_count"] = int(diagnostics.get("accepted_count", 0) or 0) + 1
             return True
 
         if intent == "validation_recurrence" and site:
@@ -2273,6 +2314,8 @@ class ResearchToolkit:
                 return list(results)
         except Exception as exc:
             logger.debug("ddgs search provider failed: %s", exc)
+            if diagnostics is not None:
+                diagnostics.setdefault("provider_errors", []).append({"provider": "ddgs", "error": str(exc)})
 
         try:
             for row in await _run_ddg_provider("duckduckgo_search", provider_timeout):
@@ -2281,6 +2324,8 @@ class ResearchToolkit:
                     break
         except Exception as exc:
             logger.debug("duckduckgo_search provider failed: %s", exc)
+            if diagnostics is not None:
+                diagnostics.setdefault("provider_errors", []).append({"provider": "duckduckgo_search", "error": str(exc)})
 
         if results:
             self._cache_set(self._search_cache, cache_key, list(results))
@@ -2312,8 +2357,10 @@ class ResearchToolkit:
                     break
         except Exception as exc:
             logger.debug("DDG HTML search failed: %s", exc)
+            if diagnostics is not None:
+                diagnostics.setdefault("provider_errors", []).append({"provider": "ddg_html", "error": str(exc)})
 
-        if validation_intent and not (intent == "validation_recurrence" and site):
+        if validation_intent and results and not (intent == "validation_recurrence" and site):
             self._cache_set(self._search_cache, cache_key, list(results))
             return list(results)
 
@@ -2344,6 +2391,8 @@ class ResearchToolkit:
                     ) and len(results) >= max_results:
                         break
             except Exception:
+                if diagnostics is not None:
+                    diagnostics.setdefault("provider_errors", []).append({"provider": "bing", "error": "request_failed"})
                 return []
 
         self._cache_set(self._search_cache, cache_key, list(results))
@@ -3180,6 +3229,62 @@ class ResearchToolkit:
             findings.extend(await self._discover_web_problem_threads(queries=queries[:2], observer=observer))
         return findings
 
+    def _reset_recurrence_attempt_trace(self) -> None:
+        self._last_recurrence_attempt_trace = []
+        self._last_recurrence_docs: list[SearchDocument] = []
+
+    def _track_recurrence_attempt(self, attempt: dict[str, Any]) -> dict[str, Any]:
+        self._last_recurrence_attempt_trace.append(attempt)
+        return attempt
+
+    def _track_recurrence_doc(self, doc: SearchDocument) -> SearchDocument:
+        self._last_recurrence_docs.append(doc)
+        return doc
+
+    def get_last_recurrence_attempt_trace(self) -> list[dict[str, Any]]:
+        return [
+            {key: value for key, value in dict(attempt).items() if not str(key).startswith("_")}
+            for attempt in getattr(self, "_last_recurrence_attempt_trace", [])
+        ]
+
+    def get_last_recurrence_docs(self) -> list[SearchDocument]:
+        return list(getattr(self, "_last_recurrence_docs", []))
+
+    def _timeout_recurrence_attempts(self, queries: list[str], reason: str) -> list[dict[str, Any]]:
+        attempts = []
+        now = time.monotonic()
+        for raw_attempt in getattr(self, "_last_recurrence_attempt_trace", []):
+            attempt = {key: value for key, value in dict(raw_attempt).items() if not str(key).startswith("_")}
+            started_at = raw_attempt.get("_started_at")
+            if started_at and not attempt.get("duration_ms"):
+                attempt["duration_ms"] = int(max(0.0, now - float(started_at)) * 1000)
+            attempts.append(attempt)
+        if attempts:
+            for attempt in attempts:
+                if attempt.get("status") in {"started", "pending"}:
+                    attempt["status"] = "timeout"
+                    attempt["failure_class"] = reason
+            return attempts
+        query = queries[0] if queries else ""
+        return [
+            {
+                "query": query,
+                "source_family": "",
+                "source_name": "",
+                "status": "timeout",
+                "duration_ms": int(max(0.0, self.validation_recurrence_budget_seconds) * 1000),
+                "raw_count": 0,
+                "filtered_count": 0,
+                "kept_count": 0,
+                "deduped_count": 0,
+                "strong_match_count": 0,
+                "partial_match_count": 0,
+                "failure_class": reason,
+                "error": reason,
+                "metadata": {"queries_considered": list(queries)},
+            }
+        ]
+
     async def validate_problem(
         self,
         title: str,
@@ -3192,6 +3297,7 @@ class ResearchToolkit:
         recurrence_queries = self.build_recurrence_queries(title=title, summary=summary, atom=atom)
         recurrence_timeout = False
         competitor_timeout = False
+        self._reset_recurrence_attempt_trace()
         try:
             recurrence_docs, recurrence_meta = await asyncio.wait_for(
                 self.gather_recurrence_evidence(
@@ -3203,24 +3309,50 @@ class ResearchToolkit:
             )
         except asyncio.TimeoutError:
             recurrence_timeout = True
-            recurrence_docs = []
+            evidence_attempts = self._timeout_recurrence_attempts(recurrence_queries, "recurrence_budget_timeout")
+            recurrence_docs = self.get_last_recurrence_docs()
+            partial_results_by_source = {
+                "web": 0,
+                "reddit": 0,
+                "github": 0,
+                "stackoverflow": 0,
+                "etsy": 0,
+                "forum_fallback": 0,
+            }
+            partial_results_by_query = {query: 0 for query in recurrence_queries}
+            for doc in recurrence_docs:
+                source_label = getattr(doc, "source_family", "") or "web"
+                query_text = getattr(doc, "retrieval_query", "") or (recurrence_queries[0] if recurrence_queries else "")
+                partial_results_by_source[source_label] = partial_results_by_source.get(source_label, 0) + 1
+                if query_text:
+                    partial_results_by_query[query_text] = partial_results_by_query.get(query_text, 0) + 1
+            if not recurrence_docs:
+                for attempt in evidence_attempts:
+                    source_label = str(attempt.get("source_family") or "")
+                    query_text = str(attempt.get("query") or "")
+                    deduped_count = int(attempt.get("deduped_count") or 0)
+                    if source_label:
+                        partial_results_by_source[source_label] = partial_results_by_source.get(source_label, 0) + deduped_count
+                    if query_text:
+                        partial_results_by_query[query_text] = partial_results_by_query.get(query_text, 0) + deduped_count
+            recurrence_domains = {domain_for(doc.url) for doc in recurrence_docs if doc.url}
+            partial_doc_count = len(recurrence_docs)
+            partial_query_coverage = (
+                sum(1 for count in partial_results_by_query.values() if count > 0) / max(len(recurrence_queries), 1)
+            )
+            partial_retrieval = partial_doc_count > 0 or any(
+                int(attempt.get("deduped_count") or 0) > 0 for attempt in evidence_attempts
+            )
             recurrence_meta = {
-                "recurrence_score": 0.0,
-                "recurrence_state": "timeout",
-                "recurrence_gap_reason": "recurrence_budget_timeout",
-                "recurrence_failure_class": "budget_exhausted",
-                "query_coverage": 0.0,
-                "doc_count": 0,
-                "domain_count": 0,
-                "results_by_query": {query: 0 for query in recurrence_queries},
-                "results_by_source": {
-                    "web": 0,
-                    "reddit": 0,
-                    "github": 0,
-                    "stackoverflow": 0,
-                    "etsy": 0,
-                    "forum_fallback": 0,
-                },
+                "recurrence_score": 0.08 if partial_retrieval else 0.0,
+                "recurrence_state": "thin" if partial_retrieval else "timeout",
+                "recurrence_gap_reason": "timeout_after_partial_retrieval" if partial_retrieval else "recurrence_budget_timeout",
+                "recurrence_failure_class": "partial_retrieval_timeout" if partial_retrieval else "budget_exhausted",
+                "query_coverage": round(partial_query_coverage, 4),
+                "doc_count": partial_doc_count,
+                "domain_count": len(recurrence_domains),
+                "results_by_query": partial_results_by_query,
+                "results_by_source": partial_results_by_source,
                 "matched_results_by_source": {},
                 "partial_results_by_source": {},
                 "matched_docs_by_source": {},
@@ -3236,7 +3368,8 @@ class ResearchToolkit:
                     "uncovered_after": 0,
                 },
                 "queries_considered": list(recurrence_queries),
-                "queries_executed": [],
+                "queries_executed": sorted({str(attempt.get("query") or "") for attempt in evidence_attempts if attempt.get("query")}),
+                "evidence_attempts": evidence_attempts,
                 "recurrence_budget_profile": self._recurrence_budget_profile(atom),
                 "candidate_meaningful": self._meaningful_candidate_snapshot(atom),
                 "recurrence_probe_summary": {},
@@ -3403,6 +3536,7 @@ class ResearchToolkit:
             "reshaped_query_history": recurrence_meta.get("reshaped_query_history", []),
             "recurrence_gap_reason": recurrence_meta.get("recurrence_gap_reason", ""),
             "recurrence_failure_class": recurrence_meta.get("recurrence_failure_class", ""),
+            "evidence_attempts": recurrence_meta.get("evidence_attempts", []),
             "queries_considered": recurrence_meta.get("queries_considered", []),
             "queries_executed": recurrence_meta.get("queries_executed", []),
             "recurrence_budget_profile": recurrence_meta.get("recurrence_budget_profile", {}),
@@ -3706,14 +3840,15 @@ class ResearchToolkit:
         cleaned = _clean_recurrence_text(raw)
         if not cleaned:
             return []
-        tokens = [
+        raw_tokens = [
             t for t in re.findall(r"[a-z0-9&/-]+", cleaned)
             if t not in QUERY_STOPWORDS
             and t not in RECURRENCE_NOISE_TERMS
             and t not in WEAK_VALIDATION_TERMS
             and t not in self._PERSONAL_NARRATIVE_TERMS
-            and len(t) > 3  # Require 4+ chars to filter noise like "rns", "part", "out"
+            and (len(t) > 3 or t in _SHORT_TECH_TERMS)
         ]
+        tokens = list(dict.fromkeys(raw_tokens))
         # Prioritize tokens from pain_statement and failure_mode —
         # these contain the clearest problem descriptions.
         pain_tokens = set(
@@ -3722,11 +3857,16 @@ class ResearchToolkit:
         failure_tokens = set(
             re.findall(r"[a-z0-9]+", (getattr(atom, "failure_mode", "") or "").lower())
         )
+        tool_tokens = set(
+            re.findall(r"[a-z0-9]+", (getattr(atom, "current_tools", "") or "").lower())
+        )
         scored = sorted(
             tokens,
             key=lambda t: (
+                4 if t in tool_tokens and t in _SHORT_TECH_TERMS else 0,
                 3 if t in pain_tokens else 0,
                 2 if t in failure_tokens else 0,
+                1 if t in _SHORT_TECH_TERMS else 0,
                 min(len(t), 10),
             ),
             reverse=True,
@@ -5238,9 +5378,9 @@ class ResearchToolkit:
         )
         if self._is_multichannel_seller_reporting_cohort(atom=atom, plan=plan):
             sites = [
+                (None, "web"),
                 ("community.shopify.com", "web"),
                 ("community.etsy.com", "web"),
-                (None, "web"),
             ]
             return (sites, "seller_reporting_surface_first")
         if any(term in haystack for term in ["shopify", "merchant", "storefront", "app store"]):
@@ -5260,20 +5400,20 @@ class ResearchToolkit:
             return (sites, "seller_community_first")
         if self._is_accounting_reconciliation_cohort(atom=atom, plan=plan):
             sites = [
+                (None, "web"),
                 ("community.intuit.com", "web"),
                 ("quickbooks.intuit.com/learn-support", "web"),
                 ("community.oracle.com", "web"),
                 ("community.sap.com", "web"),
-                (None, "web"),
             ]
             return (sites, "accounting_practitioner_surface_first")
         if self._is_workflow_fragility_cohort(atom=atom, plan=plan):
             sites = [
+                (None, "web"),
                 ("superuser.com", "web"),
                 ("webapps.stackexchange.com", "web"),
                 ("community.atlassian.com", "web"),
                 ("community.monday.com", "web"),
-                (None, "web"),
             ]
             return (sites, "workflow_fragility_surface_first")
         if attempt_index > 0 and self._is_spreadsheet_operator_admin_cohort(atom=atom, plan=plan):
@@ -5968,6 +6108,43 @@ class ResearchToolkit:
             )
             matched_docs_by_source[label] = strong_docs
             partial_docs_by_source[label] = partial_docs
+        evidence_attempts = [
+            {key: value for key, value in dict(attempt).items() if not str(key).startswith("_")}
+            for attempt in (collection_meta.get("evidence_attempts", []) or [])
+            if isinstance(attempt, dict)
+        ]
+        for attempt in evidence_attempts:
+            label = str(attempt.get("source_family") or "")
+            query = str(attempt.get("query") or "")
+            docs_for_attempt = [
+                doc
+                for doc in (collection_meta.get("docs_by_source", {}) or {}).get(label, [])
+                if not query or getattr(doc, "retrieval_query", "") == query
+            ]
+            if docs_for_attempt and atom is not None:
+                attempt_yield = self._evaluate_source_yield(
+                    source_label=label,
+                    docs=docs_for_attempt,
+                    docs_retrieved=int(attempt.get("raw_count", 0) or attempt.get("kept_count", 0) or 0),
+                    docs_after_dedupe=len(docs_for_attempt),
+                    queries_attempted=[query] if query else [],
+                    atom=atom,
+                    signature_terms=corroboration_plan.signature_terms,
+                    attempts=1,
+                )
+                attempt["strong_match_count"] = int(attempt_yield.get("docs_strong_match", 0) or 0)
+                attempt["partial_match_count"] = int(attempt_yield.get("docs_partial_match", 0) or 0)
+            if attempt.get("status") == "completed":
+                if int(attempt.get("strong_match_count", 0) or 0) > 0:
+                    attempt["failure_class"] = "confirmed"
+                elif int(attempt.get("partial_match_count", 0) or 0) > 0:
+                    attempt["failure_class"] = "partial_confirmation"
+                elif int(attempt.get("kept_count", 0) or 0) > 0:
+                    attempt["failure_class"] = "signature_mismatch"
+                elif int(attempt.get("raw_count", 0) or 0) > 0:
+                    attempt["failure_class"] = "filtering_failure"
+                else:
+                    attempt["failure_class"] = "retrieval_failure"
         family_confirmation_count = sum(1 for details in source_yield.values() if details.get("confirmed"))
         strong_match_count = sum(matched_results_by_source.values())
         partial_match_count = sum(partial_results_by_source.values())
@@ -6014,6 +6191,7 @@ class ResearchToolkit:
             "recurrence_state": recurrence_state,
             "recurrence_gap_reason": recurrence_gap_reason,
             "recurrence_failure_class": recurrence_failure_class,
+            "evidence_attempts": evidence_attempts,
             "query_coverage": round(query_coverage, 4),
             "doc_count": doc_count,
             "domain_count": domain_count,
@@ -6077,12 +6255,12 @@ class ResearchToolkit:
             return sites[:limit] if limit else sites
 
         plan = self._build_corroboration_plan(atom=atom, queries=[], finding_kind="problem_signal")
+        if (None, "web") not in sites:
+            sites.insert(0, (None, "web"))
         specialized_web_sites, _reason = self._specialized_web_routing_sites(atom=atom, plan=plan, attempt_index=0)
         for site in specialized_web_sites:
             if site not in sites:
                 sites.append(site)
-        if (None, "web") not in sites:
-            sites.append((None, "web"))
 
         haystack = normalize_content(
             " ".join(
@@ -6315,60 +6493,193 @@ class ResearchToolkit:
         deduped_by_source = {label: 0 for label in results_by_source}
         docs_by_source: dict[str, list[SearchDocument]] = {label: [] for label in results_by_source}
         queries_by_source: dict[str, list[str]] = {label: [] for label in results_by_source}
+        evidence_attempts: list[dict[str, Any]] = []
+
+        def _new_attempt(query: str, source_family: str, source_name: str = "") -> dict[str, Any]:
+            attempt = {
+                "query": query,
+                "source_family": source_family,
+                "source_name": source_name or source_family,
+                "status": "started",
+                "duration_ms": 0,
+                "raw_count": 0,
+                "filtered_count": 0,
+                "kept_count": 0,
+                "deduped_count": 0,
+                "strong_match_count": 0,
+                "partial_match_count": 0,
+                "failure_class": "",
+                "error": "",
+                "metadata": {},
+                "_started_at": time.monotonic(),
+            }
+            evidence_attempts.append(attempt)
+            self._track_recurrence_attempt(attempt)
+            return attempt
+
+        def _finish_attempt(
+            attempt: dict[str, Any],
+            *,
+            status: str = "completed",
+            raw_count: int = 0,
+            filtered_count: int = 0,
+            kept_count: int = 0,
+            error: str = "",
+            metadata: Optional[dict[str, Any]] = None,
+        ) -> None:
+            started_at = float(attempt.pop("_started_at", time.monotonic()) or time.monotonic())
+            attempt["duration_ms"] = int(max(0.0, time.monotonic() - started_at) * 1000)
+            attempt["status"] = status
+            attempt["raw_count"] = int(raw_count or 0)
+            attempt["filtered_count"] = int(filtered_count or 0)
+            attempt["kept_count"] = int(kept_count or 0)
+            attempt["error"] = error
+            if metadata:
+                existing = attempt.get("metadata") if isinstance(attempt.get("metadata"), dict) else {}
+                attempt["metadata"] = {**existing, **metadata}
+            if status == "timeout":
+                attempt["failure_class"] = "source_timeout"
+            elif status == "error":
+                attempt["failure_class"] = "source_error"
+            elif int(raw_count or 0) == 0:
+                attempt["failure_class"] = "retrieval_failure"
+            elif int(kept_count or 0) == 0:
+                attempt["failure_class"] = "filtering_failure"
+            else:
+                attempt["failure_class"] = "retrieved"
+
+        async def _search_web_with_diagnostics(
+            query: str,
+            *,
+            max_results: int,
+            site: Optional[str],
+            intent: str,
+            diagnostics: dict[str, Any],
+        ) -> list[SearchDocument]:
+            try:
+                return await self.search_web(
+                    query,
+                    max_results=max_results,
+                    site=site,
+                    intent=intent,
+                    diagnostics=diagnostics,
+                )
+            except TypeError as exc:
+                if "diagnostics" not in str(exc):
+                    raise
+                docs = await self.search_web(query, max_results=max_results, site=site, intent=intent)
+                diagnostics.update(
+                    {
+                        "raw_count": len(docs),
+                        "accepted_count": len(docs),
+                        "filtered_count": 0,
+                        "provider_errors": [],
+                    }
+                )
+                return docs
 
         async def _collect_query(query: str) -> tuple[str, list[tuple[str, SearchDocument]], int]:
             kept = 0
             collected: list[tuple[str, SearchDocument]] = []
             if subreddit_plan:
+                reddit_attempt = _new_attempt(query, "reddit", "reddit")
                 queries_by_source.setdefault("reddit", [])
                 if query not in queries_by_source["reddit"]:
                     queries_by_source["reddit"].append(query)
-                reddit_results = await asyncio.gather(
-                    *[
-                        self.reddit_search(
-                            subreddit,
-                            query,
-                            limit=per_source_limit,
-                            sort="relevance",
-                        )
-                        for subreddit in subreddit_plan
-                    ]
-                )
+                try:
+                    reddit_results = await asyncio.gather(
+                        *[
+                            self.reddit_search(
+                                subreddit,
+                                query,
+                                limit=per_source_limit,
+                                sort="relevance",
+                            )
+                            for subreddit in subreddit_plan
+                        ]
+                    )
+                except asyncio.CancelledError:
+                    _finish_attempt(reddit_attempt, status="timeout", error="cancelled")
+                    raise
+                except Exception as exc:
+                    reddit_results = []
+                    _finish_attempt(reddit_attempt, status="error", error=str(exc))
+                reddit_raw_count = 0
                 for docs in reddit_results:
+                    reddit_raw_count += len(docs)
                     for doc in docs:
                         collected.append(("reddit", doc))
                         kept += 1
                         retrieved_by_source["reddit"] = retrieved_by_source.get("reddit", 0) + 1
+                if reddit_attempt.get("status") == "started":
+                    _finish_attempt(
+                        reddit_attempt,
+                        raw_count=reddit_raw_count,
+                        filtered_count=0,
+                        kept_count=reddit_raw_count,
+                        metadata={"subreddits": list(subreddit_plan)},
+                    )
 
             if site_plan:
-                site_tasks = [
-                    asyncio.create_task(
-                        self.search_web(
+                site_task_records = []
+                for site, source_label in site_plan:
+                    diagnostics: dict[str, Any] = {}
+                    attempt = _new_attempt(query, source_label, site or source_label)
+                    attempt["metadata"] = {"site": site or "", "intent": "validation_recurrence"}
+                    task = asyncio.create_task(
+                        _search_web_with_diagnostics(
                             query,
                             max_results=per_source_limit if site else max(per_source_limit, 2),
                             site=site,
                             intent="validation_recurrence",
+                            diagnostics=diagnostics,
                         )
                     )
-                    for site, _ in site_plan
-                ]
+                    site_task_records.append((task, site, source_label, attempt, diagnostics))
                 for _site, source_label in site_plan:
                     queries_by_source.setdefault(source_label, [])
                     if query not in queries_by_source[source_label]:
                         queries_by_source[source_label].append(query)
                 done, pending = await asyncio.wait(
-                    site_tasks,
-                    timeout=min(4.0, self.validation_recurrence_budget_seconds * 0.5),
+                    [record[0] for record in site_task_records],
+                    timeout=self._recurrence_source_task_timeout(),
                 )
+                for task, site, source_label, attempt, diagnostics in site_task_records:
+                    if task in pending:
+                        _finish_attempt(
+                            attempt,
+                            status="timeout",
+                            raw_count=int(diagnostics.get("raw_count", 0) or 0),
+                            filtered_count=int(diagnostics.get("filtered_count", 0) or 0),
+                            kept_count=int(diagnostics.get("accepted_count", 0) or 0),
+                            error="source_timeout",
+                            metadata={"site": site or "", "provider_errors": diagnostics.get("provider_errors", [])},
+                        )
                 for task in pending:
                     task.cancel()
-                for task, (_site, source_label) in zip(site_tasks, site_plan):
+                for task, site, source_label, attempt, diagnostics in site_task_records:
                     if task not in done:
                         continue
                     try:
                         docs = task.result()
-                    except Exception:
+                    except asyncio.CancelledError:
+                        _finish_attempt(attempt, status="timeout", error="cancelled")
+                        continue
+                    except Exception as exc:
                         docs = []
+                        _finish_attempt(attempt, status="error", error=str(exc))
+                        continue
+                    _finish_attempt(
+                        attempt,
+                        raw_count=int(diagnostics.get("raw_count", len(docs)) or 0),
+                        filtered_count=int(diagnostics.get("filtered_count", 0) or 0),
+                        kept_count=len(docs),
+                        metadata={
+                            "site": site or "",
+                            "provider_errors": diagnostics.get("provider_errors", []),
+                            "cache_hit": diagnostics.get("cache_hit", False),
+                        },
+                    )
                     for doc in docs:
                         collected.append((source_label, doc))
                         kept += 1
@@ -6376,14 +6687,33 @@ class ResearchToolkit:
 
             if kept == 0 and allow_fallback:
                 for fallback_query in self._recurrence_fallback_queries(query, atom=atom):
+                    fallback_attempt = _new_attempt(fallback_query, "forum_fallback", "forum_fallback")
+                    diagnostics: dict[str, Any] = {}
                     queries_by_source.setdefault("forum_fallback", [])
                     if fallback_query not in queries_by_source["forum_fallback"]:
                         queries_by_source["forum_fallback"].append(fallback_query)
-                    docs = await self.search_web(
-                        fallback_query,
-                        max_results=max(2, per_source_limit),
-                        intent="validation_recurrence",
-                    )
+                    try:
+                        docs = await _search_web_with_diagnostics(
+                            fallback_query,
+                            max_results=max(2, per_source_limit),
+                            site=None,
+                            intent="validation_recurrence",
+                            diagnostics=diagnostics,
+                        )
+                    except asyncio.CancelledError:
+                        _finish_attempt(fallback_attempt, status="timeout", error="cancelled")
+                        raise
+                    except Exception as exc:
+                        docs = []
+                        _finish_attempt(fallback_attempt, status="error", error=str(exc))
+                    if fallback_attempt.get("status") == "started":
+                        _finish_attempt(
+                            fallback_attempt,
+                            raw_count=int(diagnostics.get("raw_count", len(docs)) or 0),
+                            filtered_count=int(diagnostics.get("filtered_count", 0) or 0),
+                            kept_count=len(docs),
+                            metadata={"provider_errors": diagnostics.get("provider_errors", [])},
+                        )
                     for doc in docs:
                         collected.append(("forum_fallback", doc))
                         kept += 1
@@ -6410,9 +6740,14 @@ class ResearchToolkit:
                         retrieval_query=query,
                     )
                 )
+                self._track_recurrence_doc(recurrence_docs[-1])
                 results_by_source[source_label] = results_by_source.get(source_label, 0) + 1
                 deduped_by_source[source_label] = deduped_by_source.get(source_label, 0) + 1
                 docs_by_source.setdefault(source_label, []).append(recurrence_docs[-1])
+                for attempt in evidence_attempts:
+                    if attempt.get("query") == query and attempt.get("source_family") == source_label:
+                        attempt["deduped_count"] = int(attempt.get("deduped_count", 0) or 0) + 1
+                        break
                 if len(recurrence_docs) >= stop_after_docs:
                     break
             if len(recurrence_docs) >= stop_after_docs:
@@ -6423,11 +6758,44 @@ class ResearchToolkit:
             "deduped_by_source": deduped_by_source,
             "docs_by_source": docs_by_source,
             "queries_by_source": queries_by_source,
+            "evidence_attempts": [
+                {key: value for key, value in attempt.items() if not str(key).startswith("_")}
+                for attempt in evidence_attempts
+            ],
         }
 
 
     def _active_recurrence_source_labels(self, results_by_source: dict[str, int], *, min_per_source: int = 1) -> set[str]:
         return {label for label, count in results_by_source.items() if count >= min_per_source}
+
+    def _has_broad_web_filtering_failure(self, collection_meta: Optional[dict[str, Any]]) -> bool:
+        attempts = (collection_meta or {}).get("evidence_attempts", []) or []
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            metadata = attempt.get("metadata") if isinstance(attempt.get("metadata"), dict) else {}
+            source_family = str(attempt.get("source_family") or "")
+            source_name = str(attempt.get("source_name") or "")
+            site = str(metadata.get("site") or "")
+            raw_count = int(attempt.get("raw_count") or 0)
+            kept_count = int(attempt.get("kept_count") or 0)
+            filtered_count = int(attempt.get("filtered_count") or 0)
+            if (
+                source_family == "web"
+                and source_name == "web"
+                and not site
+                and attempt.get("status") == "completed"
+                and raw_count >= 5
+                and kept_count == 0
+                and (attempt.get("failure_class") == "filtering_failure" or filtered_count >= raw_count)
+            ):
+                return True
+        return False
+
+    def _recurrence_source_task_timeout(self) -> float:
+        search_stack_seconds = self.provider_timeout_recurrence + self.request_timeout_recurrence + 0.5
+        budget_slice_seconds = max(4.0, self.validation_recurrence_budget_seconds * 0.5)
+        return min(max(4.0, search_stack_seconds), budget_slice_seconds)
 
     def _merge_recurrence_results(
         self,
@@ -6482,6 +6850,7 @@ class ResearchToolkit:
             "deduped_by_source": dict(existing.get("deduped_by_source", {})),
             "docs_by_source": {label: list(docs) for label, docs in (existing.get("docs_by_source", {}) or {}).items()},
             "queries_by_source": {label: list(queries) for label, queries in (existing.get("queries_by_source", {}) or {}).items()},
+            "evidence_attempts": list(existing.get("evidence_attempts", []) or []),
         }
         for key in ("retrieved_by_source", "deduped_by_source"):
             for label, count in (new.get(key, {}) or {}).items():
@@ -6499,6 +6868,7 @@ class ResearchToolkit:
             for query in queries:
                 if query not in merged["queries_by_source"][label]:
                     merged["queries_by_source"][label].append(query)
+        merged["evidence_attempts"].extend(new.get("evidence_attempts", []) or [])
         return merged
 
     def _recurrence_cross_source_queries(
@@ -6871,6 +7241,23 @@ class ResearchToolkit:
         promotion_gap_class = ""
         sufficiency_priority_reason = ""
         near_miss_enrichment_action = ""
+        if "web" in missing_sources and self._has_broad_web_filtering_failure(merged_collection_meta):
+            missing_sources = [label for label in missing_sources if label != "web"]
+            skipped_families["web"] = "broad_web_filtering_failure"
+            controller_actions.append(
+                {
+                    "action": "SKIP_SOURCE",
+                    "target_family": "web",
+                    "reason": "broad_web_filtering_failure",
+                    "expected_gain_class": "low",
+                    "budget_snapshot": budget_profile,
+                }
+            )
+            last_action = "SKIP_SOURCE"
+            last_transition_reason = "broad_web_filtering_failure"
+            chosen_family = "web"
+            expected_gain_class = "low"
+            sufficiency_priority_reason = "broad_web_filtering_failure"
         while missing_sources:
             current_source_yield, current_matched_results, current_partial_results, current_family_confirmation_count = self._current_source_yield_summary(
                 collection_meta=merged_collection_meta,

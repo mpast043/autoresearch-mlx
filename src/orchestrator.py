@@ -259,7 +259,10 @@ class Orchestrator:
                         f"selection ready for opportunity {message.payload.get('opportunity_id')}: {selection_status}"
                     )
 
-            if build_brief_id and selection_status == "prototype_candidate":
+            if build_brief_id and (
+                selection_status == "prototype_candidate"
+                or message.payload.get("build_brief_purpose") == "product_spec_draft"
+            ):
                 await self.send_message(
                     to_agent="solution_framing",
                     msg_type=MessageType.BUILD_BRIEF,

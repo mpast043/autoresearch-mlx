@@ -384,6 +384,35 @@ class EvidenceLedgerEntry:
 
 
 @dataclass
+class EvidenceAttempt:
+    finding_id: int
+    run_id: str = ""
+    validation_id: int = 0
+    query: str = ""
+    source_family: str = ""
+    source_name: str = ""
+    status: str = ""
+    duration_ms: int = 0
+    raw_count: int = 0
+    filtered_count: int = 0
+    kept_count: int = 0
+    deduped_count: int = 0
+    strong_match_count: int = 0
+    partial_match_count: int = 0
+    failure_class: str = ""
+    error: str = ""
+    metadata: dict[str, Any] | None = None
+    metadata_json: str = "{}"
+    id: Optional[int] = None
+    created_at: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.metadata is None and self.metadata_json not in (None, ""):
+            self.metadata = _json_loads(self.metadata_json, {})
+        self.metadata_json = _json_dumps(self.metadata)
+
+
+@dataclass
 class CorroborationRecord:
     finding_id: int
     recurrence_state: str
@@ -848,6 +877,29 @@ class Database:
                 entry_json TEXT DEFAULT '{}',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS evidence_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT DEFAULT '',
+                finding_id INTEGER NOT NULL REFERENCES findings(id),
+                validation_id INTEGER DEFAULT 0,
+                query TEXT DEFAULT '',
+                source_family TEXT DEFAULT '',
+                source_name TEXT DEFAULT '',
+                status TEXT DEFAULT '',
+                duration_ms INTEGER DEFAULT 0,
+                raw_count INTEGER DEFAULT 0,
+                filtered_count INTEGER DEFAULT 0,
+                kept_count INTEGER DEFAULT 0,
+                deduped_count INTEGER DEFAULT 0,
+                strong_match_count INTEGER DEFAULT 0,
+                partial_match_count INTEGER DEFAULT 0,
+                failure_class TEXT DEFAULT '',
+                error TEXT DEFAULT '',
+                metadata_json TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_evidence_attempts_run_finding ON evidence_attempts(run_id, finding_id);
+            CREATE INDEX IF NOT EXISTS idx_evidence_attempts_source ON evidence_attempts(run_id, finding_id, source_family);
             CREATE TABLE IF NOT EXISTS corroborations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT DEFAULT '',
@@ -1229,6 +1281,43 @@ class Database:
         _ensure_evidence_ledger_unique_index(conn)
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS evidence_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT DEFAULT '',
+                finding_id INTEGER NOT NULL REFERENCES findings(id),
+                validation_id INTEGER DEFAULT 0,
+                query TEXT DEFAULT '',
+                source_family TEXT DEFAULT '',
+                source_name TEXT DEFAULT '',
+                status TEXT DEFAULT '',
+                duration_ms INTEGER DEFAULT 0,
+                raw_count INTEGER DEFAULT 0,
+                filtered_count INTEGER DEFAULT 0,
+                kept_count INTEGER DEFAULT 0,
+                deduped_count INTEGER DEFAULT 0,
+                strong_match_count INTEGER DEFAULT 0,
+                partial_match_count INTEGER DEFAULT 0,
+                failure_class TEXT DEFAULT '',
+                error TEXT DEFAULT '',
+                metadata_json TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_evidence_attempts_run_finding
+            ON evidence_attempts(run_id, finding_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_evidence_attempts_source
+            ON evidence_attempts(run_id, finding_id, source_family)
+            """
+        )
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_products_build_brief
             ON products(build_brief_id, built_at DESC)
             """
@@ -1458,7 +1547,7 @@ class Database:
         conn = self._get_connection()
         # Cascade: all tables that reference finding_id
         for table in (
-            "problem_atoms", "raw_signals", "corroborations",
+            "problem_atoms", "raw_signals", "evidence_attempts", "corroborations",
             "market_enrichments", "validations", "review_feedback",
         ):
             conn.execute(f"DELETE FROM {table} WHERE finding_id = ?", (finding_id,))
@@ -2296,6 +2385,108 @@ class Database:
 
     def get_evidence_ledger(self, entity_type: Optional[str] = None, entity_id: Optional[int] = None, *, limit: Optional[int] = None) -> list[EvidenceLedgerEntry]:
         return self.list_ledger_entries(entity_type=entity_type, entity_id=entity_id, limit=limit)
+
+    def insert_evidence_attempt(self, attempt: EvidenceAttempt) -> int:
+        attempt.__post_init__()
+        conn = self._get_connection()
+        run_id = attempt.run_id or self.get_active_run_id()
+        cur = conn.execute(
+            """
+            INSERT INTO evidence_attempts (
+                run_id, finding_id, validation_id, query, source_family, source_name, status,
+                duration_ms, raw_count, filtered_count, kept_count, deduped_count,
+                strong_match_count, partial_match_count, failure_class, error, metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                attempt.finding_id,
+                attempt.validation_id,
+                attempt.query,
+                attempt.source_family,
+                attempt.source_name,
+                attempt.status,
+                attempt.duration_ms,
+                attempt.raw_count,
+                attempt.filtered_count,
+                attempt.kept_count,
+                attempt.deduped_count,
+                attempt.strong_match_count,
+                attempt.partial_match_count,
+                attempt.failure_class,
+                attempt.error,
+                attempt.metadata_json,
+            ),
+        )
+        self._commit(conn)
+        return int(cur.lastrowid)
+
+    def insert_evidence_attempts(
+        self,
+        *,
+        finding_id: int,
+        attempts: list[dict[str, Any]],
+        run_id: Optional[str] = None,
+        validation_id: int = 0,
+    ) -> list[int]:
+        ids: list[int] = []
+        for raw_attempt in attempts or []:
+            if not isinstance(raw_attempt, dict):
+                continue
+            metadata = raw_attempt.get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            ids.append(
+                self.insert_evidence_attempt(
+                    EvidenceAttempt(
+                        finding_id=finding_id,
+                        run_id=run_id or str(raw_attempt.get("run_id") or ""),
+                        validation_id=int(raw_attempt.get("validation_id") or validation_id or 0),
+                        query=str(raw_attempt.get("query") or ""),
+                        source_family=str(raw_attempt.get("source_family") or raw_attempt.get("source") or ""),
+                        source_name=str(raw_attempt.get("source_name") or raw_attempt.get("source") or ""),
+                        status=str(raw_attempt.get("status") or ""),
+                        duration_ms=int(raw_attempt.get("duration_ms") or 0),
+                        raw_count=int(raw_attempt.get("raw_count") or raw_attempt.get("retrieved_count") or 0),
+                        filtered_count=int(raw_attempt.get("filtered_count") or 0),
+                        kept_count=int(raw_attempt.get("kept_count") or raw_attempt.get("accepted_count") or 0),
+                        deduped_count=int(raw_attempt.get("deduped_count") or 0),
+                        strong_match_count=int(raw_attempt.get("strong_match_count") or 0),
+                        partial_match_count=int(raw_attempt.get("partial_match_count") or 0),
+                        failure_class=str(raw_attempt.get("failure_class") or ""),
+                        error=str(raw_attempt.get("error") or ""),
+                        metadata=metadata,
+                    )
+                )
+            )
+        return ids
+
+    def list_evidence_attempts(
+        self,
+        *,
+        finding_id: Optional[int] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[EvidenceAttempt]:
+        conn = self._get_connection()
+        sql = "SELECT * FROM evidence_attempts"
+        params: list[Any] = []
+        clauses: list[str] = []
+        if finding_id is not None:
+            clauses.append("finding_id = ?")
+            params.append(finding_id)
+        if run_id:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY id DESC"
+        if limit:
+            sql += " LIMIT ?"
+            params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+        return [EvidenceAttempt(**dict(row)) for row in rows]
 
     def upsert_corroboration(self, record: CorroborationRecord) -> int:
         record.__post_init__()
@@ -3489,6 +3680,14 @@ class Database:
         sql += " ORDER BY updated_at DESC, id DESC LIMIT ?"
         params.append(limit)
         return [BuildPrepOutput(**dict(row)) for row in conn.execute(sql, params).fetchall()]
+
+    def update_build_prep_outputs_status(self, build_brief_id: int, status: str) -> None:
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE build_prep_outputs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE build_brief_id = ?",
+            (status, build_brief_id),
+        )
+        self._commit(conn)
 
     def upsert_build_prep_output(self, output: BuildPrepOutput) -> int:
         conn = self._get_connection()

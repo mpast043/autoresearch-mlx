@@ -206,21 +206,194 @@ class SpecGenerationAgent(_BuildPrepAgent):
         product_name = platform_fit.get("product_name", brief_payload.get("recommended_narrow_output_type", ""))
         host_platform = platform_fit.get("host_platform", "Unknown")
         product_format = platform_fit.get("product_format", "lightweight microSaaS")
+        solution_output = output_map.get("solution_framing", {}) or {}
+        experiment_output = output_map.get("experiment_design", {}) or {}
+        pain_workaround = brief_payload.get("pain_workaround", {}) or {}
+        target_user = (
+            solution_output.get("target_user")
+            or brief_payload.get("user_role")
+            or brief_payload.get("segment")
+            or "target operator"
+        )
+        problem_statement = (
+            solution_output.get("problem_frame")
+            or brief_payload.get("problem_summary")
+            or pain_workaround.get("pain_statement", "")
+            or pain_workaround.get("failure_mode", "")
+        )
+        core_workflow = (
+            pain_workaround.get("pain_statement", "")
+            or brief_payload.get("job_to_be_done")
+            or problem_statement
+        )
+        trigger_event = pain_workaround.get("trigger_event", "")
+        current_workaround = pain_workaround.get("current_workaround", "")
+        current_tools = pain_workaround.get("current_tools", "")
+        must_solve = pain_workaround.get("failure_mode", "") or problem_statement
+        if not product_name or product_name == "workflow_diagnostic_prototype":
+            context_text = " ".join(
+                str(item or "")
+                for item in [
+                    problem_statement,
+                    core_workflow,
+                    must_solve,
+                    current_workaround,
+                    current_tools,
+                    target_user,
+                ]
+            ).lower()
+            if "billing" in context_text and "reconcil" in context_text:
+                product_name = "Billing Reconciliation Diagnostic"
+            elif "inventory" in context_text:
+                product_name = "Inventory Validation Gate"
+            elif "journal" in context_text or "receipt" in context_text:
+                product_name = "Receipt-to-Journal Entry Automator"
+            elif "rfp" in context_text or "proposal" in context_text:
+                product_name = "Proposal Review Checklist"
+            elif "spreadsheet" in context_text or "excel" in context_text:
+                product_name = "Spreadsheet Workflow Diagnostic"
+            else:
+                product_name = "Workflow Failure Diagnostic"
+        value_claim = solution_output.get("value_claim") or platform_fit.get("one_sentence_product", "")
+        non_goals = solution_output.get("excluded_scope", [])
+        selection_blockers = (brief_payload.get("selection_gate", {}) or {}).get("blocked_by", [])
+        acceptance_gate = experiment_output.get("acceptance_gate", "")
+        measurement_plan = experiment_output.get("measurement_plan", {}) or {}
+        launch_artifacts = brief_payload.get("launch_artifact_plan", [])
+        functional_requirements = [
+            {
+                "id": "FR-1",
+                "requirement": f"Capture the exact failing workflow context for {target_user}.",
+                "source": "target_user/problem_frame",
+            },
+            {
+                "id": "FR-2",
+                "requirement": f"Accept the current artifacts or tools involved: {current_tools or 'the operator-provided workflow inputs'}.",
+                "source": "pain_workaround.current_tools",
+            },
+            {
+                "id": "FR-3",
+                "requirement": f"Detect or expose the failure mode: {must_solve}.",
+                "source": "pain_workaround.failure_mode",
+            },
+            {
+                "id": "FR-4",
+                "requirement": f"Produce a narrow {product_name or product_format} output that helps the user decide the next action.",
+                "source": "recommended_narrow_output_type",
+            },
+            {
+                "id": "FR-5",
+                "requirement": "Preserve traceability back to the source finding, validation, and evidence blockers.",
+                "source": "traceability/evidence_status",
+            },
+        ]
+        workflow_steps = [
+            {
+                "step": 1,
+                "name": "Intake current workflow evidence",
+                "description": current_workaround or "Collect the artifact, export, message, or screen the operator currently uses.",
+            },
+            {
+                "step": 2,
+                "name": "Normalize the failing handoff",
+                "description": core_workflow,
+            },
+            {
+                "step": 3,
+                "name": "Surface exceptions and gaps",
+                "description": must_solve,
+            },
+            {
+                "step": 4,
+                "name": "Generate the narrow output",
+                "description": value_claim or f"Create the first {product_format} slice for the specific workflow.",
+            },
+            {
+                "step": 5,
+                "name": "Review and decide",
+                "description": acceptance_gate or "Confirm whether the draft output is better than the existing manual fallback.",
+            },
+        ]
+        product_spec = {
+            "product_name": product_name,
+            "target_user": target_user,
+            "one_sentence_product": solution_output.get("one_sentence_product") or value_claim,
+            "problem_statement": problem_statement,
+            "core_workflow": core_workflow,
+            "trigger_event": trigger_event,
+            "current_workaround": current_workaround,
+            "current_tools": current_tools,
+            "mvp_boundaries": {
+                "in_scope": [
+                    must_solve,
+                    f"single narrow {product_format} workflow slice",
+                    "evidence-linked product-spec draft",
+                ],
+                "out_of_scope": non_goals,
+            },
+            "workflow": workflow_steps,
+            "functional_requirements": functional_requirements,
+            "non_functional_requirements": [
+                "Human-reviewable output before any automated action",
+                "Traceable inputs, assumptions, and evidence blockers",
+                "No broad workflow suite or unsupported segment expansion",
+            ],
+            "data_inputs": [
+                item
+                for item in [
+                    current_tools,
+                    trigger_event,
+                    brief_payload.get("evidence_provenance", {}).get("origin_url", ""),
+                ]
+                if item
+            ],
+            "primary_outputs": [
+                product_name or product_format,
+                "exception summary",
+                "next-action recommendation",
+            ],
+            "success_metrics": [
+                metric
+                for metric in [
+                    acceptance_gate,
+                    measurement_plan.get("primary_signal", ""),
+                    "3 of 5 target users would replace the current workaround for this slice",
+                ]
+                if metric
+            ],
+            "research_gates_before_build": selection_blockers,
+            "open_questions": brief_payload.get("open_questions_risks", []),
+            "launch_artifacts": launch_artifacts,
+        }
 
         spec = {
+            "spec_mode": brief_payload.get("spec_mode", "build_ready_spec"),
+            "product_name": product_name,
+            "target_user": target_user,
+            "problem_statement": problem_statement,
+            "core_workflow": core_workflow,
+            "product_spec": product_spec,
             "scope": {
                 "narrow_output_type": product_name,
                 "host_platform": host_platform,
                 "product_format": product_format,
-                "must_solve": brief_payload.get("pain_workaround", {}).get("failure_mode", ""),
-                "non_goals": output_map.get("solution_framing", {}).get("excluded_scope", []),
+                "must_solve": must_solve,
+                "non_goals": non_goals,
             },
-            "artifact_checklist": brief_payload.get("launch_artifact_plan", []),
-            "acceptance_criteria": output_map.get("experiment_design", {}).get("acceptance_gate", ""),
+            "artifact_checklist": launch_artifacts,
+            "acceptance_criteria": acceptance_gate,
             "handoff_notes": {
                 "linked_finding_ids": brief_payload.get("linked_finding_ids", []),
                 "source_families": brief_payload.get("source_family_corroboration", {}).get("source_families", []),
                 "open_questions": brief_payload.get("open_questions_risks", []),
+            },
+            "evidence_status": {
+                "selection_status": brief_payload.get("selection_status", ""),
+                "selection_reason": brief_payload.get("selection_reason", ""),
+                "selection_blockers": selection_blockers,
+                "recurrence_state": brief_payload.get("source_family_corroboration", {}).get("recurrence_state", ""),
+                "corroboration_score": brief_payload.get("source_family_corroboration", {}).get("corroboration_score", 0.0),
+                "source_family_diversity": brief_payload.get("source_family_corroboration", {}).get("source_family_diversity", 0),
             },
             "readiness_score": 0.84,
             "traceability": {
@@ -229,6 +402,16 @@ class SpecGenerationAgent(_BuildPrepAgent):
                 "validation_id": brief.validation_id,
             },
         }
+        # Deterministic sharpness gate runs before LLM judgment so broad
+        # or placeholder briefs never reach build_ready just because the
+        # evaluator can invent a plausible commercialization story.
+        from src.builder_output import WedgeEvaluator, WedgeEvaluation
+
+        opportunity = self.db.get_opportunity(brief.opportunity_id)
+        sharpness_gate = evaluate_build_ready_sharpness(brief_payload)
+        spec_draft_mode = brief.status == "spec_draft" or brief_payload.get("spec_mode") == "product_spec_draft"
+        output_status = "draft" if spec_draft_mode else ("ready" if sharpness_gate["passes"] else "blocked")
+        spec["sharpness_gate"] = sharpness_gate
         output_id = self.db.upsert_build_prep_output(
             BuildPrepOutput(
                 build_brief_id=build_brief_id,
@@ -236,25 +419,44 @@ class SpecGenerationAgent(_BuildPrepAgent):
                 validation_id=brief.validation_id,
                 agent_name=self.name,
                 prep_stage="spec_generation",
-                status="ready",
+                status=output_status,
                 output_json=json.dumps(spec),
                 run_id=brief.run_id,
             )
         )
 
-        # Deterministic sharpness gate runs before LLM judgment so broad
-        # or placeholder briefs never reach build_ready just because the
-        # evaluator can invent a plausible commercialization story.
-        from src.builder_output import WedgeEvaluator, WedgeEvaluation
-
-        opportunity = self.db.get_opportunity(brief.opportunity_id)
         if opportunity:
             notes = json.loads(opportunity.notes_json) if hasattr(opportunity, 'notes_json') and opportunity.notes_json else {}
-            sharpness_gate = evaluate_build_ready_sharpness(brief_payload)
             notes["build_ready_sharpness_gate"] = sharpness_gate
+            if spec_draft_mode:
+                notes["product_spec_draft"] = {
+                    "build_brief_id": build_brief_id,
+                    "output_id": output_id,
+                    "status": "draft",
+                    "blocked_by": sharpness_gate.get("reasons", []),
+                }
+                self.db.update_opportunity_notes(brief.opportunity_id, json.dumps(notes))
+                await self.send_message(
+                    to_agent="orchestrator",
+                    msg_type=MessageType.BUILD_PREP,
+                    payload={
+                        "build_brief_id": build_brief_id,
+                        "opportunity_id": brief.opportunity_id,
+                        "validation_id": brief.validation_id,
+                        "agent_name": self.name,
+                        "prep_stage": "spec_generation",
+                        "output_id": output_id,
+                        "next_agent": "",
+                    },
+                    priority=2,
+                )
+                return {"success": True, "output_id": output_id, "gate": "spec_draft"}
 
             if not sharpness_gate["passes"]:
                 self.db.update_opportunity_notes(brief.opportunity_id, json.dumps(notes))
+                if is_allowed_selection_transition(brief.status, "archive"):
+                    self.db.update_build_brief_status(build_brief_id, "archive")
+                    self.db.update_build_prep_outputs_status(build_brief_id, "blocked")
                 if is_allowed_selection_transition(opportunity.selection_status, "research_more"):
                     failure_reasons = ", ".join(sharpness_gate["reasons"])
                     self.db.update_opportunity_selection(

@@ -45,6 +45,23 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
                     "recurrence_results_by_source": {"reddit": 2, "web": 1, "github": 0},
                     "matched_results_by_source": {"reddit": 2, "web": 1, "github": 0},
                     "partial_results_by_source": {"reddit": 0, "web": 1, "github": 0},
+                    "evidence_attempts": [
+                        {
+                            "query": '"manual data entry" operations',
+                            "source_family": "web",
+                            "source_name": "web",
+                            "status": "completed",
+                            "duration_ms": 87,
+                            "raw_count": 3,
+                            "filtered_count": 1,
+                            "kept_count": 2,
+                            "deduped_count": 1,
+                            "strong_match_count": 1,
+                            "partial_match_count": 1,
+                            "failure_class": "confirmed",
+                            "metadata": {"provider": "fixture"},
+                        }
+                    ],
                     "family_confirmation_count": 2,
                     "source_yield": {
                         "reddit": {"attempts": 1, "docs_retrieved": 2, "docs_strong_match": 2, "confirmed": True},
@@ -99,6 +116,7 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
         self.assertIn("matched_results_by_source", ledger_payload)
         self.assertIn("partial_results_by_source", ledger_payload)
         self.assertEqual(ledger_payload["family_confirmation_count"], 2)
+        self.assertEqual(len(ledger_payload["evidence_attempts"]), 1)
         self.assertEqual(ledger_payload["last_action"], "GATHER_CORROBORATION")
         self.assertEqual(ledger_payload["chosen_family"], "web")
         self.assertIn("controller_actions", ledger_payload)
@@ -126,6 +144,11 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
         self.assertIn("corroboration", queued.payload)
         self.assertIn("market_enrichment", queued.payload)
         json.dumps(queued.payload["evidence_scores"]["evidence"])
+        attempts = self.db.list_evidence_attempts(finding_id=finding_id, run_id="test-run")
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0].source_family, "web")
+        self.assertEqual(attempts[0].raw_count, 3)
+        self.assertEqual(attempts[0].failure_class, "confirmed")
 
     async def test_busy_count_does_not_double_count_inflight_work(self):
         gate = asyncio.Event()
@@ -1280,21 +1303,50 @@ class TestSignatureTermsAndDocMatching(unittest.TestCase):
         self.assertIn("excel", tools)
         self.assertIn("quickbooks", tools)
 
-    def test_doc_matches_signature_with_tool_tier(self):
-        """Docs mentioning same tool + generalizable workflow term should match."""
+    def test_doc_matching_rejects_same_tool_adjacent_problem(self):
+        """Docs mentioning the same tool but a different problem should not match."""
+        doc = {
+            "title": "Excel formatting issue",
+            "snippet": "How to fix spreadsheet formatting in Excel.",
+            "source": "web",
+            "url": "https://example.com/excel-formatting",
+        }
+        signature_terms = ["billing", "reconciliation", "macro", "hardcoded", "audit"]
+        tool_terms = ["excel", "vba"]
+        self.assertFalse(
+            _doc_matches_signature(doc, signature_terms, origin_family="reddit", tool_terms=tool_terms)
+        )
+
+    def test_doc_matching_rejects_generic_shared_workbook_conflict_for_billing_macro(self):
+        """Generic Excel conflict docs are adjacent, not billing macro corroboration."""
         doc = {
             "title": "Excel shared workbook conflict resolution",
             "snippet": "How to resolve conflicts when multiple users edit a shared Excel workbook.",
+            "source": "web",
+            "url": "https://superuser.com/questions/shared-workbook-conflict",
         }
-        signature_terms = ["reconciliation", "macro", "fragile", "outdated", "process"]
-        tool_terms = ["excel", "sheets", "vba"]
-        # Should match: "excel" in doc + "spreadsheet" in GENERALIZABLE_WORKFLOW_TERMS
+        signature_terms = ["billing", "reconciliation", "macro", "hardcoded", "audit"]
+        tool_terms = ["excel", "vba"]
+        self.assertFalse(
+            _doc_matches_signature(doc, signature_terms, origin_family="reddit", tool_terms=tool_terms)
+        )
+
+    def test_doc_matching_accepts_tool_plus_problem_specific_term(self):
+        """A tool match should help only when the doc also matches the problem."""
+        doc = {
+            "title": "Excel VBA macro causes billing reconciliation mismatch",
+            "snippet": "Teams found hardcoded rates in an old Excel macro causing invoice totals to differ.",
+            "source": "web",
+            "url": "https://example.com/billing-reconciliation-excel-macro",
+        }
+        signature_terms = ["billing", "reconciliation", "macro", "hardcoded", "audit"]
+        tool_terms = ["excel", "vba"]
         self.assertTrue(
             _doc_matches_signature(doc, signature_terms, origin_family="reddit", tool_terms=tool_terms)
         )
 
-    def test_doc_matches_signature_cross_source_tool_match(self):
-        """Cross-source docs matching the tool name should pass even with 0 sig hits."""
+    def test_doc_matches_signature_cross_source_tool_and_problem_match(self):
+        """Cross-source docs matching the tool and problem terms should pass."""
         doc = {
             "title": "QuickBooks payout reconciliation errors",
             "snippet": "QuickBooks payout reconciliation showing errors after bank import.",

@@ -387,7 +387,13 @@ class ValidationAgent(BaseAgent):
         )
 
         build_brief_id = 0
-        if selection_status == "prototype_candidate":
+        build_brief_purpose = ""
+        should_create_build_brief = selection_status == "prototype_candidate" or (
+            decision["recommendation"] == "promote" and selection_status == "research_more"
+        )
+        if should_create_build_brief:
+            build_brief_status = "prototype_candidate" if selection_status == "prototype_candidate" else "spec_draft"
+            build_brief_purpose = "prototype_candidate" if build_brief_status == "prototype_candidate" else "product_spec_draft"
             linked_finding_ids = sorted({atom.finding_id for atom in cluster_atoms if getattr(atom, "finding_id", None) is not None})
             brief_payload = build_brief_payload(
                 run_id=self.db.active_run_id,
@@ -411,12 +417,20 @@ class ValidationAgent(BaseAgent):
                 selection_reason=selection_reason,
                 selection_gate=selection_gate,
             )
+            brief_payload["spec_mode"] = build_brief_purpose
+            if build_brief_status == "spec_draft":
+                brief_payload["draft_posture"] = {
+                    "status": "research_spec",
+                    "purpose": "produce_product_spec_before_build_readiness",
+                    "blocked_by": selection_gate.get("blocked_by", []),
+                    "selection_reason": selection_reason,
+                }
             brief_json = json.dumps(brief_payload)
             build_brief = BuildBrief(
                 opportunity_id=opportunity_id,
                 validation_id=validation_id,
                 cluster_id=cluster_id,
-                status="prototype_candidate",
+                status=build_brief_status,
                 recommended_output_type=brief_payload.get("recommended_narrow_output_type", ""),
                 brief_hash=hashlib.sha1(brief_json.encode("utf-8")).hexdigest(),
                 brief_json=brief_json,
@@ -467,6 +481,7 @@ class ValidationAgent(BaseAgent):
                 "selection_status": selection_status,
                 "selection_reason": selection_reason,
                 "build_brief_id": build_brief_id,
+                "build_brief_purpose": build_brief_purpose,
             },
             priority=2 if passed else 4,
         )
@@ -489,6 +504,7 @@ class ValidationAgent(BaseAgent):
             "selection_status": selection_status,
             "selection_reason": selection_reason,
             "build_brief_id": build_brief_id,
+            "build_brief_purpose": build_brief_purpose,
             "evidence": evidence,
         }
 

@@ -270,6 +270,7 @@ def build_builder_jobs_view(db, *, run_id: str = "", limit: int = 25) -> list[di
         prep_by_brief.setdefault(int(getattr(item, "build_brief_id", 0) or 0), []).append(item)
 
     state_map = {
+        "spec_draft": "spec_draft",
         "prototype_candidate": "queued",
         "prototype_ready": "scoped",
         "build_ready": "ready_to_build",
@@ -1013,6 +1014,7 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
             if brief:
                 if selection_status in {"research_more", "archive"}:
                     db.update_build_brief_status(brief.id or 0, "archive")
+                    db.update_build_prep_outputs_status(brief.id or 0, "blocked")
                 elif selection_status == "prototype_candidate" and str(brief.status or "") != "prototype_candidate":
                     db.update_build_brief_status(brief.id or 0, "prototype_candidate")
 
@@ -1689,6 +1691,7 @@ async def main() -> None:
             "wedge-eval",
             "report",
             "gate-diagnostics",
+            "evidence-trace",
             "pipeline-health",
             "backlog-workbench",
             "discovery-sort-diagnostics",
@@ -1864,6 +1867,13 @@ async def main() -> None:
                 finding_id=args.finding_id,
             )
             print_json(report)
+        elif args.command == "evidence-trace":
+            attempts = app.db.list_evidence_attempts(
+                finding_id=args.finding_id,
+                run_id=args.run_id or None,
+                limit=args.limit,
+            ) if app.db else []
+            print_json([attempt.__dict__ for attempt in attempts])
         elif args.command == "pipeline-health":
             from src.pipeline_health import compute_pipeline_health
 
