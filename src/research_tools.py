@@ -918,13 +918,21 @@ def _query_phrase(text: str, *, max_words: int = 6) -> str:
     return '"' + " ".join(tokens[:max_words]) + '"'
 
 
+# Well-known 3-letter technical abbreviations that are meaningful query terms
+_SHORT_TECH_TERMS = frozenset({
+    "csv", "vba", "api", "sdk", "pdf", "sql", "xml", "rss", "s3", "rpa",
+    "erp", "crm", "css", "ftp", "ssh", "sso", "roi", "qa", "poc",
+})
+
+
 def _query_term_span(text: str, *, max_terms: int = 4) -> str:
     cleaned = compact_text(re.sub(r"[^a-z0-9\s/-]+", " ", text.lower()), 80)
     terms: list[str] = []
     for token in cleaned.split():
         if token in QUERY_STOPWORDS or token in WEAK_VALIDATION_TERMS or token in RECURRENCE_NOISE_TERMS:
             continue
-        if len(token) <= 2:
+        # Allow 3-char terms only if they are well-known tech abbreviations
+        if len(token) <= 3 and token not in _SHORT_TECH_TERMS:
             continue
         if token not in terms:
             terms.append(token)
@@ -3462,6 +3470,7 @@ class ResearchToolkit:
                         summary or "",
                         getattr(atom, "segment", "") or "",
                         getattr(atom, "user_role", "") or "",
+                        getattr(atom, "pain_statement", "") or "",
                         getattr(atom, "job_to_be_done", "") or "",
                         getattr(atom, "failure_mode", "") or "",
                         getattr(atom, "trigger_event", "") or "",
@@ -3481,7 +3490,13 @@ class ResearchToolkit:
             segment_terms = self._recurrence_segment_terms(getattr(atom, "segment", "") or "")
             job_terms = _query_term_span(getattr(atom, "job_to_be_done", "") or "", max_terms=5)
             tool_terms = _query_term_span(getattr(atom, "current_tools", "") or "", max_terms=3)
-            job_phrase = self._recurrence_focus_phrase(getattr(atom, "job_to_be_done", "") or "", max_words=6)
+            # Prefer pain_statement for focus phrases — it has the clearest
+            # problem description and is less prone to truncation than
+            # job_to_be_done.  Fall back to job_to_be_done if no pain_statement.
+            pain_text = getattr(atom, "pain_statement", "") or ""
+            job_text = getattr(atom, "job_to_be_done", "") or ""
+            primary_problem_text = pain_text if len(pain_text) >= len(job_text) else job_text
+            job_phrase = self._recurrence_focus_phrase(primary_problem_text, max_words=6)
             failure_phrase = self._recurrence_focus_phrase(getattr(atom, "failure_mode", "") or "", max_words=5)
             trigger_phrase = self._recurrence_focus_phrase(getattr(atom, "trigger_event", "") or "", max_words=5)
             workaround_phrase = self._recurrence_focus_phrase(getattr(atom, "current_workaround", "") or "", max_words=4)
@@ -3677,10 +3692,11 @@ class ResearchToolkit:
         """
         if atom is None:
             return []
-        # Combine job_to_be_done + failure_mode + trigger_event, but
-        # strip personal-narrative noise and pick the most meaningful
-        # noun-like tokens.
+        # Include pain_statement first — it has the clearest problem
+        # description and is less prone to truncation/corruption than
+        # job_to_be_done.  Also include current_tools for tool names.
         raw = " ".join([
+            getattr(atom, "pain_statement", "") or "",
             getattr(atom, "job_to_be_done", "") or "",
             getattr(atom, "trigger_event", "") or "",
             getattr(atom, "failure_mode", "") or "",
@@ -3696,19 +3712,22 @@ class ResearchToolkit:
             and t not in RECURRENCE_NOISE_TERMS
             and t not in WEAK_VALIDATION_TERMS
             and t not in self._PERSONAL_NARRATIVE_TERMS
-            and len(t) > 2
+            and len(t) > 3  # Require 4+ chars to filter noise like "rns", "part", "out"
         ]
-        # Prioritize domain/product nouns (capitalized in original) and
-        # action verbs.  Simple heuristic: longer tokens and those that
-        # appear in the job_to_be_done are more likely core concepts.
-        jtbd_tokens = set(
-            re.findall(r"[a-z0-9]+", (getattr(atom, "job_to_be_done", "") or "").lower())
+        # Prioritize tokens from pain_statement and failure_mode —
+        # these contain the clearest problem descriptions.
+        pain_tokens = set(
+            re.findall(r"[a-z0-9]+", (getattr(atom, "pain_statement", "") or "").lower())
+        )
+        failure_tokens = set(
+            re.findall(r"[a-z0-9]+", (getattr(atom, "failure_mode", "") or "").lower())
         )
         scored = sorted(
             tokens,
             key=lambda t: (
-                2 if t in jtbd_tokens else 0,
-                min(len(t), 8),
+                3 if t in pain_tokens else 0,
+                2 if t in failure_tokens else 0,
+                min(len(t), 10),
             ),
             reverse=True,
         )

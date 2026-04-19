@@ -1227,3 +1227,105 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
         corroboration = self.db.get_corroboration(finding_id)
         self.assertEqual(corroboration.evidence["generalizability_class"], "product_specific_issue")
         self.assertGreater(corroboration.evidence["generalizability_penalty"], 0.0)
+
+
+class TestSignatureTermsAndDocMatching(unittest.TestCase):
+    """Test signature term extraction and document matching improvements."""
+
+    def test_signature_terms_includes_pain_statement_and_current_tools(self):
+        """pain_statement and current_tools should produce signature terms."""
+        atom = SimpleNamespace(
+            pain_statement="The reconciliation process relies on a fragile Excel macro",
+            job_to_be_done="runs reconciliation process",
+            failure_mode="macro contains spaghetti VBA and hardcoded rate values",
+            trigger_event="A vendor reported mismatched billing totals",
+            current_workaround="Manually running an Excel macro every Friday",
+            current_tools="Excel, Google Sheets",
+            cost_consequence_clues="",
+        )
+        terms = _signature_terms(atom)
+        # Should include "reconciliation" from pain_statement (compound term)
+        self.assertIn("reconciliation", terms)
+        # Should include "excel" from current_tools
+        self.assertIn("excel", terms)
+        # Should include key terms from failure_mode
+        self.assertIn("macro", terms)
+        # Should NOT include short noise like "rns" or fragment "reconcil"
+        self.assertNotIn("reconcil", terms)
+
+    def test_signature_terms_uses_compound_patterns(self):
+        """Known compound terms like 'reconciliation' should be extracted whole."""
+        atom = SimpleNamespace(
+            pain_statement="The core reconciliation process relies on outdated Excel macros",
+            job_to_be_done="",
+            failure_mode="",
+            trigger_event="",
+            current_workaround="",
+            current_tools="Excel",
+            cost_consequence_clues="",
+        )
+        terms = _signature_terms(atom)
+        self.assertIn("reconciliation", terms)
+        # Should also have "version control" or "audit trail" if present
+        # but at minimum reconciliation must be whole, not fragmented
+
+    def test_tool_terms_extraction(self):
+        """_signature_tool_terms should extract known tool/tech names."""
+        atom = SimpleNamespace(
+            current_tools="Excel, QuickBooks, Google Sheets",
+            failure_mode="QuickBooks payout reconciliation fails",
+            current_workaround="",
+        )
+        tools = _signature_tool_terms(atom)
+        self.assertIn("excel", tools)
+        self.assertIn("quickbooks", tools)
+
+    def test_doc_matches_signature_with_tool_tier(self):
+        """Docs mentioning same tool + generalizable workflow term should match."""
+        doc = {
+            "title": "Excel shared workbook conflict resolution",
+            "snippet": "How to resolve conflicts when multiple users edit a shared Excel workbook.",
+        }
+        signature_terms = ["reconciliation", "macro", "fragile", "outdated", "process"]
+        tool_terms = ["excel", "sheets", "vba"]
+        # Should match: "excel" in doc + "spreadsheet" in GENERALIZABLE_WORKFLOW_TERMS
+        self.assertTrue(
+            _doc_matches_signature(doc, signature_terms, origin_family="reddit", tool_terms=tool_terms)
+        )
+
+    def test_doc_matches_signature_cross_source_tool_match(self):
+        """Cross-source docs matching the tool name should pass even with 0 sig hits."""
+        doc = {
+            "title": "QuickBooks payout reconciliation errors",
+            "snippet": "QuickBooks payout reconciliation showing errors after bank import.",
+            "source": "web",
+            "url": "https://quickbooks.intuit.com/payout-errors",
+        }
+        signature_terms = ["reconciliation", "journal", "automate"]
+        tool_terms = ["excel", "quickbooks"]
+        # Should match: 1 sig hit ("reconciliation") + tool hit from different family
+        self.assertTrue(
+            _doc_matches_signature(doc, signature_terms, origin_family="reddit", tool_terms=tool_terms)
+        )
+
+    def test_doc_no_match_without_signature_or_tool(self):
+        """Docs with no signature hits and no tool hits should not match."""
+        doc = {
+            "title": "Gardening tips for spring planting",
+            "snippet": "How to plant vegetables in your garden this spring.",
+        }
+        signature_terms = ["reconciliation", "macro", "billing"]
+        tool_terms = ["excel", "quickbooks"]
+        self.assertFalse(
+            _doc_matches_signature(doc, signature_terms, origin_family="reddit", tool_terms=tool_terms)
+        )
+
+
+# Need SimpleNamespace for the new test class
+from types import SimpleNamespace
+from src.agents.evidence import (
+    _signature_terms,
+    _signature_tool_terms,
+    _doc_matches_signature,
+    GENERALIZABLE_WORKFLOW_TERMS,
+)

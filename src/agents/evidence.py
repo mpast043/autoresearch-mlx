@@ -93,6 +93,33 @@ GENERALIZABLE_WORKFLOW_TERMS = {
     "timeout",
     "hang",
     "freeze",
+    # Accounting/finance workflow terms — these are common in financial pain signals
+    "reconciliation",
+    "reconcile",
+    "reconciling",
+    "bookkeeping",
+    "accounting",
+    "invoicing",
+    "billing",
+    "payroll",
+    "ledger",
+    "journal",
+    "deposits",
+    "payout",
+    "invoice",
+    "receipt",
+    "tax",
+    "audit",
+    "batch",
+    # Operations workflow terms
+    "scheduling",
+    "inventory",
+    "fulfillment",
+    "checkout",
+    "reporting",
+    "dashboard",
+    "notification",
+    "alert",
 }
 
 BACKUP_RESTORE_TERMS = {
@@ -230,16 +257,47 @@ def _source_family_group(source_family: str) -> str:
 def _signature_terms(atom: Optional[Any]) -> list[str]:
     if atom is None:
         return []
+    # Include pain_statement and current_tools for richer matching —
+    # pain_statement captures the core problem in clear language;
+    # current_tools adds tool/technology names (Excel, QuickBooks, etc.)
+    # that are essential for cross-source confirmation.
     raw = " ".join(
         [
+            getattr(atom, "pain_statement", "") or "",
             getattr(atom, "job_to_be_done", "") or "",
             getattr(atom, "failure_mode", "") or "",
             getattr(atom, "trigger_event", "") or "",
             getattr(atom, "current_workaround", "") or "",
+            getattr(atom, "current_tools", "") or "",
             getattr(atom, "cost_consequence_clues", "") or "",
         ]
     ).lower()
+    # Extract known compound/technical terms that would be destroyed by
+    # word-level tokenization.  These are domain-specific multi-word
+    # concepts (e.g. "month-end close", "bank reconciliation", "payout
+    # reconciliation") or hyphenated compounds.
+    compound_terms: list[str] = []
+    # Known compound patterns in our problem domains
+    compound_patterns = [
+        r"reconciliation", r"bookkeeping", r"spreadsheet", r"quickbooks",
+        r"month-end", r"point-of-sale", r"bank reconciliation",
+        r"payout reconciliation", r"shared workbook", r"journal entries",
+        r"version control", r"audit trail", r"data entry",
+    ]
+    for pat in compound_patterns:
+        for match in re.findall(pat, raw):
+            if match not in compound_terms:
+                compound_terms.append(match)
+    # Also extract hyphenated compounds (e.g. "month-end", "point-of-sale")
+    for phrase in re.findall(r"[a-z]+(?:-[a-z]+)+", raw):
+        if phrase not in compound_terms:
+            compound_terms.append(phrase)
     terms: list[str] = []
+    # Compound terms go first — they are the most discriminating
+    for ct in compound_terms[:6]:
+        if ct not in terms:
+            terms.append(ct)
+    # Then word-level tokens (4+ chars, not noise)
     for token in re.findall(r"[a-z0-9]+", raw):
         if len(token) <= 3:
             continue
@@ -247,7 +305,7 @@ def _signature_terms(atom: Optional[Any]) -> list[str]:
             continue
         if token not in terms:
             terms.append(token)
-    return terms[:10]
+    return terms[:14]
 
 
 def _doc_text(doc: Any) -> str:
@@ -272,7 +330,39 @@ def _doc_source(doc: Any) -> str:
     return str(getattr(doc, "source", "") or "")
 
 
-def _doc_matches_signature(doc: Any, signature_terms: list[str], *, origin_family: str = "") -> bool:
+def _signature_tool_terms(atom: Optional[Any]) -> list[str]:
+    """Extract tool/technology names from atom fields for soft matching.
+
+    Tool names like 'excel', 'quickbooks', 'shopify' are strong discriminators
+    for same-problem vs. adjacent-problem confirmation. They deserve their own
+    tier because a doc mentioning the same tool + a generalizable workflow term
+    is highly likely to be a genuine corroboration.
+    """
+    if atom is None:
+        return []
+    raw = " ".join(
+        [
+            getattr(atom, "current_tools", "") or "",
+            getattr(atom, "failure_mode", "") or "",
+            getattr(atom, "current_workaround", "") or "",
+        ]
+    ).lower()
+    # Known product/tool names that are strong discriminators
+    known_tools = {
+        "excel", "sheets", "quickbooks", "xero", "sage", "freshbooks", "wave",
+        "shopify", "woocommerce", "wordpress", "squarespace", "wix", "notion",
+        "airtable", "salesforce", "hubspot", "zapier", "slack", "jira",
+        "github", "gitlab", "bitbucket", "figma", "sketch", "photoshop",
+        "vba", "macro", "macros", "python", "javascript", "sql", "rpa",
+    }
+    found: list[str] = []
+    for token in re.findall(r"[a-z0-9]+", raw):
+        if token in known_tools and token not in found:
+            found.append(token)
+    return found[:6]
+
+
+def _doc_matches_signature(doc: Any, signature_terms: list[str], *, origin_family: str = "", tool_terms: list[str] | None = None) -> bool:
     if not signature_terms:
         return False
     text = _doc_text(doc)
@@ -281,6 +371,16 @@ def _doc_matches_signature(doc: Any, signature_terms: list[str], *, origin_famil
         return True
     if len(hits) == 1 and any(term in text for term in GENERALIZABLE_WORKFLOW_TERMS):
         return True
+    # Tool-name tier: a doc mentioning a tool from the atom + any generalizable
+    # workflow term is a strong same-problem signal.  A single tool match alone
+    # is not enough (too broad), but tool + workflow term is specific enough.
+    if tool_terms:
+        tool_hits = [t for t in tool_terms if t in text]
+        if tool_hits and any(term in text for term in GENERALIZABLE_WORKFLOW_TERMS):
+            return True
+        # Tool + any signature hit is also sufficient
+        if tool_hits and hits:
+            return True
     # Cross-source docs from a different family than the origin only need 1 hit
     # — corroboration from an independent source is inherently valuable even if
     # the vocabulary differs.
@@ -288,6 +388,15 @@ def _doc_matches_signature(doc: Any, signature_terms: list[str], *, origin_famil
         doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
         if doc_family and doc_family != origin_family:
             return True
+    # Cross-source + tool match: a doc from a different source family that
+    # mentions the same tool is a genuine corroboration signal, even without
+    # a signature term hit.
+    if tool_terms and origin_family:
+        tool_hits = [t for t in tool_terms if t in text]
+        if tool_hits:
+            doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
+            if doc_family and doc_family != origin_family:
+                return True
     return False
 
 
@@ -909,26 +1018,19 @@ class EvidenceAgent(BaseAgent):
         )
         origin_source_group = _source_family_group(origin_source_family)
         signature_terms = _signature_terms(atom)
+        tool_terms = _signature_tool_terms(atom)
         matched_doc_families: list[str] = []
         matched_doc_groups: list[str] = []
         matched_family_counts: dict[str, int] = {}
         cross_source_match_count = 0
         for doc in recurrence_docs:
-            if not _doc_matches_signature(doc, signature_terms, origin_family=origin_source_family):
+            if not _doc_matches_signature(doc, signature_terms, origin_family=origin_source_family, tool_terms=tool_terms):
                 continue
             cross_source_match_count += 1
             doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
             matched_doc_families.append(doc_family)
             matched_doc_groups.append(_source_family_group(doc_family))
             matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
-        # The origin source family is itself confirming evidence — if
-        # cross-source docs matched, the origin finding + the matching
-        # cross-source docs constitute multi-family corroboration.
-        if origin_source_family and cross_source_match_count > 0:
-            if origin_source_family not in matched_doc_families:
-                matched_doc_families.append(origin_source_family)
-                matched_doc_groups.append(_source_family_group(origin_source_family))
-            matched_family_counts.setdefault(origin_source_family, 0)
         source_families = sorted(set(matched_doc_families))
         source_groups = sorted(set(matched_doc_groups))
         source_family_diversity = len(source_families)
