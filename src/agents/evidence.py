@@ -390,6 +390,7 @@ def _doc_matches_signature(doc: Any, signature_terms: list[str], *, origin_famil
     return False
 
 
+
 def _generalizability_profile(finding: Any, atom: Optional[Any]) -> dict[str, Any]:
     evidence = finding.evidence if hasattr(finding, "evidence") else {}
     source_classification = evidence.get("source_classification", {}) or {}
@@ -691,6 +692,14 @@ class EvidenceAgent(BaseAgent):
         self.config = config or {}
         self.toolkit = ResearchToolkit(self.config)
         self.status_tracker = status_tracker
+        self._llm_client = None
+        try:
+            from src.llm_discovery_expander import LLMClient
+            llm_config = dict(self.config)
+            if self.config.get("llm", {}).get("reasoning_model"):
+                self._llm_client = LLMClient(llm_config)
+        except Exception:
+            pass
         self.max_concurrency = max(1, int(self.config.get("orchestration", {}).get("evidence_concurrency", 3)))
         configured_timeout = float(self.config.get("orchestration", {}).get("evidence_timeout_seconds", 25))
         minimum_timeout = (
@@ -819,7 +828,7 @@ class EvidenceAgent(BaseAgent):
             logger.warning("evidence timeout finding=%s after %.1fs", finding_id, self.evidence_timeout_seconds)
             evidence_scores = self._timeout_evidence_scores(anchor_atom)
 
-        corroboration = self._build_corroboration_record(finding, anchor_atom, evidence_scores)
+        corroboration = await self._build_corroboration_record(finding, anchor_atom, evidence_scores)
         market_enrichment = self._build_market_enrichment(
             finding,
             evidence_scores,
@@ -1001,7 +1010,180 @@ class EvidenceAgent(BaseAgent):
             },
         }
 
-    def _build_corroboration_record(
+    async def _llm_classify_generalizability(
+        self,
+        finding: Any,
+        atom: Optional[Any],
+        heuristic_profile: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Use LLM to semantically assess whether a problem is reusable_workflow_pain.
+
+        Called when the heuristic generalizability score is below the threshold (0.42)
+        but might plausibly be a reusable workflow pain. Returns an override profile
+        dict or None if LLM classification fails or agrees with the heuristic.
+        """
+        if not self._llm_client:
+            return None
+
+        # Only call LLM for borderline cases: heuristic says product_specific but
+        # score isn't abysmal (has some workflow signal potential)
+        heuristic_class = heuristic_profile.get("generalizability_class", "")
+        heuristic_score = heuristic_profile.get("generalizability_score", 0.0)
+        if heuristic_class != "product_specific_issue":
+            return None  # Already classified as reusable_workflow_pain, no override needed
+
+        problem_text = " ".join(filter(None, [
+            getattr(finding, "product_built", "") or "",
+            getattr(finding, "outcome_summary", "") or "",
+            getattr(atom, "job_to_be_done", "") or "",
+            getattr(atom, "failure_mode", "") or "",
+            getattr(atom, "current_workaround", "") or "",
+            getattr(atom, "trigger_event", "") or "",
+        ]))[:1200]
+
+        if len(problem_text.strip()) < 30:
+            return None
+
+        system_prompt = (
+            "You are a product generalizability classifier. Given a problem description, "
+            "classify whether it describes a REUSABLE WORKFLOW PAIN or a PRODUCT-SPECIFIC ISSUE.\n\n"
+            "reusable_workflow_pain: A problem that many different people or businesses face "
+            "as part of a common workflow (e.g., data cleaning, report generation, reconciliation, "
+            "onboarding, migration, manual data entry). These are general problems that could "
+            "affect anyone doing that type of work, regardless of specific tools.\n\n"
+            "product_specific_issue: A bug, feature request, or problem that only affects users "
+            "of a specific product/platform (e.g., 'Firefox crashes on this page', 'WordPress "
+            "plugin X is broken', 'how to use feature Y in Z'). These are tightly coupled to "
+            "a specific product and not generalizable.\n\n"
+            "Return a JSON object with: {\"class\": \"reusable_workflow_pain\" or \"product_specific_issue\", "
+            "\"confidence\": 0.0 to 1.0, \"reason\": \"one sentence explanation\"}"
+        )
+        user_prompt = f"Classify this problem:\n{problem_text}"
+
+        try:
+            raw = await self._llm_client.reasoning_agenerate(system_prompt, user_prompt)
+            if not raw:
+                return None
+            from src.llm_discovery_expander import _extract_json
+            parsed = _extract_json(raw)
+            if not parsed or not isinstance(parsed, dict):
+                return None
+
+            llm_class = str(parsed.get("class", "")).strip().lower()
+            llm_confidence = float(parsed.get("confidence", 0.0))
+
+            if llm_class != "reusable_workflow_pain" or llm_confidence < 0.5:
+                logger.info(
+                    "LLM generalizability for finding %d: agreed with heuristic (%s, conf=%.2f)",
+                    getattr(finding, "id", 0), llm_class, llm_confidence,
+                )
+                return None  # LLM agrees it's product-specific or not confident enough
+
+            # LLM overrides to reusable_workflow_pain
+            reasons = list(heuristic_profile.get("generalizability_reasons", []))
+            reasons.append("llm_semantic_classification")
+
+            new_score = max(0.42, heuristic_score + 0.24)
+            new_score = min(new_score, 0.68)  # cap at reasonable max
+
+            override = {
+                "generalizability_class": "reusable_workflow_pain",
+                "generalizability_score": round(new_score, 4),
+                "generalizability_reasons": reasons,
+                "generalizability_penalty": 0.0,
+                "llm_generalizability_override": True,
+                "llm_generalizability_confidence": round(llm_confidence, 4),
+                "llm_generalizability_reason": str(parsed.get("reason", "")),
+                "heuristic_generalizability_class": heuristic_profile.get("generalizability_class", ""),
+                "heuristic_generalizability_score": heuristic_profile.get("generalizability_score", 0.0),
+            }
+            logger.info(
+                "LLM generalizability override for finding %d: %s (score %.2f -> %.2f, conf=%.2f)",
+                getattr(finding, "id", 0),
+                heuristic_profile.get("generalizability_class", ""),
+                heuristic_score,
+                new_score,
+                llm_confidence,
+            )
+            return override
+
+        except Exception as e:
+            logger.warning("LLM generalizability classification failed: %s", e)
+            return None
+
+    async def _llm_corroborate_docs(
+        self,
+        atom: Any,
+        docs: list[Any],
+        signature_terms: list[str],
+        tool_terms: list[str],
+    ) -> list[tuple[int, str]]:
+        """Second-pass LLM corroboration for docs the heuristic rejected.
+
+        Returns list of (doc_index, reason) for docs the LLM confirms.
+        """
+        if not self._llm_client or not docs:
+            return []
+
+        pain = getattr(atom, "pain_statement", "") or ""
+        failure = getattr(atom, "failure_mode", "") or ""
+        job = getattr(atom, "job_to_be_done", "") or ""
+        tools = getattr(atom, "current_tools", "") or ""
+        workaround = getattr(atom, "current_workaround", "") or ""
+
+        doc_summaries = []
+        for i, doc in enumerate(docs[:10]):
+            title = getattr(doc, "title", "") or ""
+            snippet = getattr(doc, "snippet", "") or ""
+            source = getattr(doc, "source_family", "") or getattr(doc, "source", "") or ""
+            doc_summaries.append(f"[{i}] [{source}] {title}: {snippet[:200]}")
+
+        system_prompt = (
+            "You are an evidence corroboration analyst. Your job is to determine whether "
+            "a search result genuinely corroborates a specific problem described by a user. "
+            "A result corroborates if it confirms the problem exists, describes the same pain, "
+            "or discusses the same workflow failure — even from a different angle like a blog "
+            "post, tutorial, or product page that acknowledges the pain.\n\n"
+            "Return a JSON object with key \"confirmed\" containing an array of objects "
+            "with \"index\" (integer) and \"reason\" (short string). "
+            "If no results corroborate, return {\"confirmed\": []}."
+        )
+
+        user_prompt = (
+            f"PROBLEM:\n"
+            f"  Pain: {pain}\n"
+            f"  Failure: {failure}\n"
+            f"  Job: {job}\n"
+            f"  Tools: {tools}\n"
+            f"  Workaround: {workaround}\n"
+            f"  Signature terms: {', '.join(signature_terms)}\n"
+            f"  Tool terms: {', '.join(tool_terms)}\n\n"
+            f"SEARCH RESULTS:\n" + "\n".join(doc_summaries)
+        )
+
+        try:
+            raw = await self._llm_client.reasoning_agenerate(system_prompt, user_prompt)
+            if not raw:
+                return []
+            from src.llm_discovery_expander import _extract_json
+            parsed = _extract_json(raw)
+            if not parsed or not isinstance(parsed, dict):
+                return []
+            confirmed = parsed.get("confirmed", [])
+            results = []
+            for entry in confirmed:
+                if not isinstance(entry, dict):
+                    continue
+                idx = entry.get("index")
+                reason = str(entry.get("reason", ""))[:100]
+                if isinstance(idx, int) and 0 <= idx < len(docs):
+                    results.append((idx, reason))
+            return results
+        except Exception as e:
+            logger.warning("LLM corroboration failed: %s", e)
+            return []
+
+    async def _build_corroboration_record(
         self,
         finding: Any,
         atom: Optional[Any],
@@ -1049,6 +1231,23 @@ class EvidenceAgent(BaseAgent):
             matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
         source_families = sorted(set(matched_doc_families))
         source_groups = sorted(set(matched_doc_groups))
+
+        # LLM second-pass: when heuristic signature matching found nothing,
+        # ask the reasoning model to semantically assess rejected docs.
+        if not source_families and self._llm_client and recurrence_docs:
+            llm_rescued = await self._llm_corroborate_docs(atom, recurrence_docs, signature_terms, tool_terms)
+            if llm_rescued:
+                for idx, reason in llm_rescued:
+                    doc = recurrence_docs[idx]
+                    doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
+                    matched_doc_families.append(doc_family)
+                    matched_doc_groups.append(_source_family_group(doc_family))
+                    matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
+                    cross_source_match_count += 1
+                source_families = sorted(set(matched_doc_families))
+                source_groups = sorted(set(matched_doc_groups))
+                logger.info("LLM rescued %d/%d docs for finding %d", len(llm_rescued), len(recurrence_docs), finding_id)
+
         source_family_diversity = len(source_families)
         source_group_diversity = len(source_groups)
         source_family_diversity_score = min(source_family_diversity, 4) / 4.0
@@ -1065,6 +1264,13 @@ class EvidenceAgent(BaseAgent):
                 + source_family_diversity_score * 0.15,
             )
         generalizability = _generalizability_profile(finding, atom)
+
+        # LLM generalizability override: when heuristic classifies as product_specific
+        # but the problem may plausibly be a reusable workflow pain, ask the LLM
+        if generalizability.get("generalizability_class") != "reusable_workflow_pain" and self._llm_client:
+            llm_override = await self._llm_classify_generalizability(finding, atom, generalizability)
+            if llm_override:
+                generalizability = llm_override
 
         single_source_penalty = 0.0
         cross_source_bonus = 0.0

@@ -1381,3 +1381,194 @@ from src.agents.evidence import (
     _doc_matches_signature,
     GENERALIZABLE_WORKFLOW_TERMS,
 )
+
+
+class TestLLMCorroboration(unittest.IsolatedAsyncioTestCase):
+    """Test LLM second-pass corroboration."""
+
+    async def test_llm_corroborate_docs_rescues_rejected_results(self):
+        from unittest.mock import AsyncMock, MagicMock
+        atom = SimpleNamespace(
+            pain_statement="manual reconciliation wastes hours every month",
+            failure_mode="silently fails to match invoices to deposits",
+            job_to_be_done="reconcile bank deposits with invoices",
+            current_tools="Excel",
+            current_workaround="manual cross-reference in spreadsheet",
+            cost_consequence_clues="",
+        )
+        docs = [
+            SimpleNamespace(title="Why Manual Reconciliation Is a Nightmare", snippet="Small businesses waste hours on manual reconciliation.", source_family="web", source="web", url="https://blog.example.com/recon"),
+            SimpleNamespace(title="Best Accounting Software 2026", snippet="Compare the top tools for small business accounting.", source_family="web", source="web", url="https://www.capterra.com/best"),
+        ]
+        mock_client = MagicMock()
+        mock_client.reasoning_agenerate = AsyncMock(return_value='{"confirmed": [{"index": 0, "reason": "describes same pain of manual reconciliation"}]}')
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = mock_client
+        agent.config = {}
+        result = await agent._llm_corroborate_docs(atom, docs, ["reconciliation", "manual"], ["excel"])
+        assert len(result) == 1
+        assert result[0][0] == 0
+        assert "manual reconciliation" in result[0][1]
+
+    async def test_llm_corroborate_docs_returns_empty_on_failure(self):
+        from unittest.mock import AsyncMock, MagicMock
+        atom = SimpleNamespace(pain_statement="x", failure_mode="", job_to_be_done="", current_tools="", current_workaround="", cost_consequence_clues="")
+        docs = [SimpleNamespace(title="t", snippet="s", source_family="web", source="web", url="u")]
+        mock_client = MagicMock()
+        mock_client.reasoning_agenerate = AsyncMock(return_value=None)
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = mock_client
+        agent.config = {}
+        result = await agent._llm_corroborate_docs(atom, docs, ["x"], [])
+        assert result == []
+
+    async def test_llm_corroborate_docs_skips_without_client(self):
+        atom = SimpleNamespace(pain_statement="x", failure_mode="", job_to_be_done="", current_tools="", current_workaround="", cost_consequence_clues="")
+        docs = [SimpleNamespace(title="t", snippet="s", source_family="web", source="web", url="u")]
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = None
+        agent.config = {}
+        result = await agent._llm_corroborate_docs(atom, docs, ["x"], [])
+        assert result == []
+
+
+class TestLLMGeneralizability(unittest.IsolatedAsyncioTestCase):
+    """Test LLM generalizability override."""
+
+    async def test_llm_overrides_product_specific_to_reusable_workflow(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from src.agents.evidence import _generalizability_profile
+
+        finding = SimpleNamespace(
+            product_built="DevTools code snippets migration failure",
+            outcome_summary="Users cannot open DevTools after migrating code snippets",
+            evidence={},
+        )
+        atom = SimpleNamespace(
+            job_to_be_done="",
+            failure_mode="DevTools crash after snippet migration",
+            trigger_event="",
+            current_workaround="",
+            cost_consequence_clues="",
+            frequency_clues="",
+        )
+
+        # Heuristic should classify this as product_specific_issue
+        heuristic = _generalizability_profile(finding, atom)
+        assert heuristic["generalizability_class"] == "product_specific_issue"
+
+        # LLM should override to reusable_workflow_pain
+        mock_client = MagicMock()
+        mock_client.reasoning_agenerate = AsyncMock(
+            return_value='{"class": "reusable_workflow_pain", "confidence": 0.85, "reason": "Code snippet management is a general workflow problem affecting all developers"}'
+        )
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = mock_client
+        agent.config = {}
+
+        result = await agent._llm_classify_generalizability(finding, atom, heuristic)
+        assert result is not None
+        assert result["generalizability_class"] == "reusable_workflow_pain"
+        assert result["generalizability_score"] >= 0.42
+        assert result["generalizability_penalty"] == 0.0
+        assert "llm_semantic_classification" in result["generalizability_reasons"]
+        assert result["heuristic_generalizability_class"] == "product_specific_issue"
+
+    async def test_llm_agrees_with_heuristic_no_override(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from src.agents.evidence import _generalizability_profile
+
+        finding = SimpleNamespace(
+            product_built="Firefox crashes on specific page",
+            outcome_summary="Browser crash when visiting example.com",
+            evidence={},
+        )
+        atom = SimpleNamespace(
+            job_to_be_done="",
+            failure_mode="Firefox crash on specific page load",
+            trigger_event="",
+            current_workaround="",
+            cost_consequence_clues="",
+            frequency_clues="",
+        )
+
+        heuristic = _generalizability_profile(finding, atom)
+
+        # LLM agrees it's product_specific_issue
+        mock_client = MagicMock()
+        mock_client.reasoning_agenerate = AsyncMock(
+            return_value='{"class": "product_specific_issue", "confidence": 0.9, "reason": "Browser-specific crash"}'
+        )
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = mock_client
+        agent.config = {}
+
+        result = await agent._llm_classify_generalizability(finding, atom, heuristic)
+        assert result is None  # No override when LLM agrees with heuristic
+
+    async def test_llm_low_confidence_no_override(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from src.agents.evidence import _generalizability_profile
+
+        finding = SimpleNamespace(
+            product_built="Manual data entry in CRM",
+            outcome_summary="Sales team wasting hours on manual data entry",
+            evidence={},
+        )
+        atom = SimpleNamespace(
+            job_to_be_done="",
+            failure_mode="Manual CRM data entry takes too long",
+            trigger_event="",
+            current_workaround="copy-paste from email",
+            cost_consequence_clues="",
+            frequency_clues="",
+        )
+
+        heuristic = _generalizability_profile(finding, atom)
+
+        # LLM says reusable but with low confidence
+        mock_client = MagicMock()
+        mock_client.reasoning_agenerate = AsyncMock(
+            return_value='{"class": "reusable_workflow_pain", "confidence": 0.3, "reason": "Maybe generalizable"}'
+        )
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = mock_client
+        agent.config = {}
+
+        result = await agent._llm_classify_generalizability(finding, atom, heuristic)
+        assert result is None  # No override with low confidence
+
+    async def test_llm_generalizability_skips_without_client(self):
+        from src.agents.evidence import _generalizability_profile
+
+        finding = SimpleNamespace(product_built="x", outcome_summary="y", evidence={})
+        atom = SimpleNamespace(job_to_be_done="", failure_mode="", trigger_event="",
+                             current_workaround="", cost_consequence_clues="", frequency_clues="")
+
+        heuristic = _generalizability_profile(finding, atom)
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = None
+        agent.config = {}
+
+        result = await agent._llm_classify_generalizability(finding, atom, heuristic)
+        assert result is None  # No LLM override without client
+
+    async def test_llm_generalizability_skips_already_reusable(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        # Already classified as reusable_workflow_pain - no override needed
+        heuristic = {
+            "generalizability_class": "reusable_workflow_pain",
+            "generalizability_score": 0.58,
+            "generalizability_reasons": ["generalizable_workflow_terms"],
+            "generalizability_penalty": 0.0,
+        }
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = MagicMock()
+        agent.config = {}
+
+        finding = SimpleNamespace(product_built="x", outcome_summary="y", evidence={})
+        atom = SimpleNamespace(job_to_be_done="", failure_mode="", trigger_event="",
+                             current_workaround="", cost_consequence_clues="", frequency_clues="")
+        result = await agent._llm_classify_generalizability(finding, atom, heuristic)
+        assert result is None
