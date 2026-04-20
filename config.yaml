@@ -216,6 +216,9 @@ llm:
   base_url: http://localhost:11434
   max_tokens: 2000
   timeout: 180
+  reasoning_model: qwen3.5:cloud
+  reasoning_max_tokens: 4000
+  reasoning_timeout: 120
 
 build_prep:
   wedge_evaluation:

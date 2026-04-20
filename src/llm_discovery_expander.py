@@ -243,39 +243,52 @@ class LLMClient:
         self.max_tokens = llm_config.get("max_tokens", 2000)
         self.temperature = llm_config.get("temperature", 0.3)
         self.timeout = llm_config.get("timeout", 120)
+        self.reasoning_model = llm_config.get("reasoning_model", "")
+        self.reasoning_max_tokens = int(llm_config.get("reasoning_max_tokens", 4000))
+        self.reasoning_timeout = int(llm_config.get("reasoning_timeout", 120))
 
-    def generate(self, system_prompt: str, user_prompt: str) -> str | None:
+    def generate(self, system_prompt: str, user_prompt: str, *, model: str | None = None, max_tokens: int | None = None, timeout: int | None = None) -> str | None:
         """Synchronous generation. Returns raw text or None on failure."""
+        effective_model = model or self.model
+        effective_max_tokens = max_tokens or self.max_tokens
+        effective_timeout = timeout or self.timeout
         if self.provider == "ollama":
-            return self._ollama_generate(system_prompt, user_prompt)
+            return self._ollama_generate(system_prompt, user_prompt, model=effective_model, max_tokens=effective_max_tokens, timeout=effective_timeout)
         elif self.provider == "anthropic":
-            return self._anthropic_generate(system_prompt, user_prompt)
+            return self._anthropic_generate(system_prompt, user_prompt, model=effective_model, max_tokens=effective_max_tokens, timeout=effective_timeout)
         else:
             # auto: try Ollama first, fall back to Anthropic
-            result = self._ollama_generate(system_prompt, user_prompt)
+            result = self._ollama_generate(system_prompt, user_prompt, model=effective_model, max_tokens=effective_max_tokens, timeout=effective_timeout)
             if result is not None:
                 return result
-            return self._anthropic_generate(system_prompt, user_prompt)
+            return self._anthropic_generate(system_prompt, user_prompt, model=effective_model, max_tokens=effective_max_tokens, timeout=effective_timeout)
 
-    async def agenerate(self, system_prompt: str, user_prompt: str) -> str | None:
+    async def agenerate(self, system_prompt: str, user_prompt: str, *, model: str | None = None, max_tokens: int | None = None, timeout: int | None = None) -> str | None:
         """Async generation. Returns raw text or None on failure."""
+        effective_model = model or self.model
+        effective_max_tokens = max_tokens or self.max_tokens
+        effective_timeout = timeout or self.timeout
         if self.provider == "ollama":
-            return await self._ollama_agenerate(system_prompt, user_prompt)
+            return await self._ollama_agenerate(system_prompt, user_prompt, model=effective_model, max_tokens=effective_max_tokens, timeout=effective_timeout)
         elif self.provider == "anthropic":
-            return await asyncio.to_thread(self._anthropic_generate, system_prompt, user_prompt)
+            return await asyncio.to_thread(self._anthropic_generate, system_prompt, user_prompt, model=effective_model, max_tokens=effective_max_tokens, timeout=effective_timeout)
         else:
-            result = await self._ollama_agenerate(system_prompt, user_prompt)
+            result = await self._ollama_agenerate(system_prompt, user_prompt, model=effective_model, max_tokens=effective_max_tokens, timeout=effective_timeout)
             if result is not None:
                 return result
-            return await asyncio.to_thread(self._anthropic_generate, system_prompt, user_prompt)
+            return await asyncio.to_thread(self._anthropic_generate, system_prompt, user_prompt, model=effective_model, max_tokens=effective_max_tokens, timeout=effective_timeout)
 
-    def _ollama_generate(self, system_prompt: str, user_prompt: str) -> str | None:
+    def _ollama_generate(self, system_prompt: str, user_prompt: str, *, model: str | None = None, max_tokens: int | None = None, timeout: int | None = None) -> str | None:
         """Synchronous Ollama call via /api/chat endpoint."""
         import urllib.request
         import urllib.error
 
+        effective_model = model or self.model
+        effective_max_tokens = max_tokens or self.max_tokens
+        effective_timeout = timeout or self.timeout
+
         request_data = {
-            "model": self.model,
+            "model": effective_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -283,7 +296,7 @@ class LLMClient:
             "stream": False,
             "options": {
                 "temperature": self.temperature,
-                "num_predict": self.max_tokens,
+                "num_predict": effective_max_tokens,
             },
         }
 
@@ -293,19 +306,23 @@ class LLMClient:
                 data=json.dumps(request_data).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            with urllib.request.urlopen(req, timeout=effective_timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 return result.get("message", {}).get("content", "")
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
             logger.warning(f"Ollama generation failed: {e}")
             return None
 
-    async def _ollama_agenerate(self, system_prompt: str, user_prompt: str) -> str | None:
+    async def _ollama_agenerate(self, system_prompt: str, user_prompt: str, *, model: str | None = None, max_tokens: int | None = None, timeout: int | None = None) -> str | None:
         """Async Ollama call via /api/chat endpoint."""
         import aiohttp
 
+        effective_model = model or self.model
+        effective_max_tokens = max_tokens or self.max_tokens
+        effective_timeout = timeout or self.timeout
+
         payload = {
-            "model": self.model,
+            "model": effective_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -313,7 +330,7 @@ class LLMClient:
             "stream": False,
             "options": {
                 "temperature": self.temperature,
-                "num_predict": self.max_tokens,
+                "num_predict": effective_max_tokens,
             },
         }
 
@@ -322,7 +339,7 @@ class LLMClient:
                 async with session.post(
                     f"{self.base_url}/api/chat",
                     json=payload,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    timeout=aiohttp.ClientTimeout(total=effective_timeout),
                 ) as resp:
                     if resp.status != 200:
                         error_text = await resp.text()
@@ -334,8 +351,11 @@ class LLMClient:
             logger.warning(f"Ollama async generation failed: {e}")
             return None
 
-    def _anthropic_generate(self, system_prompt: str, user_prompt: str) -> str | None:
+    def _anthropic_generate(self, system_prompt: str, user_prompt: str, *, model: str | None = None, max_tokens: int | None = None, timeout: int | None = None) -> str | None:
         """Synchronous Anthropic call via SDK (same pattern as build_prep.py)."""
+        effective_model = model or self.model
+        effective_max_tokens = max_tokens or self.max_tokens
+
         if not self.api_key:
             # Try env vars as fallback
             import os
@@ -348,8 +368,8 @@ class LLMClient:
             from anthropic import Anthropic
             client = Anthropic(api_key=self.api_key)
             response = client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
+                model=effective_model,
+                max_tokens=effective_max_tokens,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
@@ -357,6 +377,32 @@ class LLMClient:
         except Exception as e:
             logger.warning(f"Anthropic generation failed: {e}")
             return None
+
+    def reasoning_generate(self, system_prompt: str, user_prompt: str) -> str | None:
+        """Synchronous generation using the reasoning model (e.g. qwen3.5:cloud).
+        Falls back to the default model if no reasoning model is configured.
+        """
+        if not self.reasoning_model:
+            return self.generate(system_prompt, user_prompt)
+        return self.generate(
+            system_prompt, user_prompt,
+            model=self.reasoning_model,
+            max_tokens=self.reasoning_max_tokens,
+            timeout=self.reasoning_timeout,
+        )
+
+    async def reasoning_agenerate(self, system_prompt: str, user_prompt: str) -> str | None:
+        """Async generation using the reasoning model (e.g. qwen3.5:cloud).
+        Falls back to the default model if no reasoning model is configured.
+        """
+        if not self.reasoning_model:
+            return await self.agenerate(system_prompt, user_prompt)
+        return await self.agenerate(
+            system_prompt, user_prompt,
+            model=self.reasoning_model,
+            max_tokens=self.reasoning_max_tokens,
+            timeout=self.reasoning_timeout,
+        )
 
 
 # ---------------------------------------------------------------------------

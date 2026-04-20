@@ -1857,6 +1857,34 @@ def test_validation_recurrence_filter_keeps_practitioner_thread():
     ) is True
 
 
+def test_validation_recurrence_accepts_blog_with_pain_language():
+    """Blog posts with pain language about the problem ARE valid corroboration."""
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_relevant_search_result(
+        query='"manual reconciliation" "small business"',
+        title="Why Manual Reconciliation Is a Nightmare for Small Businesses",
+        snippet="Small businesses waste hours on manual reconciliation every month. The process is error-prone and frustrating.",
+        domain="www.accountingblog.com",
+        url="https://www.accountingblog.com/blog/manual-reconciliation-small-business",
+        intent="validation_recurrence",
+    ) is True
+
+
+def test_validation_recurrence_rejects_blog_without_pain():
+    """Blog-like pages without pain language should still be rejected."""
+    toolkit = ResearchToolkit()
+
+    assert toolkit._is_relevant_search_result(
+        query='"manual reconciliation" "small business"',
+        title="A Guide to Bank Reconciliation for Small Business",
+        snippet="Learn the basics of bank reconciliation and how to stay organized.",
+        domain="www.accountingblog.com",
+        url="https://www.accountingblog.com/blog/bank-reconciliation-guide",
+        intent="validation_recurrence",
+    ) is False
+
+
 def test_build_discovery_query_plan_prefers_queries_that_produced_prototype_candidates():
     toolkit = ResearchToolkit()
     toolkit.set_discovery_feedback(

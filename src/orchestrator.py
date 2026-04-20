@@ -317,6 +317,24 @@ class Orchestrator:
                     },
                     priority=2,
                 )
+
+            # After spec_generation, run security scan on the spec
+            if (
+                message.payload.get("prep_stage") == "spec_generation"
+                and "security" in self._agents
+                and message.payload.get("spec_content")
+            ):
+                await self.send_message(
+                    to_agent="security",
+                    msg_type=MessageType.SECURITY_SCAN,
+                    payload={
+                        "spec": message.payload.get("spec_content"),
+                        "build_brief_id": message.payload.get("build_brief_id"),
+                        "opportunity_id": message.payload.get("opportunity_id"),
+                    },
+                    priority=3,
+                )
+
             return
 
         if message.msg_type == MessageType.IDEA:
@@ -353,6 +371,36 @@ class Orchestrator:
                     mvps=[product["location"] for product in products[:10]],
                 )
                 self._status_tracker.complete()
+            return
+
+        if message.msg_type == MessageType.SECURITY_SCAN:
+            if "security" in self._agents:
+                await self.send_message(
+                    to_agent="security",
+                    msg_type=MessageType.SECURITY_SCAN,
+                    payload=message.payload,
+                    priority=3,
+                )
+            return
+
+        if message.msg_type == MessageType.DOC_GENERATION:
+            if "technical_writer" in self._agents:
+                await self.send_message(
+                    to_agent="technical_writer",
+                    msg_type=MessageType.DOC_GENERATION,
+                    payload=message.payload,
+                    priority=4,
+                )
+            return
+
+        if message.msg_type == MessageType.HEALTH_CHECK:
+            if "sre" in self._agents:
+                await self.send_message(
+                    to_agent="sre",
+                    msg_type=MessageType.HEALTH_CHECK,
+                    payload=message.payload,
+                    priority=4,
+                )
             return
 
         logger.info("ignored orchestrator message: %s", message.msg_type)

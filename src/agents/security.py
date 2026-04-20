@@ -114,8 +114,9 @@ class SecurityAgent(BaseAgent):
     vulnerabilities and other security issues.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, db=None, message_queue=None, config: dict[str, Any] | None = None):
         super().__init__("SecurityAgent")
+        self.db = db
         self.config = config or {}
         self._patterns = OWASP_PATTERNS
         self._min_severity = self.config.get("min_severity", "nit")

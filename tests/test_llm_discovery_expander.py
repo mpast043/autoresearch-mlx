@@ -81,10 +81,54 @@ class TestLLMClient(unittest.TestCase):
         with patch.object(client, "_anthropic_generate", return_value="anthropic output") as mock_generate:
             result = asyncio.run(client.agenerate("system", "user"))
         assert result == "anthropic output"
-        mock_generate.assert_called_once_with("system", "user")
+        mock_generate.assert_called_once_with("system", "user", model="gemma4:latest", max_tokens=2000, timeout=120)
 
+    def test_generate_passes_model_override(self) -> None:
+        config = {"llm": {"provider": "ollama"}}
+        client = LLMClient(config)
+        with patch.object(client, "_ollama_generate", return_value="output") as mock_gen:
+            result = client.generate("sys", "usr", model="qwen3.5:cloud", max_tokens=4000, timeout=60)
+        assert result == "output"
+        mock_gen.assert_called_once_with("sys", "usr", model="qwen3.5:cloud", max_tokens=4000, timeout=60)
 
-class TestExtractJson(unittest.TestCase):
+    def test_agenerate_passes_model_override(self) -> None:
+        config = {"llm": {"provider": "ollama"}}
+        client = LLMClient(config)
+        with patch.object(client, "_ollama_agenerate", return_value="output") as mock_gen:
+            result = asyncio.run(client.agenerate("sys", "usr", model="qwen3.5:cloud", max_tokens=4000, timeout=60))
+        assert result == "output"
+        mock_gen.assert_called_once_with("sys", "usr", model="qwen3.5:cloud", max_tokens=4000, timeout=60)
+
+    def test_reasoning_generate_uses_reasoning_model(self) -> None:
+        config = {"llm": {"provider": "ollama", "reasoning_model": "qwen3.5:cloud", "reasoning_max_tokens": 4000, "reasoning_timeout": 120}}
+        client = LLMClient(config)
+        with patch.object(client, "generate", return_value="reasoning output") as mock_gen:
+            result = client.reasoning_generate("sys", "usr")
+        assert result == "reasoning output"
+        mock_gen.assert_called_once_with("sys", "usr", model="qwen3.5:cloud", max_tokens=4000, timeout=120)
+
+    def test_reasoning_generate_falls_back_without_reasoning_model(self) -> None:
+        config = {"llm": {"provider": "ollama"}}
+        client = LLMClient(config)
+        with patch.object(client, "generate", return_value="default output") as mock_gen:
+            result = client.reasoning_generate("sys", "usr")
+        assert result == "default output"
+        mock_gen.assert_called_once_with("sys", "usr")
+
+    def test_reasoning_agenerate_uses_reasoning_model(self) -> None:
+        config = {"llm": {"provider": "ollama", "reasoning_model": "qwen3.5:cloud", "reasoning_max_tokens": 4000, "reasoning_timeout": 120}}
+        client = LLMClient(config)
+        with patch.object(client, "agenerate", return_value="reasoning output") as mock_gen:
+            result = asyncio.run(client.reasoning_agenerate("sys", "usr"))
+        assert result == "reasoning output"
+        mock_gen.assert_called_once_with("sys", "usr", model="qwen3.5:cloud", max_tokens=4000, timeout=120)
+
+    def test_reasoning_config_defaults(self) -> None:
+        config = {"llm": {}}
+        client = LLMClient(config)
+        assert client.reasoning_model == ""
+        assert client.reasoning_max_tokens == 4000
+        assert client.reasoning_timeout == 120
     """Test JSON extraction from LLM responses."""
 
     def test_direct_json(self) -> None:

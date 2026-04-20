@@ -185,6 +185,15 @@ class AutoResearcher:
         if self.config.get("builder", {}).get("auto_build", False):
             from src.agents.builder_v2 import BuilderV2Agent
             self.agents["builder"] = BuilderV2Agent(self.config, db=self.db)
+        if self.config.get("security", {}).get("enabled", False):
+            from src.agents.security import SecurityAgent
+            self.agents["security"] = SecurityAgent(db=self.db, message_queue=message_queue, config=self.config.get("security", {}))
+        if self.config.get("technical_writer", {}).get("enabled", False):
+            from src.agents.technical_writer import TechnicalWriterAgent
+            self.agents["technical_writer"] = TechnicalWriterAgent(db=self.db, message_queue=message_queue, config=self.config.get("technical_writer", {}))
+        if self.config.get("sre", {}).get("enabled", False):
+            from src.agents.sre import SREAgent
+            self.agents["sre"] = SREAgent(db=self.db, message_queue=message_queue, config=self.config.get("sre", {}))
 
         for agent in self.agents.values():
             self.orchestrator.register_agent(agent)

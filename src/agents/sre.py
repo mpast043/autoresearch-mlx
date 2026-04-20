@@ -85,7 +85,7 @@ class SREAgent(BaseAgent):
     drops, and recommends recovery actions.
     """
 
-    def __init__(self, db, config: dict[str, Any] | None = None):
+    def __init__(self, db, message_queue=None, config: dict[str, Any] | None = None):
         super().__init__("SREAgent")
         self.db = db
         self.config = config or {}

@@ -23,6 +23,13 @@ class IdeationAgent(BaseAgent):
         super().__init__("ideation", message_queue)
         self.db = db
         self.config = config or {}
+        self._llm_client = None
+        try:
+            from src.llm_discovery_expander import LLMClient
+            if config and config.get("llm", {}).get("reasoning_model"):
+                self._llm_client = LLMClient(config)
+        except Exception:
+            pass
 
     async def process(self, message) -> Dict[str, Any]:
         if message.msg_type == MessageType.VALIDATION:
@@ -50,12 +57,13 @@ class IdeationAgent(BaseAgent):
             experiment_rows = self.db.get_experiments(opportunity_id=payload.get("opportunity_id"))
         experiment = experiment_rows[0] if experiment_rows else None
 
-        title, description, product_type, audience, monetization, features = self._idea_from_validation(
+        title, description, product_type, audience, monetization, features = await self._generate_idea_fields(
             finding=finding,
             cluster=cluster,
             scorecard=scorecard,
             market_gap_state=evidence.get("market_gap_state", "unknown"),
             experiment=experiment,
+            evidence=evidence,
         )
 
         idea_slug = slugify(title)
@@ -145,6 +153,102 @@ class IdeationAgent(BaseAgent):
             priority=2,
         )
         return {"success": True, "idea_id": idea_id, "title": title, "refined": existing is not None}
+
+    async def _generate_idea_fields(
+        self,
+        *,
+        finding,
+        cluster: Dict[str, Any],
+        scorecard: Dict[str, Any],
+        market_gap_state: str,
+        experiment,
+        evidence: Dict[str, Any],
+    ) -> tuple[str, str, str, str, str, list[str]]:
+        """Try LLM idea generation first, fall back to template."""
+        if self._llm_client:
+            llm_result = await self._llm_generate_idea(
+                finding=finding,
+                cluster=cluster,
+                scorecard=scorecard,
+                market_gap_state=market_gap_state,
+                experiment=experiment,
+                evidence=evidence,
+            )
+            if llm_result:
+                return llm_result
+        return self._idea_from_validation(
+            finding=finding,
+            cluster=cluster,
+            scorecard=scorecard,
+            market_gap_state=market_gap_state,
+            experiment=experiment,
+        )
+
+    async def _llm_generate_idea(
+        self,
+        *,
+        finding,
+        cluster: Dict[str, Any],
+        scorecard: Dict[str, Any],
+        market_gap_state: str,
+        experiment,
+        evidence: Dict[str, Any],
+    ) -> tuple[str, str, str, str, str, list[str]] | None:
+        """Generate idea via reasoning model. Returns None on failure."""
+        if not self._llm_client:
+            return None
+
+        cluster_label = cluster.get("label") or finding.product_built or "Opportunity"
+        scores = evidence.get("scores", {})
+        validation_plan = experiment.plan if experiment else {}
+        counterevidence = evidence.get("counterevidence", [])
+
+        system_prompt = (
+            "You are a product ideation analyst. Given evidence about a validated problem, "
+            "generate a concrete product idea with a real product name, clear value proposition, "
+            "target audience, monetization strategy, and key features.\n\n"
+            "Return a JSON object with keys: product_title (string, max 60 chars), "
+            "description (string, 2-3 sentences), product_type (string), audience (string), "
+            "monetization (string), features (array of 3-5 strings)."
+        )
+
+        user_prompt = (
+            f"PROBLEM: {finding.product_built or cluster_label}\n"
+            f"OUTCOME: {finding.outcome_summary or ''}\n"
+            f"CLUSTER: {cluster_label}\n"
+            f"SCORE: {scorecard.get('total_score', 0):.2f}\n"
+            f"DECISION: {scorecard.get('decision', 'park')}\n"
+            f"MARKET GAP: {market_gap_state}\n"
+            f"VALIDATION TEST: {validation_plan.get('test_type', 'problem_interviews')}\n"
+            f"SMALLEST TEST: {validation_plan.get('smallest_test', '')}\n"
+            f"COUNTEREVIDENCE: {counterevidence[:3] if counterevidence else 'none'}\n"
+            f"FEASIBILITY: {scores.get('feasibility_score', 0):.2f}\n"
+            f"PROBLEM SCORE: {scores.get('problem_score', 0):.2f}\n"
+            f"VALUE SCORE: {scores.get('value_score', 0):.2f}\n"
+        )
+
+        try:
+            raw = await self._llm_client.reasoning_agenerate(system_prompt, user_prompt)
+            if not raw:
+                return None
+            from src.llm_discovery_expander import _extract_json
+            parsed = _extract_json(raw)
+            if not parsed or not isinstance(parsed, dict):
+                return None
+            title = str(parsed.get("product_title", ""))[:60]
+            description = str(parsed.get("description", ""))
+            product_type = str(parsed.get("product_type", "research-brief"))
+            audience = str(parsed.get("audience", ""))
+            monetization = str(parsed.get("monetization", ""))
+            features = parsed.get("features", [])
+            if not isinstance(features, list):
+                features = [str(features)]
+            features = [str(f) for f in features[:5]]
+            if not title:
+                return None
+            return title, description, product_type, audience, monetization, features
+        except Exception:
+            return None
 
     def _idea_from_validation(
         self,

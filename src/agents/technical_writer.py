@@ -45,8 +45,9 @@ class TechnicalWriterAgent(BaseAgent):
     from build specifications and solution metadata.
     """
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(self, db=None, message_queue=None, config: dict[str, Any] | None = None):
         super().__init__("TechnicalWriterAgent")
+        self.db = db
         self.config = config or {}
         self._template_dir = self.config.get("template_dir")
 

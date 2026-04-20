@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Any, Optional
+
 from src.source_patterns import PAIN_KEYWORDS, contains_phrase
+
+logger = logging.getLogger(__name__)
 
 
 # Classification constants moved from research_tools.py
@@ -92,3 +97,50 @@ def classify_signal(title: str, body: str = "") -> str:
         return "competition_signal"
     else:
         return "low_signal_summary"
+
+
+async def classify_signal_llm(
+    title: str,
+    body: str = "",
+    *,
+    llm_client: Optional[Any] = None,
+) -> str:
+    """LLM-augmented signal classification for ambiguous cases.
+
+    Falls back to heuristic classify_signal() when LLM is unavailable
+    or for unambiguous cases (clear pain or clear success).
+    """
+    heuristic_result = classify_signal(title, body)
+
+    # Only call LLM for ambiguous cases
+    if heuristic_result not in ("low_signal_summary", "competition_signal", "demand_signal"):
+        return heuristic_result
+
+    if not llm_client:
+        return heuristic_result
+
+    combined = f"{title} {body}"[:800]
+    system_prompt = (
+        "You are a signal classifier for a problem discovery pipeline. "
+        "Classify this text as exactly one of: pain_signal, success_signal, "
+        "demand_signal, competition_signal, low_signal_summary. "
+        "pain_signal = someone describing a problem, frustration, or pain point. "
+        "success_signal = someone describing a positive outcome or solution. "
+        "demand_signal = someone asking for or seeking a tool. "
+        "competition_signal = discussion of alternatives or competitors. "
+        "low_signal_summary = vague or irrelevant content. "
+        "Return only the classification label, nothing else."
+    )
+    user_prompt = f"Classify:\n{combined}"
+
+    try:
+        raw = await llm_client.reasoning_agenerate(system_prompt, user_prompt)
+        if raw:
+            label = raw.strip().lower()
+            valid = {"pain_signal", "success_signal", "demand_signal", "competition_signal", "low_signal_summary"}
+            if label in valid:
+                return label
+    except Exception as e:
+        logger.warning("LLM signal classification failed: %s", e)
+
+    return heuristic_result

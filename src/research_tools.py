@@ -2046,14 +2046,22 @@ class ResearchToolkit:
             if overlap >= 3:
                 if not self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
                     return True
-            if any(pattern in haystack for pattern in BLOG_LIKE_PATTERNS):
-                return False
-            if self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
-                return False
             pain_ok = (
                 self._pain_score(haystack) >= 1
                 or self._has_any_term(haystack, WORKAROUND_SIGNAL_TERMS + COST_SIGNAL_TERMS)
             )
+            # Blog-like pages WITH pain language are valid corroboration —
+            # "manual reconciliation is a nightmare" on a blog confirms the problem.
+            # Only reject blog-like pages that lack any pain/workaround/cost signal.
+            # But still reject low-quality corroboration pages (capterra, g2, etc.)
+            # even if they coincidentally contain a signal term like "csv".
+            if pain_ok and overlap >= 2:
+                if not self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
+                    return True
+            if any(pattern in haystack for pattern in BLOG_LIKE_PATTERNS):
+                return False
+            if self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
+                return False
             return overlap >= 2 and pain_ok
 
         if intent == "validation_competitor":
@@ -6489,6 +6497,7 @@ class ResearchToolkit:
             "etsy": 0,
             "forum_fallback": 0,
         }
+        web_filtering_failure_count = [0]  # shared across concurrent queries, mutable container
         retrieved_by_source = {label: 0 for label in results_by_source}
         deduped_by_source = {label: 0 for label in results_by_source}
         docs_by_source: dict[str, list[SearchDocument]] = {label: [] for label in results_by_source}
@@ -6620,7 +6629,7 @@ class ResearchToolkit:
                         metadata={"subreddits": list(subreddit_plan)},
                     )
 
-            if site_plan:
+            if site_plan and web_filtering_failure_count[0] < 2:
                 site_task_records = []
                 for site, source_label in site_plan:
                     diagnostics: dict[str, Any] = {}
@@ -6680,6 +6689,9 @@ class ResearchToolkit:
                             "cache_hit": diagnostics.get("cache_hit", False),
                         },
                     )
+                    raw = int(diagnostics.get("raw_count", len(docs)) or 0)
+                    if attempt.get("status") == "completed" and raw >= 5 and len(docs) == 0:
+                        web_filtering_failure_count[0] += 1
                     for doc in docs:
                         collected.append((source_label, doc))
                         kept += 1

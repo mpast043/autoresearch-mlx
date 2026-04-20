@@ -22,6 +22,7 @@ from src.research.classification import (
     contains_value_keyword,
     contains_recurrence_keyword,
     classify_signal,
+    classify_signal_llm,
 )
 
 # Re-export enrichment functions
