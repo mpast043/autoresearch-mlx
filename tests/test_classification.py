@@ -222,3 +222,104 @@ class TestClassifySignal:
     def test_each_recurrence_keyword_matches(self):
         for kw in RECURRENCE_KEYWORDS:
             assert contains_recurrence_keyword(kw) is True, f"Recurrence keyword '{kw}' did not match"
+
+
+class TestClassifySourceSignalLLM:
+    """Tests for the LLM-augmented signal classification."""
+
+    @pytest.fixture
+    def finding_data(self):
+        return {
+            "source": "reddit",
+            "source_url": "https://reddit.com/r/smallbusiness/comments/abc",
+            "finding_kind": "problem_signal",
+        }
+
+    @pytest.fixture
+    def signal_payload(self):
+        return {
+            "title": "How do I reconcile Shopify payouts with QBO?",
+            "body_excerpt": "Every month I spend hours manually matching payouts.",
+            "metadata_json": {},
+        }
+
+    @pytest.fixture
+    def atom_payload(self):
+        return {
+            "failure_mode": "manual reconciliation",
+            "current_workaround": "spreadsheets",
+        }
+
+    def test_returns_heuristic_for_pain_signal(self, finding_data, signal_payload, atom_payload):
+        """When heuristic returns pain_signal, LLM should not be called."""
+        import asyncio
+        from src.opportunity_engine import classify_source_signal_llm
+
+        # Make the text clearly a pain_signal so heuristic classifies it that way
+        finding_data["finding_kind"] = "pain_point"
+        signal_payload["title"] = "frustrating manual reconciliation error-prone process"
+        signal_payload["body_excerpt"] = "I keep having to manually match each transaction"
+
+        result = asyncio.run(
+            classify_source_signal_llm(finding_data, signal_payload, atom_payload)
+        )
+        # Should return heuristic result without calling LLM
+        assert result["source_class"] in ("pain_signal", "low_signal_summary", "meta_guidance")
+
+    def test_returns_heuristic_when_llm_disabled(self, finding_data, signal_payload, atom_payload):
+        """When LLM classification is disabled, return heuristic result."""
+        import asyncio
+        from src.opportunity_engine import classify_source_signal_llm, _RUNTIME_CONFIG
+
+        # Ensure LLM classification is disabled
+        original_config = dict(_RUNTIME_CONFIG)
+        _RUNTIME_CONFIG.clear()
+
+        result = asyncio.run(
+            classify_source_signal_llm(finding_data, signal_payload, atom_payload)
+        )
+        assert "source_class" in result
+
+        # Restore config
+        _RUNTIME_CONFIG.update(original_config)
+
+    def test_provided_heuristic_result_is_used(self, finding_data, signal_payload, atom_payload):
+        """When heuristic_result is provided, it should be used instead of re-running heuristic."""
+        import asyncio
+        from src.opportunity_engine import classify_source_signal_llm, _RUNTIME_CONFIG
+
+        # Clear config so LLM is disabled
+        original_config = dict(_RUNTIME_CONFIG)
+        _RUNTIME_CONFIG.clear()
+
+        heuristic = {"source_class": "low_signal_summary", "reasons": ["test"]}
+        result = asyncio.run(
+            classify_source_signal_llm(finding_data, signal_payload, atom_payload, heuristic_result=heuristic)
+        )
+        assert result == heuristic
+
+        # Restore config
+        _RUNTIME_CONFIG.update(original_config)
+
+    def test_returns_heuristic_for_clear_pain(self, finding_data, signal_payload, atom_payload):
+        """Clear pain signals should return without LLM call."""
+        import asyncio
+        from src.opportunity_engine import classify_source_signal_llm
+
+        # A heuristic result that's pain_signal should be returned directly
+        heuristic = {"source_class": "pain_signal", "reasons": ["test"]}
+        result = asyncio.run(
+            classify_source_signal_llm(finding_data, signal_payload, atom_payload, heuristic_result=heuristic)
+        )
+        assert result["source_class"] == "pain_signal"
+
+    def test_returns_heuristic_for_success_signal(self, finding_data, signal_payload, atom_payload):
+        """Success signals should not trigger LLM reclassification."""
+        import asyncio
+        from src.opportunity_engine import classify_source_signal_llm
+
+        heuristic = {"source_class": "success_signal", "reasons": ["test"]}
+        result = asyncio.run(
+            classify_source_signal_llm(finding_data, signal_payload, atom_payload, heuristic_result=heuristic)
+        )
+        assert result["source_class"] == "success_signal"

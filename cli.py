@@ -639,7 +639,7 @@ async def cmd_security_scan(args: argparse.Namespace, _app: AutoResearcher) -> N
     async with app_context(args) as app:
         from src.agents.security import SecurityAgent
         config = app.config.get("security", {})
-        security = SecurityAgent(config)
+        security = SecurityAgent(db=app.db, config=config)
 
         wedge_id = args.wedge_id if hasattr(args, "wedge_id") else None
         code = args.code if hasattr(args, "code") else None
@@ -671,7 +671,7 @@ async def cmd_generate_docs(args: argparse.Namespace, _app: AutoResearcher) -> N
         from pathlib import Path
 
         config = app.config.get("technical_writer", {})
-        writer = TechnicalWriterAgent(config)
+        writer = TechnicalWriterAgent(db=app.db, config=config)
 
         output_dir = Path(config.get("output_dir", "output/docs"))
 
@@ -691,7 +691,7 @@ async def cmd_sre_health(args: argparse.Namespace, _app: AutoResearcher) -> None
         from src.agents.sre import SREAgent
 
         config = app.config.get("sre", {})
-        sre = SREAgent(app.db, config)
+        sre = SREAgent(db=app.db, config=config)
 
         opportunity_id = args.wedge_id if hasattr(args, "wedge_id") else None
 

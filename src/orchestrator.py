@@ -374,23 +374,53 @@ class Orchestrator:
             return
 
         if message.msg_type == MessageType.SECURITY_SCAN:
-            if "security" in self._agents:
-                await self.send_message(
-                    to_agent="security",
-                    msg_type=MessageType.SECURITY_SCAN,
-                    payload=message.payload,
-                    priority=3,
-                )
+            if message.from_agent == "SecurityAgent":
+                # Result from security scan — route to technical_writer if available
+                if "technical_writer" in self._agents and message.payload.get("spec_content"):
+                    await self.send_message(
+                        to_agent="technical_writer",
+                        msg_type=MessageType.DOC_GENERATION,
+                        payload={
+                            "spec": message.payload.get("spec_content"),
+                            "build_brief_id": message.payload.get("build_brief_id"),
+                            "opportunity_id": message.payload.get("opportunity_id"),
+                            "security_safe": message.payload.get("security_safe", True),
+                        },
+                        priority=4,
+                    )
+                else:
+                    if self._status_tracker:
+                        safe = message.payload.get("security_safe", True)
+                        self._status_tracker.log(
+                            f"security scan complete: safe={safe}"
+                        )
+            else:
+                # Initial request — route to security agent
+                if "security" in self._agents:
+                    await self.send_message(
+                        to_agent="security",
+                        msg_type=MessageType.SECURITY_SCAN,
+                        payload=message.payload,
+                        priority=3,
+                    )
             return
 
         if message.msg_type == MessageType.DOC_GENERATION:
-            if "technical_writer" in self._agents:
-                await self.send_message(
-                    to_agent="technical_writer",
-                    msg_type=MessageType.DOC_GENERATION,
-                    payload=message.payload,
-                    priority=4,
-                )
+            if message.from_agent == "TechnicalWriterAgent":
+                # Result from doc generation — log completion
+                if self._status_tracker:
+                    self._status_tracker.log(
+                        f"documentation complete for brief {message.payload.get('build_brief_id')}"
+                    )
+            else:
+                # Initial request — route to technical_writer
+                if "technical_writer" in self._agents:
+                    await self.send_message(
+                        to_agent="technical_writer",
+                        msg_type=MessageType.DOC_GENERATION,
+                        payload=message.payload,
+                        priority=4,
+                    )
             return
 
         if message.msg_type == MessageType.HEALTH_CHECK:

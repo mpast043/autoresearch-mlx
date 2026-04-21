@@ -191,6 +191,12 @@ orchestration:
 builder:
   auto_build: false
 
+# LLM-augmented signal classification
+classification:
+  llm_classification:
+    enabled: true
+    min_confidence: 0.6
+
 # Security agent for vulnerability scanning
 security:
   enabled: true

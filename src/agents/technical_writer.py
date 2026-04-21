@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from src.agents.base import BaseAgent
+from src.messaging import MessageType
 
 
 @dataclass
@@ -55,15 +57,35 @@ class TechnicalWriterAgent(BaseAgent):
         """Process a documentation generation request."""
         payload = message.payload if hasattr(message, "payload") else message
         spec = payload.get("spec")
-        output_dir = payload.get("output_dir")
+        output_dir = payload.get("output_dir") or self.config.get("output_dir", "output/docs")
 
         if spec:
             bundle = self.generate_docs(spec)
             if output_dir:
                 files = self.save_docs(bundle, Path(output_dir))
-                return {"bundle": bundle, "files": files, "summary": self.format_summary(bundle)}
-            return {"bundle": bundle, "summary": self.format_summary(bundle)}
-        return {"error": "No spec provided"}
+                result = {"bundle": bundle, "files": files, "summary": self.format_summary(bundle)}
+            else:
+                result = {"bundle": bundle, "summary": self.format_summary(bundle)}
+        else:
+            result = {"error": "No spec provided"}
+
+        logger.info(
+            "doc generation complete: solution=%s endpoints=%d",
+            bundle.solution_id if spec else "none",
+            len(bundle.endpoints) if spec else 0,
+        )
+        # Forward results to orchestrator
+        await self.send_message(
+            to_agent="orchestrator",
+            msg_type=MessageType.DOC_GENERATION,
+            payload={
+                **payload,
+                "doc_result": {k: str(v) for k, v in result.items()},
+                "from_agent": self.name,
+            },
+            priority=4,
+        )
+        return result
 
     def generate_docs(self, spec: dict[str, Any]) -> DocumentationBundle:
         """Generate complete documentation package from spec.

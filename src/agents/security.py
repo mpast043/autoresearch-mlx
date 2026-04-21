@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.agents.base import BaseAgent
+from src.messaging import MessageType
 
 
 # OWASP Top 10 patterns (2021) - mapped to code patterns
@@ -130,11 +132,35 @@ class SecurityAgent(BaseAgent):
 
         if code:
             report = self.scan_code(code, file_name)
-            return {"report": report, "formatted": self.format_report(report)}
+            result = {"report": report, "formatted": self.format_report(report)}
         elif spec:
             report = self.scan_solution_spec(spec)
-            return {"report": report, "formatted": self.format_report(report)}
-        return {"error": "No code or spec provided"}
+            result = {"report": report, "formatted": self.format_report(report)}
+        else:
+            result = {"error": "No code or spec provided"}
+
+        # Forward results to orchestrator for downstream routing (e.g. technical_writer)
+        logger.info(
+            "security scan complete: safe=%s blockers=%d suggestions=%d",
+            result.get("report", SecurityReport("unknown", 0, 0, [])).safe
+            if isinstance(result.get("report"), SecurityReport) else True,
+            result.get("report", SecurityReport("unknown", 0, 0, [])).blocker_count
+            if isinstance(result.get("report"), SecurityReport) else 0,
+            result.get("report", SecurityReport("unknown", 0, 0, [])).suggestion_count
+            if isinstance(result.get("report"), SecurityReport) else 0,
+        )
+        await self.send_message(
+            to_agent="orchestrator",
+            msg_type=MessageType.SECURITY_SCAN,
+            payload={
+                **payload,
+                "security_result": result,
+                "security_safe": result.get("report", SecurityReport("unknown", 0, 0, [])).safe if isinstance(result.get("report"), SecurityReport) else True,
+                "from_agent": self.name,
+            },
+            priority=3,
+        )
+        return result
 
     def scan_code(self, code: str, file_name: str = "unknown") -> SecurityReport:
         """Scan code for security vulnerabilities.

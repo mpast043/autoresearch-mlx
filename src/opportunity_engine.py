@@ -2516,6 +2516,111 @@ def classify_source_signal(
     }
 
 
+async def classify_source_signal_llm(
+    finding_data: dict[str, Any],
+    signal_payload: dict[str, Any],
+    atom_payload: dict[str, Any],
+    *,
+    heuristic_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """LLM-augmented signal classification for ambiguous heuristic results.
+
+    Falls back to heuristic classify_source_signal() for clear cases.
+    When the heuristic returns low_signal_summary, competition_signal, or demand_signal,
+    asks the LLM to semantically assess whether it's actually a pain_signal.
+    Only overrides if LLM confidence exceeds config threshold.
+    """
+    # Run heuristic first if not provided
+    if heuristic_result is None:
+        heuristic_result = classify_source_signal(finding_data, signal_payload, atom_payload)
+
+    # Only call LLM for ambiguous cases
+    source_class = heuristic_result.get("source_class", "")
+    if source_class not in ("low_signal_summary", "competition_signal", "demand_signal"):
+        return heuristic_result
+
+    # Check if LLM classification is enabled
+    llm_config = _RUNTIME_CONFIG.get("classification", {}).get("llm_classification", {})
+    if not llm_config.get("enabled", False):
+        return heuristic_result
+
+    min_confidence = llm_config.get("min_confidence", 0.6)
+
+    # Build context for LLM
+    title = str(signal_payload.get("title", "") or finding_data.get("title", ""))[:200]
+    body = str(signal_payload.get("body_excerpt", "") or finding_data.get("body_excerpt", ""))[:600]
+    source = str(finding_data.get("source", ""))
+    combined = f"Source: {source}\nTitle: {title}\nBody: {body}"[:800]
+
+    if len(combined.strip()) < 50:
+        return heuristic_result
+
+    # Try LLM classification
+    try:
+        from src.llm_discovery_expander import LLMClient
+        llm_client = LLMClient(_RUNTIME_CONFIG)
+        reasoning_model = _RUNTIME_CONFIG.get("llm", {}).get("reasoning_model", "")
+
+        system_prompt = (
+            "You are a signal classifier for a problem discovery pipeline. "
+            "Classify this text as exactly one of: pain_signal, success_signal, "
+            "demand_signal, competition_signal, low_signal_summary.\n\n"
+            "pain_signal = someone describing a problem, frustration, or pain point they experience. "
+            "This includes questions about how to solve a recurring problem, complaints about tools or workflows, "
+            "and descriptions of manual workarounds.\n"
+            "success_signal = someone describing a positive outcome or solution they built.\n"
+            "demand_signal = someone actively seeking or requesting a tool/product.\n"
+            "competition_signal = discussion of alternatives or competitors.\n"
+            "low_signal_summary = vague, irrelevant, or noise content.\n\n"
+            'Return JSON: {"classification": "<label>", "confidence": <0.0-1.0>, "reason": "<brief explanation>"}'
+        )
+        user_prompt = f"Classify:\n{combined}"
+
+        model = reasoning_model if reasoning_model else None
+        raw = await llm_client.agenerate(system_prompt, user_prompt, model=model)
+
+        if not raw:
+            return heuristic_result
+
+        # Parse JSON response
+        import json as _json
+        # Try to extract JSON from the response
+        json_match = re.search(r'\{[^{}]*"classification"[^{}]*\}', raw, re.DOTALL)
+        if not json_match:
+            logger.debug("LLM classification: no JSON found in response")
+            return heuristic_result
+
+        parsed = _json.loads(json_match.group())
+        label = parsed.get("classification", "").strip().lower()
+        confidence = float(parsed.get("confidence", 0.0))
+
+        valid_labels = {"pain_signal", "success_signal", "demand_signal", "competition_signal", "low_signal_summary"}
+        if label not in valid_labels:
+            logger.debug("LLM classification: invalid label '%s'", label)
+            return heuristic_result
+
+        if confidence < min_confidence:
+            logger.debug("LLM classification: confidence %.2f below threshold %.2f", confidence, min_confidence)
+            return heuristic_result
+
+        # Override with LLM result
+        logger.info(
+            "LLM reclassified signal: heuristic=%s → llm=%s (confidence=%.2f, reason=%s)",
+            source_class, label, confidence, parsed.get("reason", ""),
+        )
+        result = dict(heuristic_result)
+        result["source_class"] = label
+        result["reasons"] = heuristic_result.get("reasons", []) + [
+            f"llm_reclassified_from_{source_class}",
+            f"llm_confidence_{confidence:.2f}",
+        ]
+        return result
+
+    except Exception as e:
+        logger.warning("LLM signal classification failed, keeping heuristic: %s", e)
+        return heuristic_result
+
+
 def qualify_problem_signal(
     finding_data: dict[str, Any],
     signal_payload: dict[str, Any],

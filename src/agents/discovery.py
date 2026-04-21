@@ -22,6 +22,7 @@ from src.opportunity_engine import (
     build_problem_atom,
     build_raw_signal_payload,
     classify_source_signal,
+    classify_source_signal_llm,
     qualify_problem_signal,
 )
 from src.reddit_seed import RedditSeeder
@@ -1073,7 +1074,12 @@ class DiscoveryAgent(BaseAgent):
 
         signal_payload = build_raw_signal_payload(finding_data)
         atom_payload = build_problem_atom(signal_payload, finding_data)
-        source_classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+        heuristic_classification = classify_source_signal(finding_data, signal_payload, atom_payload)
+        # LLM augmentation for ambiguous heuristic results
+        source_classification = await classify_source_signal_llm(
+            finding_data, signal_payload, atom_payload,
+            heuristic_result=heuristic_classification,
+        )
         finding_data["source_class"] = source_classification["source_class"]
         signal_payload.setdefault("metadata_json", {})["source_class"] = source_classification["source_class"]
         screening = qualify_problem_signal(finding_data, signal_payload, atom_payload)
