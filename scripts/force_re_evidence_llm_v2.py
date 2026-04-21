@@ -19,19 +19,19 @@ from src.messaging import MessageQueue, MessageType
 async def main():
     db = Database("data/autoresearch.db")
     db.init_schema()
-    
+
     import yaml
     with open(PROJECT_ROOT / "config.yaml") as f:
         config = yaml.safe_load(f)
-    
+
     queue = MessageQueue()
     agent = EvidenceAgent(db, queue, config=config)
-    
+
     target_finding_ids = [27, 2191, 2197, 46, 2, 30]
-    
+
     run_id = "re_evidence_llm_v2"
     db.set_active_run_id(run_id)
-    
+
     from datetime import datetime, timezone
     from src.messaging import Message
 
@@ -71,7 +71,7 @@ async def main():
             print(f"  Error: {e}")
             import traceback
             traceback.print_exc()
-    
+
     print("\n\n=== UPDATED CORROBORATION RESULTS ===")
     import sqlite3
     conn = sqlite3.connect("data/autoresearch.db")
@@ -90,7 +90,7 @@ async def main():
             print(f"Finding {fid}: corr={r[1]:.4f} rec={r[2]:.4f} families={r[3]} fam_div={r[4]} gen_class={r[5]} gen_score={r[6]}")
         else:
             print(f"Finding {fid}: no corroboration record for this run")
-    
+
     conn.close()
     db.close()
 

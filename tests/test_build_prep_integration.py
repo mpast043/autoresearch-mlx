@@ -172,6 +172,9 @@ def test_validation_to_build_prep_artifacts_end_to_end():
                 )
             )
         assert sg_result["success"] is True
+        queued = asyncio.run(spec_agent._message_queue.get_for_agent("orchestrator"))
+        assert queued is not None
+        assert queued.payload["spec_content"]["product_spec"]["product_name"]
 
         outputs = db.list_build_prep_outputs(run_id=db.active_run_id, build_brief_id=build_brief_id, limit=10)
         assert len(outputs) == 3

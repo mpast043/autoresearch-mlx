@@ -1257,7 +1257,7 @@ class EvidenceAgent(BaseAgent):
                                 matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
                                 cross_source_match_count += 1
                     source_families = sorted(set(matched_doc_families))
-                    source_groups = sorted(set(matched_groups))
+                    source_groups = sorted(set(matched_doc_groups))
                     logger.info("LLM rescued %d/%d docs for finding %d (families: %s)", len(llm_rescued), len(rejected_docs), finding_id, source_families)
 
         source_family_diversity = len(source_families)

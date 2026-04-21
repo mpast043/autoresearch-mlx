@@ -83,6 +83,12 @@ class Orchestrator:
         self._agents[agent.name] = agent
         agent._message_queue = self._message_queue
 
+    def _registered_agent_name(self, *names: str) -> Optional[str]:
+        for name in names:
+            if name in self._agents:
+                return name
+        return None
+
     def _brief_is_build_ready(self, build_brief_id: Any) -> bool:
         if not build_brief_id:
             return False
@@ -319,16 +325,19 @@ class Orchestrator:
                 )
 
             # After spec_generation, run security scan on the spec
+            security_agent = self._registered_agent_name("security", "SecurityAgent")
+            spec_content = message.payload.get("spec_content")
             if (
                 message.payload.get("prep_stage") == "spec_generation"
-                and "security" in self._agents
-                and message.payload.get("spec_content")
+                and security_agent
+                and spec_content
             ):
                 await self.send_message(
-                    to_agent="security",
+                    to_agent=security_agent,
                     msg_type=MessageType.SECURITY_SCAN,
                     payload={
-                        "spec": message.payload.get("spec_content"),
+                        "spec": spec_content,
+                        "spec_content": spec_content,
                         "build_brief_id": message.payload.get("build_brief_id"),
                         "opportunity_id": message.payload.get("opportunity_id"),
                     },
@@ -374,14 +383,17 @@ class Orchestrator:
             return
 
         if message.msg_type == MessageType.SECURITY_SCAN:
-            if message.from_agent == "SecurityAgent":
+            if message.from_agent in {"SecurityAgent", "security"}:
                 # Result from security scan — route to technical_writer if available
-                if "technical_writer" in self._agents and message.payload.get("spec_content"):
+                technical_writer = self._registered_agent_name("technical_writer", "TechnicalWriterAgent")
+                spec_content = message.payload.get("spec_content") or message.payload.get("spec")
+                if technical_writer and spec_content:
                     await self.send_message(
-                        to_agent="technical_writer",
+                        to_agent=technical_writer,
                         msg_type=MessageType.DOC_GENERATION,
                         payload={
-                            "spec": message.payload.get("spec_content"),
+                            "spec": spec_content,
+                            "spec_content": spec_content,
                             "build_brief_id": message.payload.get("build_brief_id"),
                             "opportunity_id": message.payload.get("opportunity_id"),
                             "security_safe": message.payload.get("security_safe", True),
@@ -396,9 +408,10 @@ class Orchestrator:
                         )
             else:
                 # Initial request — route to security agent
-                if "security" in self._agents:
+                security_agent = self._registered_agent_name("security", "SecurityAgent")
+                if security_agent:
                     await self.send_message(
-                        to_agent="security",
+                        to_agent=security_agent,
                         msg_type=MessageType.SECURITY_SCAN,
                         payload=message.payload,
                         priority=3,
@@ -406,7 +419,7 @@ class Orchestrator:
             return
 
         if message.msg_type == MessageType.DOC_GENERATION:
-            if message.from_agent == "TechnicalWriterAgent":
+            if message.from_agent in {"TechnicalWriterAgent", "technical_writer"}:
                 # Result from doc generation — log completion
                 if self._status_tracker:
                     self._status_tracker.log(
@@ -414,9 +427,10 @@ class Orchestrator:
                     )
             else:
                 # Initial request — route to technical_writer
-                if "technical_writer" in self._agents:
+                technical_writer = self._registered_agent_name("technical_writer", "TechnicalWriterAgent")
+                if technical_writer:
                     await self.send_message(
-                        to_agent="technical_writer",
+                        to_agent=technical_writer,
                         msg_type=MessageType.DOC_GENERATION,
                         payload=message.payload,
                         priority=4,
@@ -424,9 +438,10 @@ class Orchestrator:
             return
 
         if message.msg_type == MessageType.HEALTH_CHECK:
-            if "sre" in self._agents:
+            sre_agent = self._registered_agent_name("sre", "SREAgent")
+            if sre_agent:
                 await self.send_message(
-                    to_agent="sre",
+                    to_agent=sre_agent,
                     msg_type=MessageType.HEALTH_CHECK,
                     payload=message.payload,
                     priority=4,

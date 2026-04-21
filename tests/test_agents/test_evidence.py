@@ -1464,6 +1464,66 @@ class TestLLMCorroboration(unittest.IsolatedAsyncioTestCase):
         assert result[0][0] == 0
         assert "manual reconciliation" in result[0][1]
 
+    async def test_build_corroboration_record_uses_groups_from_llm_rescue(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        finding = SimpleNamespace(
+            id=1,
+            source="reddit-problem",
+            source_url="https://reddit.com/r/ops/comments/abc/manual_recon",
+            product_built="Manual reconciliation workflow",
+            outcome_summary="Operations teams keep a recurring manual workaround for monthly reconciliation.",
+            evidence={},
+        )
+        atom = SimpleNamespace(
+            pain_statement="monthly reconciliation requires manual cross-checking",
+            failure_mode="handoffs leave invoice and deposit state mismatched",
+            job_to_be_done="reconcile invoices to deposits across handoffs",
+            trigger_event="monthly close",
+            current_tools="spreadsheet",
+            current_workaround="manual cross-reference in a spreadsheet",
+            cost_consequence_clues="recurring hours lost each month",
+            frequency_clues="monthly",
+        )
+        rejected_doc = SimpleNamespace(
+            title="Finance teams still lose time closing the books",
+            snippet="A guide describes the same month-end handoff pain but uses different wording.",
+            source_family="web",
+            source="web",
+            url="https://example.com/month-end-handoff",
+        )
+        llm_client = MagicMock()
+        llm_client.reasoning_agenerate = AsyncMock(
+            return_value='{"confirmed": [{"index": 0, "reason": "same month-end workflow pain"}]}'
+        )
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = llm_client
+        agent.config = {}
+        agent.db = SimpleNamespace(active_run_id="test-run")
+
+        corroboration = await agent._build_corroboration_record(
+            finding,
+            atom,
+            {
+                "problem_score": 0.7,
+                "evidence": {
+                    "recurrence_state": "supported",
+                    "recurrence_query_coverage": 0.5,
+                    "recurrence_doc_count": 1,
+                    "recurrence_domain_count": 1,
+                    "recurrence_results_by_source": {"web": 1},
+                    "recurrence_results_by_query": {"month-end handoff pain": 1},
+                    "_all_recurrence_docs": [rejected_doc],
+                },
+            },
+        )
+
+        payload = json.loads(corroboration.evidence_json)
+        assert payload["source_family_diversity"] == 2
+        assert payload["source_group_diversity"] == 2
+        assert payload["source_families"] == ["reddit", "web"]
+        assert set(payload["source_groups"]) == {"reddit", "web"}
+
     async def test_llm_corroborate_docs_returns_empty_on_failure(self):
         from unittest.mock import AsyncMock, MagicMock
         atom = SimpleNamespace(pain_statement="x", failure_mode="", job_to_be_done="", current_tools="", current_workaround="", cost_consequence_clues="")

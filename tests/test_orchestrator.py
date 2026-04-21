@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -320,3 +321,73 @@ def test_orchestrator_does_not_route_spec_generation_to_builder_when_brief_not_b
 
     queued = asyncio.run(orchestrator._message_queue.get_for_agent("builder"))
     assert queued is None
+
+
+def test_orchestrator_routes_spec_completion_to_registered_security_agent(temp_db):
+    orchestrator = Orchestrator(temp_db)
+    orchestrator.register_agent(SimpleNamespace(name="SecurityAgent"))
+    spec = {"product_spec": {"name": "Narrow plugin"}}
+    message = create_message(
+        from_agent="spec_generation",
+        to_agent="orchestrator",
+        msg_type=MessageType.BUILD_PREP,
+        payload={
+            "build_brief_id": 42,
+            "opportunity_id": 7,
+            "prep_stage": "spec_generation",
+            "spec_content": spec,
+            "next_agent": "",
+        },
+    )
+
+    asyncio.run(orchestrator._handle_orchestrator_message(message))
+
+    queued = asyncio.run(orchestrator._message_queue.get_for_agent("SecurityAgent"))
+    assert queued is not None
+    assert queued.msg_type == MessageType.SECURITY_SCAN
+    assert queued.payload["spec"] == spec
+    assert queued.payload["spec_content"] == spec
+
+
+def test_orchestrator_routes_security_result_to_registered_technical_writer(temp_db):
+    orchestrator = Orchestrator(temp_db)
+    orchestrator.register_agent(SimpleNamespace(name="TechnicalWriterAgent"))
+    spec = {"product_spec": {"name": "Narrow plugin"}}
+    message = create_message(
+        from_agent="SecurityAgent",
+        to_agent="orchestrator",
+        msg_type=MessageType.SECURITY_SCAN,
+        payload={
+            "build_brief_id": 42,
+            "opportunity_id": 7,
+            "spec": spec,
+            "security_safe": True,
+        },
+    )
+
+    asyncio.run(orchestrator._handle_orchestrator_message(message))
+
+    queued = asyncio.run(orchestrator._message_queue.get_for_agent("TechnicalWriterAgent"))
+    assert queued is not None
+    assert queued.msg_type == MessageType.DOC_GENERATION
+    assert queued.payload["spec"] == spec
+    assert queued.payload["spec_content"] == spec
+    assert queued.payload["security_safe"] is True
+
+
+def test_orchestrator_routes_health_check_to_registered_sre_agent(temp_db):
+    orchestrator = Orchestrator(temp_db)
+    orchestrator.register_agent(SimpleNamespace(name="SREAgent"))
+    message = create_message(
+        from_agent="monitor",
+        to_agent="orchestrator",
+        msg_type=MessageType.HEALTH_CHECK,
+        payload={"probe": "startup"},
+    )
+
+    asyncio.run(orchestrator._handle_orchestrator_message(message))
+
+    queued = asyncio.run(orchestrator._message_queue.get_for_agent("SREAgent"))
+    assert queued is not None
+    assert queued.msg_type == MessageType.HEALTH_CHECK
+    assert queued.payload["probe"] == "startup"
