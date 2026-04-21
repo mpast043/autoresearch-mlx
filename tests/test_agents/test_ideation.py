@@ -55,6 +55,13 @@ def test_ideation_generates_research_brief_with_db_validation_accessor(temp_db: 
                 "opportunity_scorecard": {"total_score": 0.72, "decision": "promote"},
                 "scores": {"feasibility_score": 0.61},
                 "market_gap_state": "underserved",
+                "market_gap": {"market_gap": "underserved", "solution_gap_score": 0.72},
+                "selection_status": "prototype_candidate",
+                "selection_reason": "validated_selection_gate",
+                "selection_gate": {"eligible": True, "reasons": ["multi_family_support"], "blocked_by": []},
+                "counterevidence": [
+                    {"claim": "The pain is rare or isolated.", "status": "contradicted", "summary": "Frequency score 0.72 clears the recurrence bar."}
+                ],
             },
         )
     )
@@ -83,6 +90,13 @@ def test_ideation_generates_research_brief_with_db_validation_accessor(temp_db: 
     ideas = temp_db.get_ideas(limit=5)
     assert ideas
     assert ideas[0].title.endswith("Brief")
+    spec = ideas[0].spec
+    assert spec["opportunity_scorecard"]["total_score"] == 0.72
+    assert spec["market_gap"]["solution_gap_score"] == 0.72
+    assert spec["selection_status"] == "prototype_candidate"
+    assert spec["selection_gate"]["eligible"] is True
+    assert spec["counterevidence"][0]["summary"] == "Frequency score 0.72 clears the recurrence bar."
+    assert spec["source_validation"]["decision"] == ""
     assert sent_messages
 
 

@@ -3481,31 +3481,62 @@ def score_opportunity(
 
 
 def build_counterevidence(opportunity_scores: dict[str, Any], market_gap: dict[str, Any]) -> list[dict[str, Any]]:
+    frequency_score = float(opportunity_scores.get("frequency_score", 0.0) or 0.0)
+    urgency_score = float(opportunity_scores.get("urgency_score", 0.0) or 0.0)
+    segment_concentration = float(opportunity_scores.get("segment_concentration", 0.0) or 0.0)
+    corroboration_strength = float(opportunity_scores.get("corroboration_strength", 0.0) or 0.0)
+    cost_of_inaction = float(opportunity_scores.get("cost_of_inaction", 0.0) or 0.0)
+    willingness_to_pay = float(opportunity_scores.get("willingness_to_pay_proxy", 0.0) or 0.0)
+    value_support = float(opportunity_scores.get("value_support", 0.0) or 0.0)
+    solution_gap = float(market_gap.get("solution_gap_score", 0.0) or 0.0)
+    saturation = float(market_gap.get("saturation_score", 0.0) or 0.0)
+    market_gap_state = str(market_gap.get("market_gap", "unknown") or "unknown")
+    value_strength = max(cost_of_inaction, willingness_to_pay, value_support)
     checks = [
         {
             "claim": "The pain is rare or isolated.",
-            "status": "contradicted" if opportunity_scores["frequency_score"] >= 0.55 else "supported",
-            "summary": "Recurring source evidence clears the rarity bar." if opportunity_scores["frequency_score"] >= 0.55 else "Recurrence is still too thin.",
+            "status": "contradicted" if frequency_score >= 0.55 else "supported",
+            "summary": (
+                f"Frequency score {frequency_score:.2f} clears the recurrence bar."
+                if frequency_score >= 0.55
+                else f"Frequency score {frequency_score:.2f} is below the recurrence bar."
+            ),
         },
         {
             "claim": "The problem is already solved well enough.",
-            "status": "supported" if market_gap["market_gap"] == "already_solved_well" else "contradicted",
-            "summary": "Competitor density is high and the gap looks thin." if market_gap["market_gap"] == "already_solved_well" else "Existing tools still leave a visible gap.",
+            "status": "supported" if market_gap_state == "already_solved_well" else "contradicted",
+            "summary": (
+                f"Market gap state is already_solved_well with saturation {saturation:.2f}."
+                if market_gap_state == "already_solved_well"
+                else f"Market gap state is {market_gap_state}; solution gap score is {solution_gap:.2f}."
+            ),
         },
         {
             "claim": "Users tolerate this instead of acting on it.",
-            "status": "supported" if opportunity_scores["urgency_score"] < 0.5 else "contradicted",
-            "summary": "Urgency is muted." if opportunity_scores["urgency_score"] < 0.5 else "Users are signaling active frustration and urgency.",
+            "status": "supported" if urgency_score < 0.5 else "contradicted",
+            "summary": (
+                f"Urgency score {urgency_score:.2f} is still muted."
+                if urgency_score < 0.5
+                else f"Urgency score {urgency_score:.2f} shows active frustration."
+            ),
         },
         {
             "claim": "The opportunity is too fragmented across segments.",
-            "status": "supported" if opportunity_scores["segment_concentration"] < 0.5 and opportunity_scores.get("corroboration_strength", 0.0) < 0.45 else "contradicted",
-            "summary": "The segment is still diffuse." if opportunity_scores["segment_concentration"] < 0.5 and opportunity_scores.get("corroboration_strength", 0.0) < 0.45 else "Signals are concentrated enough to target.",
+            "status": "supported" if segment_concentration < 0.5 and corroboration_strength < 0.45 else "contradicted",
+            "summary": (
+                f"Segment concentration {segment_concentration:.2f} and corroboration {corroboration_strength:.2f} are diffuse."
+                if segment_concentration < 0.5 and corroboration_strength < 0.45
+                else f"Segment concentration {segment_concentration:.2f} and corroboration {corroboration_strength:.2f} are targetable."
+            ),
         },
         {
             "claim": "The economics are too weak to matter.",
-            "status": "supported" if max(opportunity_scores["cost_of_inaction"], opportunity_scores.get("willingness_to_pay_proxy", 0.0), opportunity_scores.get("value_support", 0.0)) < 0.5 else "contradicted",
-            "summary": "Cost-of-inaction evidence is weak." if max(opportunity_scores["cost_of_inaction"], opportunity_scores.get("willingness_to_pay_proxy", 0.0), opportunity_scores.get("value_support", 0.0)) < 0.5 else "Behavior points to real cost or downside.",
+            "status": "supported" if value_strength < 0.5 else "contradicted",
+            "summary": (
+                f"Strongest value signal is {value_strength:.2f}, below the economics bar."
+                if value_strength < 0.5
+                else f"Strongest value signal is {value_strength:.2f}, enough to keep economics plausible."
+            ),
         },
     ]
     return checks
@@ -3519,24 +3550,12 @@ def plan_validation_experiment(
 ) -> dict[str, Any]:
     if opportunity_scores["frequency_score"] < 0.5 or opportunity_scores["evidence_quality"] < 0.5:
         test_type = "workflow_walkthrough"
-        smallest_test = "Run 5 workflow walkthroughs with operators who currently manage the workaround."
-        success_signal = "At least 3 participants show the exact workflow and confirm the pain is recurring."
-        failure_signal = "Most participants describe the pain as rare, solved, or low-priority."
     elif opportunity_scores["reachability"] >= 0.62 and opportunity_scores["cost_of_inaction"] >= 0.6:
         test_type = "concierge_test"
-        smallest_test = "Offer a manual concierge service that removes the workaround for 2-3 target users this week."
-        success_signal = "Users hand over the workflow and ask for continued help or offer to pay."
-        failure_signal = "Users like the idea but will not share the workflow or do not return after the first run."
     elif opportunity_scores["segment_concentration"] >= 0.6 and market_gap["market_gap"] != "already_solved_well":
         test_type = "fake_door"
-        smallest_test = "Launch a narrow landing page for the segment and route interested users to a waitlist plus workflow survey."
-        success_signal = "Qualified users convert and describe the same broken workflow in their own words."
-        failure_signal = "Traffic is noisy or signups do not describe the underlying pain."
     else:
         test_type = "problem_interviews"
-        smallest_test = "Run 6 problem interviews focused on trigger, workaround, and cost of inaction."
-        success_signal = "Multiple people report the same trigger, workaround, and downside."
-        failure_signal = "Stories vary too widely to support a concentrated wedge."
 
     cluster_context = cluster_summary.get("summary_json", {}).get("cluster_context", "")
     role = str(_value(atom, "user_role", "") or "Operator").title()
@@ -3562,6 +3581,59 @@ def plan_validation_experiment(
         fallback="manual workarounds",
     )
     cost = _normalize_cost_phrase(str(_value(atom, "cost_consequence_clues", ""))).lower()
+    def _plan_phrase(value: str, limit: int) -> str:
+        text = compact_text(value, 1000).rstrip(" ,;:-")
+        if len(text) <= limit:
+            return text
+        shortened = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-")
+        return f"{shortened}..." if shortened else text[:limit].rstrip(" ,;:-")
+
+    role_lc = role.lower()
+    audience = role_lc if role_lc.endswith(("team", "teams", "operators", "owners", "users")) else f"{role_lc} teams"
+    trigger_short = _plan_phrase(trigger, 88)
+    workaround_short = _plan_phrase(workaround, 76)
+    job_short = _plan_phrase(job, 76)
+    cost_short = _plan_phrase(cost or "the repeated downside", 76)
+    if test_type == "workflow_walkthrough":
+        smallest_test = _plan_phrase(
+            f"Run 5 workflow walkthroughs with {audience} who hit {trigger_short}; capture their current {workaround_short} while they try to {job_short}.",
+            220,
+        )
+        success_signal = _plan_phrase(
+            f"At least 3 participants show the same {trigger_short} workflow, use {workaround_short}, and confirm the pain recurs often enough to change behavior.",
+            220,
+        )
+        failure_signal = _plan_phrase(
+            f"Most participants say {trigger_short} is rare, already solved, or not costly enough to replace {workaround_short}.",
+            220,
+        )
+    elif test_type == "concierge_test":
+        smallest_test = _plan_phrase(
+            f"Offer a manual concierge pass that removes {workaround_short} for 2-3 {audience} dealing with {trigger_short} this week.",
+            220,
+        )
+        success_signal = _plan_phrase(
+            f"Users hand over the workflow, ask for continued help, or offer to pay to avoid {cost_short}.",
+            220,
+        )
+        failure_signal = "Users like the idea but will not share the workflow or do not return after the first run."
+    elif test_type == "fake_door":
+        smallest_test = _plan_phrase(
+            f"Launch a narrow page for {audience} facing {trigger_short}; route signups into a survey about {workaround_short}.",
+            220,
+        )
+        success_signal = _plan_phrase(
+            f"Qualified users convert and describe the same {trigger_short} pain in their own words.",
+            220,
+        )
+        failure_signal = "Traffic is noisy or signups do not describe the underlying pain."
+    else:
+        smallest_test = _plan_phrase(
+            f"Run 6 problem interviews with {audience} focused on {trigger_short}, {workaround_short}, and {cost_short}.",
+            220,
+        )
+        success_signal = "Multiple people report the same trigger, workaround, and downside."
+        failure_signal = "Stories vary too widely to support a concentrated wedge."
     test_label = {
         "workflow_walkthrough": "a workflow walkthrough",
         "concierge_test": "a concierge test",

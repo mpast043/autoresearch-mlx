@@ -56,6 +56,7 @@ class IdeationAgent(BaseAgent):
         if experiment_id and hasattr(self.db, "get_experiments"):
             experiment_rows = self.db.get_experiments(opportunity_id=payload.get("opportunity_id"))
         experiment = experiment_rows[0] if experiment_rows else None
+        validation_plan = experiment.plan if experiment else evidence.get("validation_plan", {})
 
         title, description, product_type, audience, monetization, features = await self._generate_idea_fields(
             finding=finding,
@@ -92,8 +93,20 @@ class IdeationAgent(BaseAgent):
             "source_finding_kind": finding.finding_kind,
             "evidence_refresh_from_validation_id": validation.id,
             "market_gap_state": evidence.get("market_gap_state", "unknown"),
-            "validation_plan": experiment.plan if experiment else {},
+            "market_gap": evidence.get("market_gap", {}),
+            "validation_plan": validation_plan,
+            "opportunity_scorecard": scorecard,
+            "evidence_assessment": evidence.get("evidence_assessment", {}),
+            "selection_status": evidence.get("selection_status") or payload.get("selection_status", ""),
+            "selection_reason": evidence.get("selection_reason", ""),
+            "selection_gate": evidence.get("selection_gate", {}),
             "counterevidence": evidence.get("counterevidence", []),
+            "source_validation": {
+                "decision": evidence.get("decision", ""),
+                "decision_reason": evidence.get("decision_reason", ""),
+                "passed": validation.passed,
+                "overall_score": validation.overall_score,
+            },
             "build_ready": build_ready,
         }
         pattern_ids = [finding.id] if finding.id is not None else []

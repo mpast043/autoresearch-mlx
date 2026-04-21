@@ -13,6 +13,7 @@ from src.opportunity_engine import (
     _review_generalizability,
     OpportunityEngine,
     build_cluster_summary,
+    build_counterevidence,
     build_problem_atom,
     classify_source_signal,
     plan_validation_experiment,
@@ -1356,6 +1357,57 @@ def test_validation_experiment_hypothesis_uses_structured_fields():
     assert "finance lead teams experiencing after payout exceptions hit" in plan["hypothesis"].lower()
     assert "spreadsheets" in plan["hypothesis"].lower()
     assert "missed work" in plan["hypothesis"].lower() or "operational risk" in plan["hypothesis"].lower()
+
+
+def test_validation_experiment_and_counterevidence_are_specific_to_scores():
+    atom = ProblemAtom(
+        signal_id=1,
+        finding_id=1,
+        cluster_key="csv|bank|cleanup",
+        segment="freelance bookkeepers",
+        user_role="bookkeeper",
+        job_to_be_done="standardize bank CSVs before monthly close",
+        trigger_event="when bank exports arrive",
+        pain_statement="Bank CSV exports need manual cleanup before reconciliation.",
+        failure_mode="columns and currencies drift across banks",
+        current_workaround="spreadsheet formulas",
+        current_tools="Excel",
+        cost_consequence_clues="hours lost during close",
+        frequency_clues="monthly",
+        atom_json="{}",
+    )
+    scores = {
+        "frequency_score": 0.33,
+        "evidence_quality": 0.46,
+        "reachability": 0.45,
+        "cost_of_inaction": 0.42,
+        "willingness_to_pay_proxy": 0.31,
+        "value_support": 0.28,
+        "urgency_score": 0.22,
+        "segment_concentration": 0.37,
+        "corroboration_strength": 0.18,
+    }
+    market_gap = {
+        "market_gap": "needs_more_recurrence_evidence",
+        "solution_gap_score": 0.41,
+        "saturation_score": 0.24,
+    }
+
+    plan = plan_validation_experiment(
+        atom,
+        {"label": "bookkeeper - csv cleanup", "summary_json": {"cluster_context": "when bank exports arrive"}},
+        scores,
+        market_gap,
+    )
+    checks = build_counterevidence(scores, market_gap)
+
+    assert plan["test_type"] == "workflow_walkthrough"
+    assert "bookkeeper teams" in plan["smallest_test"].lower()
+    assert "bank exports arrive" in plan["smallest_test"].lower()
+    assert "spreadsheet formulas" in plan["smallest_test"].lower()
+    assert checks[0]["summary"] == "Frequency score 0.33 is below the recurrence bar."
+    assert checks[2]["summary"] == "Urgency score 0.22 is still muted."
+    assert checks[4]["summary"] == "Strongest value signal is 0.42, below the economics bar."
 
 
 def test_score_opportunity_lifts_ops_and_compliance_value_support():
