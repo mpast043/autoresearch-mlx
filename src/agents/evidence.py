@@ -1217,10 +1217,11 @@ class EvidenceAgent(BaseAgent):
         origin_source_group = _source_family_group(origin_source_family)
         signature_terms = _signature_terms(atom)
         tool_terms = _signature_tool_terms(atom)
-        matched_doc_families: list[str] = []
-        matched_doc_groups: list[str] = []
-        matched_family_counts: dict[str, int] = {}
-        cross_source_match_count = 0
+        # The origin source family is always confirmed — the finding originated there.
+        matched_doc_families: list[str] = [origin_source_family] if origin_source_family else []
+        matched_doc_groups: list[str] = [origin_source_group] if origin_source_family else []
+        matched_family_counts: dict[str, int] = {origin_source_family: 1} if origin_source_family else {}
+        cross_source_match_count = 1 if origin_source_family else 0
         for doc in recurrence_docs:
             if not _doc_matches_signature(doc, signature_terms, origin_family=origin_source_family, tool_terms=tool_terms):
                 continue
@@ -1232,21 +1233,32 @@ class EvidenceAgent(BaseAgent):
         source_families = sorted(set(matched_doc_families))
         source_groups = sorted(set(matched_doc_groups))
 
-        # LLM second-pass: when heuristic signature matching found nothing,
-        # ask the reasoning model to semantically assess rejected docs.
-        if not source_families and self._llm_client and recurrence_docs:
-            llm_rescued = await self._llm_corroborate_docs(atom, recurrence_docs, signature_terms, tool_terms)
-            if llm_rescued:
-                for idx, reason in llm_rescued:
-                    doc = recurrence_docs[idx]
-                    doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
-                    matched_doc_families.append(doc_family)
-                    matched_doc_groups.append(_source_family_group(doc_family))
-                    matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
-                    cross_source_match_count += 1
-                source_families = sorted(set(matched_doc_families))
-                source_groups = sorted(set(matched_doc_groups))
-                logger.info("LLM rescued %d/%d docs for finding %d", len(llm_rescued), len(recurrence_docs), finding_id)
+        # LLM second-pass: when heuristic signature matching found too few
+        # source families (empty or single-family), ask the reasoning model
+        # to semantically assess rejected docs to find cross-source corroboration.
+        if len(source_families) < 2 and self._llm_client and recurrence_docs:
+            # Collect docs that were rejected by the heuristic
+            rejected_docs = [(i, doc) for i, doc in enumerate(recurrence_docs)
+                             if not _doc_matches_signature(doc, signature_terms, origin_family=origin_source_family, tool_terms=tool_terms)]
+            if rejected_docs:
+                llm_rescued = await self._llm_corroborate_docs(
+                    atom, [doc for _, doc in rejected_docs], signature_terms, tool_terms
+                )
+                if llm_rescued:
+                    # Map LLM response indices back to original recurrence_docs indices
+                    for llm_idx, reason in llm_rescued:
+                        if llm_idx < len(rejected_docs):
+                            orig_idx = rejected_docs[llm_idx][0]
+                            doc = recurrence_docs[orig_idx]
+                            doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
+                            if doc_family and doc_family not in source_families:
+                                matched_doc_families.append(doc_family)
+                                matched_doc_groups.append(_source_family_group(doc_family))
+                                matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
+                                cross_source_match_count += 1
+                    source_families = sorted(set(matched_doc_families))
+                    source_groups = sorted(set(matched_groups))
+                    logger.info("LLM rescued %d/%d docs for finding %d (families: %s)", len(llm_rescued), len(rejected_docs), finding_id, source_families)
 
         source_family_diversity = len(source_families)
         source_group_diversity = len(source_groups)

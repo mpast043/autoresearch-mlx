@@ -954,10 +954,10 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
 
         corroboration = self.db.get_corroboration(finding_id)
         market = self.db.get_market_enrichment(finding_id)
-        self.assertEqual(corroboration.evidence["source_family_diversity"], 2)
+        self.assertEqual(corroboration.evidence["source_family_diversity"], 3)  # origin (web) + reddit + wordpress_review
         self.assertEqual(corroboration.evidence["source_family_match_counts"]["reddit"], 1)
         self.assertEqual(corroboration.evidence["source_family_match_counts"]["wordpress_review"], 1)
-        self.assertEqual(corroboration.evidence["core_source_family_diversity"], 2)
+        self.assertEqual(corroboration.evidence["core_source_family_diversity"], 3)  # origin (web) included
         self.assertEqual(corroboration.evidence["source_group_diversity"], 2)
         self.assertGreater(corroboration.evidence["cross_source_match_score"], 0.3)
         self.assertGreater(corroboration.evidence["core_source_family_bonus"], 0.0)
@@ -1153,8 +1153,10 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
 
         corroboration = self.db.get_corroboration(finding_id)
         self.assertEqual(corroboration.evidence["origin_source_family"], "web")
-        self.assertEqual(corroboration.evidence["source_families"], ["reddit"])
-        self.assertEqual(corroboration.evidence["source_family_diversity"], 1)
+        # Origin source family (web) is now always included in source_families
+        self.assertIn("web", corroboration.evidence["source_families"])
+        self.assertIn("reddit", corroboration.evidence["source_families"])
+        self.assertEqual(corroboration.evidence["source_family_diversity"], 2)
 
     async def test_product_specific_review_gets_generalizability_penalty(self):
         async def fake_validate_problem(**_kwargs):
@@ -1385,6 +1387,58 @@ from src.agents.evidence import (
 
 class TestLLMCorroboration(unittest.IsolatedAsyncioTestCase):
     """Test LLM second-pass corroboration."""
+
+    async def test_llm_corroboration_fires_when_single_source_family(self):
+        """LLM second-pass should fire when heuristic found only 1 source family, not just when empty."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # Simulate _build_corroboration_record scenario where heuristic found
+        # only reddit docs (single-family) but there are also web docs the
+        # heuristic rejected. LLM should be called with only the rejected docs.
+        agent = EvidenceAgent.__new__(EvidenceAgent)
+        agent._llm_client = MagicMock()
+        agent._llm_client.reasoning_agenerate = AsyncMock(
+            return_value='{"confirmed": [{"index": 0, "reason": "web blog describes same pain"}]}'
+        )
+        agent.config = {}
+
+        # Heuristic would match only reddit docs; web doc is rejected
+        reddit_doc = SimpleNamespace(
+            title="Manual reconciliation nightmare on r/accounting",
+            snippet="I keep having to reconcile bank deposits manually.",
+            source_family="reddit", source="reddit",
+            url="https://reddit.com/r/accounting/123",
+        )
+        web_doc = SimpleNamespace(
+            title="Small Business Reconciliation Headaches",
+            snippet="Small businesses waste hours on manual bank reconciliation every month.",
+            source_family="web", source="web",
+            url="https://blog.example.com/recon",
+        )
+        off_topic_doc = SimpleNamespace(
+            title="Best Accounting Software 2026",
+            snippet="Compare the top tools for small business accounting.",
+            source_family="web", source="web",
+            url="https://www.capterra.com/best",
+        )
+
+        atom = SimpleNamespace(
+            pain_statement="manual reconciliation wastes hours every month",
+            failure_mode="silently fails to match invoices to deposits",
+            job_to_be_done="reconcile bank deposits with invoices",
+            current_tools="Excel",
+            current_workaround="manual cross-reference in spreadsheet",
+            cost_consequence_clues="",
+        )
+
+        # Call _llm_corroborate_docs with just the rejected docs (web_doc, off_topic_doc)
+        rejected = [web_doc, off_topic_doc]
+        result = await agent._llm_corroborate_docs(atom, rejected, ["reconciliation", "manual"], ["excel"])
+
+        # LLM should confirm the first rejected doc (web_doc)
+        assert len(result) == 1
+        assert result[0][0] == 0  # index within rejected list
+        assert "reconciliation" in result[0][1].lower() or "pain" in result[0][1].lower()
 
     async def test_llm_corroborate_docs_rescues_rejected_results(self):
         from unittest.mock import AsyncMock, MagicMock
