@@ -91,6 +91,8 @@ def test_ideation_generates_research_brief_with_db_validation_accessor(temp_db: 
     assert ideas
     assert ideas[0].title.endswith("Brief")
     spec = ideas[0].spec
+    assert spec["schema_version"] == "research_spec_v1"
+    assert spec["artifact_type"] == "research_spec"
     assert spec["opportunity_scorecard"]["total_score"] == 0.72
     assert spec["market_gap"]["solution_gap_score"] == 0.72
     assert spec["selection_status"] == "prototype_candidate"

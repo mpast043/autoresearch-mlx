@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from src.agents.base import BaseAgent
 from src.database import Database, Idea
 from src.messaging import MessageQueue, MessageType
+from src.opportunity_spec import build_research_spec
 from src.research_tools import slugify
 
 
@@ -82,33 +83,20 @@ class IdeationAgent(BaseAgent):
 
         build_ready = False
 
-        spec = {
-            "slug": idea_slug,
-            "product_type": product_type,
-            "problem_statement": finding.product_built or "",
-            "value_hypothesis": description,
-            "core_features": features,
-            "audience": audience,
-            "monetization_strategy": monetization,
-            "source_finding_kind": finding.finding_kind,
-            "evidence_refresh_from_validation_id": validation.id,
-            "market_gap_state": evidence.get("market_gap_state", "unknown"),
-            "market_gap": evidence.get("market_gap", {}),
-            "validation_plan": validation_plan,
-            "opportunity_scorecard": scorecard,
-            "evidence_assessment": evidence.get("evidence_assessment", {}),
-            "selection_status": evidence.get("selection_status") or payload.get("selection_status", ""),
-            "selection_reason": evidence.get("selection_reason", ""),
-            "selection_gate": evidence.get("selection_gate", {}),
-            "counterevidence": evidence.get("counterevidence", []),
-            "source_validation": {
-                "decision": evidence.get("decision", ""),
-                "decision_reason": evidence.get("decision_reason", ""),
-                "passed": validation.passed,
-                "overall_score": validation.overall_score,
-            },
-            "build_ready": build_ready,
-        }
+        spec = build_research_spec(
+            slug=idea_slug,
+            product_type=product_type,
+            problem_statement=finding.product_built or "",
+            value_hypothesis=description,
+            core_features=features,
+            audience=audience,
+            monetization_strategy=monetization,
+            source_finding_kind=finding.finding_kind,
+            validation=validation,
+            evidence={**evidence, "selection_status": evidence.get("selection_status") or payload.get("selection_status", "")},
+            validation_plan=validation_plan,
+            build_ready=build_ready,
+        )
         pattern_ids = [finding.id] if finding.id is not None else []
 
         if existing is not None:
