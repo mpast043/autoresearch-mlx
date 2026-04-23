@@ -320,12 +320,7 @@ class ValidationAgent(BaseAgent):
             selection_status=selection_status,
             selection_reason=selection_reason,
             notes={
-                "scorecard": scorecard,
-                "market_gap": market_gap,
-                "counterevidence": counterevidence,
                 "cluster_summary": cluster.summary,
-                "corroboration": validation_payload.get("corroboration") or {},
-                "market_enrichment": validation_payload.get("market_enrichment") or {},
             },
         )
         opportunity.selection_status = selection_status

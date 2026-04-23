@@ -93,8 +93,13 @@ def build_validation_review_row(
     canonical_policy = _canonical_policy(evidence)
     canonical_selection = _canonical_selection(evidence)
     canonical_evidence = _canonical_evidence(evidence)
-    scorecard_snapshot = canonical_scorecard_snapshot(_canonical_evaluation(evidence))
-    evidence_assessment = evidence.get("evidence_assessment") or canonical_evidence_assessment(_canonical_evaluation(evidence))
+    canonical_evaluation = _canonical_evaluation(evidence)
+    canonical_inputs = canonical_evaluation.get("inputs", {}) or {}
+    canonical_corroboration = canonical_inputs.get("corroboration", {}) or {}
+    canonical_market = canonical_inputs.get("market_enrichment", {}) or {}
+    canonical_review_feedback = canonical_inputs.get("review_feedback", {}) or {}
+    scorecard_snapshot = canonical_scorecard_snapshot(canonical_evaluation)
+    evidence_assessment = evidence.get("evidence_assessment") or canonical_evidence_assessment(canonical_evaluation)
     matched_docs_by_source = {
         source: sorted_recurrence_match_records(records)
         for source, records in (evidence.get("matched_docs_by_source", {}) or {}).items()
@@ -113,15 +118,18 @@ def build_validation_review_row(
         "selection_status": canonical_selection.get("selection_status") or evidence.get("selection_status", "research_more"),
         "selection_reason": canonical_selection.get("selection_reason") or evidence.get("selection_reason", ""),
         "park_subreason": evidence.get("park_subreason"),
+        "decision_score": scorecard_snapshot.get("decision_score", 0.0),
+        "problem_truth_score": scorecard_snapshot.get("problem_truth_score", 0.0),
+        "revenue_readiness_score": scorecard_snapshot.get("revenue_readiness_score", 0.0),
         "composite_score": scorecard_snapshot.get("composite_score", evidence.get("composite_score", row["overall_score"] or 0.0)),
         "overall_score": row["overall_score"] or 0.0,
         "market_score": row["market_score"] or 0.0,
         "technical_score": row["technical_score"] or 0.0,
         "distribution_score": row["distribution_score"] or 0.0,
         "recurrence_state": canonical_evidence.get("recurrence_state") or evidence.get("recurrence_state"),
-        "corroboration_score": 0.0,
-        "value_support": evidence.get("value_support", evidence_assessment.get("value_support", scorecard_snapshot.get("value_support", 0.0))),
-        "review_feedback_count": evidence.get("review_feedback_count", 0),
+        "corroboration_score": float(canonical_corroboration.get("corroboration_score", 0.0) or 0.0),
+        "value_support": evidence_assessment.get("value_support", scorecard_snapshot.get("value_support", evidence.get("value_support", 0.0))),
+        "review_feedback_count": int(canonical_review_feedback.get("count", evidence.get("review_feedback_count", 0)) or 0),
         "source": row["source"],
         "source_url": row["source_url"],
         "source_class": row["source_class"],
@@ -168,6 +176,14 @@ def build_validation_review_row(
         "family_confirmation_count": canonical_evidence.get("family_confirmation_count", evidence.get("family_confirmation_count", 0)),
         "source_yield": evidence.get("source_yield", {}),
         "reshaped_query_history": evidence.get("reshaped_query_history", []),
+        "source_family_diversity": int(canonical_corroboration.get("source_family_diversity", 0) or 0),
+        "core_source_family_diversity": int(canonical_corroboration.get("core_source_family_diversity", 0) or 0),
+        "generalizability_class": canonical_corroboration.get("generalizability_class", ""),
+        "demand_score": float(canonical_market.get("demand_score", 0.0) or 0.0),
+        "buyer_intent_score": float(canonical_market.get("buyer_intent_score", 0.0) or 0.0),
+        "competition_score": float(canonical_market.get("competition_score", 0.0) or 0.0),
+        "trend_score": float(canonical_market.get("trend_score", 0.0) or 0.0),
+        "wedge_active": bool(canonical_market.get("wedge_active", False)),
     }
     if corroboration_row:
         corr_evidence = corroboration_evidence or {}

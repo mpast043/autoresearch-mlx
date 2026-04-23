@@ -74,7 +74,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
 
     def test_selection_gate_requires_real_support(self):
         status, reason, gate = determine_selection_state(
-            decision="park",
+            decision="promote",
             scorecard={
                 "evidence_quality": 0.7,
                 "value_support": 0.63,
@@ -84,12 +84,39 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "corroboration_score": 0.72,
                 "source_family_diversity": 2,
                 "generalizability_class": "reusable_workflow_pain",
+                "recurrence_state": "supported",
             },
             market_enrichment={"wedge_active": True},
         )
         self.assertEqual(status, "prototype_candidate")
         self.assertEqual(reason, "validated_selection_gate")
         self.assertTrue(gate["eligible"])
+
+    def test_selection_gate_never_promotes_park_to_prototype_candidate(self):
+        status, reason, gate = determine_selection_state(
+            decision="park",
+            scorecard={
+                "decision_score": 0.19,
+                "problem_truth_score": 0.12,
+                "revenue_readiness_score": 0.23,
+                "frequency_score": 0.30,
+                "buildability": 0.66,
+                "cost_of_inaction": 0.48,
+                "workaround_density": 0.41,
+            },
+            corroboration={
+                "corroboration_score": 0.70,
+                "source_family_diversity": 2,
+                "generalizability_class": "reusable_workflow_pain",
+                "generalizability_score": 0.72,
+                "cross_source_match_score": 0.21,
+                "recurrence_state": "supported",
+            },
+            market_enrichment={"wedge_active": False},
+        )
+        self.assertEqual(status, "research_more")
+        self.assertEqual(reason, "selection_gate_not_met")
+        self.assertIn("decision_not_promote", gate["blocked_by"])
 
     def test_selection_gate_blocks_weak_items(self):
         status, reason, gate = determine_selection_state(
@@ -207,7 +234,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
                     "recurrence_state": "timeout",
                 },
                 "policy": {
-                    "decision": "park",
+                    "decision": "promote",
                 },
             },
         )
@@ -218,7 +245,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
 
     def test_selection_gate_allows_multifamily_near_miss_prototype_candidate(self):
         status, reason, gate = determine_selection_state(
-            decision="park",
+            decision="promote",
             scorecard={
                 "evidence_quality": 0.4511,
                 "value_support": 0.6015,
@@ -228,6 +255,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "corroboration_score": 0.4215,
                 "source_family_diversity": 2,
                 "generalizability_class": "reusable_workflow_pain",
+                "cross_source_match_score": 0.18,
                 "recurrence_state": "thin",
             },
             market_enrichment={"wedge_active": False},
@@ -236,11 +264,11 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertEqual(reason, "prototype_candidate_gate")
         self.assertTrue(gate["eligible"])
         self.assertEqual(gate["gate_version"], "prototype_candidate_v1")
-        self.assertIn("prototype_candidate_multifamily_near_miss", gate["reasons"])
+        self.assertIn("prototype_candidate_multifamily_checkpoint", gate["reasons"])
 
     def test_selection_gate_allows_timeout_multifamily_checkpoint_candidate(self):
         status, reason, gate = determine_selection_state(
-            decision="park",
+            decision="promote",
             scorecard={
                 "evidence_quality": 0.53,
                 "value_support": 0.64,
@@ -250,6 +278,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "corroboration_score": 0.48,
                 "source_family_diversity": 2,
                 "generalizability_class": "reusable_workflow_pain",
+                "cross_source_match_score": 0.17,
                 "recurrence_state": "timeout",
             },
             market_enrichment={"wedge_active": False},
@@ -257,11 +286,11 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertEqual(status, "prototype_candidate")
         self.assertEqual(reason, "prototype_candidate_gate")
         self.assertTrue(gate["eligible"])
-        self.assertIn("prototype_candidate_multifamily_near_miss", gate["reasons"])
+        self.assertIn("prototype_candidate_multifamily_checkpoint", gate["reasons"])
 
     def test_selection_gate_allows_sharp_multifamily_timeout_candidate(self):
         status, reason, gate = determine_selection_state(
-            decision="park",
+            decision="promote",
             scorecard={
                 "evidence_quality": 0.43,
                 "value_support": 0.49,
@@ -290,11 +319,13 @@ class TestBuildPrepHelpers(unittest.TestCase):
         # With source_family_diversity=1, single_family_explore path requires stricter
         # recurrence (must be supported) and lower thresholds vs multi_family path.
         status, reason, gate = determine_selection_state(
-            decision="park",
+            decision="promote",
             scorecard={
                 "evidence_quality": 0.5586,
                 "value_support": 0.5245,
                 "composite_score": 0.3939,
+                "frequency_score": 0.29,
+                "buildability": 0.61,
                 "cluster_signal_count": 2,
                 "cluster_atom_count": 2,
             },
@@ -316,11 +347,13 @@ class TestBuildPrepHelpers(unittest.TestCase):
         # single_family_explore path: source_family_diversity=1, supported recurrence,
         # below validated gate thresholds but above exploratory thresholds.
         status, reason, gate = determine_selection_state(
-            decision="park",
+            decision="promote",
             scorecard={
                 "evidence_quality": 0.494,
                 "value_support": 0.5164,
                 "composite_score": 0.4102,
+                "frequency_score": 0.27,
+                "buildability": 0.58,
                 "cluster_signal_count": 2,
                 "cluster_atom_count": 2,
             },

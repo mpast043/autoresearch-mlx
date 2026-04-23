@@ -14,7 +14,7 @@ Clustering is **not** scoped to one subreddit. Atoms with the same **`cluster_ke
 | **Atoms & clusters** | Atoms share a `cluster_key`; validation pulls **all atoms in the cluster** — that is the “overlap” signal. |
 | **Opportunity + validation** | Composite score, corroboration, recurrence — `docs/gates.md`. |
 | **Build prep** | For `prototype_candidate`, agents can produce build briefs / spec handoff (`src/agents/build_prep.py`). |
-| **Ideation** (`orchestration.auto_ideate_after_validation`) | Emits **`ideas`** when **`decision == promote`** (validation `passed`) **or** when **`selection_status == prototype_candidate`** and a **build brief** was created (common when stage decision is still `park` — see validation agent `passed` semantics). Inspect with `python cli.py ideas`. |
+| **Ideation** (`orchestration.auto_ideate_after_validation`) | Emits **`ideas`** when **`decision == promote`** (validation `passed`) **or** when **`selection_status == prototype_candidate`** and a **build brief** was created. `prototype_candidate` is now a promoted checkpoint path, not a `park` override. Inspect with `python cli.py ideas`. |
 | **Builder** (`builder.auto_build`) | **Off by default.** If enabled, can consume idea payloads — review `BuilderAgent` before turning on. |
 
 ## What you should expect

@@ -16,7 +16,7 @@ def _review_feedback_for_engine(evidence: dict[str, Any]) -> dict[str, Any]:
     canonical_feedback = {}
     if isinstance(evaluation, dict):
         canonical_feedback = ((evaluation.get("inputs", {}) or {}).get("review_feedback", {}) or {})
-    rf = evidence.get("review_feedback") or canonical_feedback or {}
+    rf = canonical_feedback or evidence.get("review_feedback") or {}
     return {
         "park_bias": float(rf.get("review_feedback_park_bias", rf.get("park_bias", 0.0)) or 0.0),
         "kill_bias": float(rf.get("review_feedback_kill_bias", rf.get("kill_bias", 0.0)) or 0.0),
@@ -88,11 +88,13 @@ def explain_validation_evidence(evidence: dict[str, Any], config: dict[str, Any]
         else {}
     )
 
-    scorecard = evidence.get("opportunity_scorecard") or (
-        _scorecard_from_canonical(canonical) if canonical["available"] else {}
+    scorecard = (
+        _scorecard_from_canonical(canonical)
+        if canonical["available"]
+        else (evidence.get("opportunity_scorecard") or {})
     )
-    market_gap = evidence.get("market_gap") or canonical_evidence.get("market_gap") or {}
-    counterevidence = evidence.get("counterevidence") or canonical_evidence.get("counterevidence") or []
+    market_gap = canonical_evidence.get("market_gap") or evidence.get("market_gap") or {}
+    counterevidence = canonical_evidence.get("counterevidence") or evidence.get("counterevidence") or []
     review_fb = _review_feedback_for_engine(evidence)
 
     stage_diag = diagnose_stage_decision(
@@ -108,8 +110,8 @@ def explain_validation_evidence(evidence: dict[str, Any], config: dict[str, Any]
     if raw_decision not in {"promote", "park", "kill"}:
         raw_decision = "park"
 
-    corroboration = evidence.get("corroboration") or canonical.get("corroboration_inputs") or {}
-    market_enrichment = evidence.get("market_enrichment") or canonical.get("market_enrichment_inputs") or {}
+    corroboration = canonical.get("corroboration_inputs") or evidence.get("corroboration") or {}
+    market_enrichment = canonical.get("market_enrichment_inputs") or evidence.get("market_enrichment") or {}
     selection_diag = explain_selection_gate_detail(
         decision=raw_decision,
         scorecard=scorecard,

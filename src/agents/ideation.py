@@ -56,9 +56,10 @@ class IdeationAgent(BaseAgent):
             opportunity_evaluation = {}
         evaluation_evidence = opportunity_evaluation.get("evidence", {}) or {}
         cluster = evidence.get("cluster", {})
-        scorecard = evidence.get("opportunity_scorecard") or canonical_scorecard_snapshot(
-            opportunity_evaluation
-        )
+        scorecard = {
+            **(evidence.get("opportunity_scorecard") or {}),
+            **canonical_scorecard_snapshot(opportunity_evaluation),
+        }
         experiment_id = evidence.get("experiment_id")
         experiment_rows = []
         if experiment_id and hasattr(self.db, "get_experiments"):

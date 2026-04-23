@@ -554,11 +554,11 @@ def generate_builder_outputs(db, run_id: str | None = None) -> list[BuilderCard]
     # Get all build-ready/launched opportunities via selection_status
     conn = db._get_connection()
     rows = conn.execute("""
-        SELECT o.id, o.cluster_id, o.title, o.selection_status, o.problem_truth_score, o.revenue_readiness_score, o.composite_score, c.label as cluster_label
+        SELECT o.id, o.cluster_id, o.title, o.selection_status, o.decision_score, o.problem_truth_score, o.revenue_readiness_score, o.composite_score, c.label as cluster_label
         FROM opportunities o
         LEFT JOIN opportunity_clusters c ON o.cluster_id = c.id
         WHERE o.selection_status IN ('build_ready', 'launched', 'prototype_candidate', 'prototype_ready')
-        ORDER BY o.problem_truth_score DESC, o.revenue_readiness_score DESC
+        ORDER BY o.decision_score DESC, o.problem_truth_score DESC, o.revenue_readiness_score DESC
     """).fetchall()
 
     for row in rows:
@@ -566,14 +566,16 @@ def generate_builder_outputs(db, run_id: str | None = None) -> list[BuilderCard]
         cluster_id = row[1]
         title = row[2]
         selection_status = row[3]
-        pts = row[4] or 0.0
-        rrs = row[5] or 0.0
-        composite = row[6] or 0.0
-        cluster_label = row[7] or ""
+        decision_score = row[4] or 0.0
+        pts = row[5] or 0.0
+        rrs = row[6] or 0.0
+        composite = row[7] or 0.0
+        cluster_label = row[8] or ""
 
         wedge_data = {
             "title": title,
             "cluster_label": cluster_label,
+            "decision_score": decision_score,
             "problem_truth": pts,
             "revenue_readiness": rrs,
             "selection_status": selection_status,
@@ -714,9 +716,10 @@ Output ONLY valid JSON with this structure:
 WEDGE_EVAL_USER = """\
 ## Opportunity: {title}
 Selection Status: {selection_status}
-Composite Score: {composite_score}
-Problem Plausibility: {problem_plausibility}
+Decision Score: {decision_score}
+Problem Truth: {problem_truth}
 Revenue Readiness: {revenue_readiness}
+Diagnostic Problem Plausibility: {problem_plausibility}
 Cost of Inaction: {cost_of_inaction}
 Workaround Density: {workaround_density}
 Buildability: {buildability}
@@ -919,7 +922,8 @@ class WedgeEvaluator:
         user_prompt = WEDGE_EVAL_USER.format(
             title=(opportunity.title or "")[:200],
             selection_status=getattr(opportunity, "selection_status", ""),
-            composite_score=f"{getattr(opportunity, 'composite_score', 0):.3f}",
+            decision_score=f"{getattr(opportunity, 'decision_score', 0):.3f}",
+            problem_truth=f"{getattr(opportunity, 'problem_truth_score', 0):.3f}",
             problem_plausibility=f"{getattr(opportunity, 'problem_plausibility', 0):.3f}",
             revenue_readiness=f"{getattr(opportunity, 'revenue_readiness_score', 0):.3f}",
             cost_of_inaction=f"{getattr(opportunity, 'cost_of_inaction', 0):.3f}",
@@ -954,7 +958,8 @@ class WedgeEvaluator:
         user_prompt = WEDGE_EVAL_USER.format(
             title=(opportunity.title or "")[:200],
             selection_status=getattr(opportunity, "selection_status", ""),
-            composite_score=f"{getattr(opportunity, 'composite_score', 0):.3f}",
+            decision_score=f"{getattr(opportunity, 'decision_score', 0):.3f}",
+            problem_truth=f"{getattr(opportunity, 'problem_truth_score', 0):.3f}",
             problem_plausibility=f"{getattr(opportunity, 'problem_plausibility', 0):.3f}",
             revenue_readiness=f"{getattr(opportunity, 'revenue_readiness_score', 0):.3f}",
             cost_of_inaction=f"{getattr(opportunity, 'cost_of_inaction', 0):.3f}",

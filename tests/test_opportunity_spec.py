@@ -112,3 +112,44 @@ def test_build_research_spec_can_derive_scorecard_from_canonical_evaluation():
     assert spec["opportunity_scorecard"]["total_score"] == 0.57
     assert spec["evidence_assessment"]["value_support"] == 0.43
     assert spec["evidence_assessment"]["problem_plausibility"] == 0.47
+
+
+def test_build_research_spec_prefers_canonical_snapshot_over_stale_legacy_blobs():
+    validation = SimpleNamespace(id=7, passed=True, overall_score=0.66)
+    evidence = {
+        "opportunity_scorecard": {"decision_score": 0.12, "composite_score": 0.91},
+        "evidence_assessment": {"value_support": 0.11, "problem_plausibility": 0.12},
+        "opportunity_evaluation": {
+            "schema_version": "opportunity_evaluation_v1",
+            "inputs": {"validation": {"overall_score": 0.66}},
+            "measures": {
+                "scores": {"decision_score": 0.34},
+                "dimensions": {"value_support": 0.58, "evidence_quality": 0.61},
+                "transition": {"composite_score": 0.28, "problem_plausibility": 0.49},
+            },
+            "selection": {
+                "selection_status": "prototype_candidate",
+                "selection_reason": "validated_selection_gate",
+                "selection_checks": {"eligible": True, "blocked_by": []},
+            },
+        },
+    }
+
+    spec = build_research_spec(
+        slug="canonical-first",
+        product_type="research-brief",
+        problem_statement="Canonical-first output",
+        value_hypothesis="Canonical fields should win.",
+        core_features=["Validation"],
+        audience="ops",
+        monetization_strategy="research",
+        source_finding_kind="problem_signal",
+        validation=validation,
+        evidence=evidence,
+        validation_plan={},
+    )
+
+    assert spec["opportunity_scorecard"]["decision_score"] == 0.34
+    assert spec["opportunity_scorecard"]["composite_score"] == 0.28
+    assert spec["evidence_assessment"]["value_support"] == 0.58
+    assert spec["evidence_assessment"]["problem_plausibility"] == 0.49

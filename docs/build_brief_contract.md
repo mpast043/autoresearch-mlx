@@ -34,6 +34,8 @@ This note defines the certainty fields that downstream code must preserve when c
 
 - `prototype_gate.prototype_gate_evidence_strength`
   - Snapshot of admission-time evidence signals.
+  - This is diagnostic context, not the primary runtime score language.
+  - Primary operator-facing scores live in embedded `opportunity_evaluation.measures.scores`.
   - Includes:
     - `recurrence_state`
     - `corroboration_score`

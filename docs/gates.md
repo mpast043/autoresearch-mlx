@@ -24,7 +24,11 @@ measures written into `OpportunityEvaluationV1`.
 
 The current canonical snapshot still carries legacy transition fields such as
 `composite_score`, `problem_plausibility`, and `evidence_sufficiency`, but they
-now live alongside the newer decision language rather than in a separate store.
+are now **diagnostic only**. The primary operator-facing score language is:
+
+- `decision_score`
+- `problem_truth_score`
+- `revenue_readiness_score`
 
 ## 3) `stage_decision` (promote / park / kill)
 
@@ -77,12 +81,17 @@ It reads:
 - canonical measures (`evidence_quality`, `value_support`, `frequency_score`,
   `buildability`, `cost_of_inaction`, `workaround_density`)
 
-It can still admit exploratory `prototype_candidate` cases when strict gates
-miss but explicit near-miss rules pass.
+Selection may still admit exploratory `prototype_candidate` cases when strict
+gates miss but explicit checkpoint rules pass, but only after the canonical
+decision is already `promote`.
 
-**Important:** `kill -> archive` remains a hard mapping. `promote` can still
-resolve to either `prototype_candidate` or `research_more` depending on explicit
-selection checks.
+**Hard mapping:**
+
+- `kill -> archive`
+- `park -> research_more`
+- `promote -> prototype_candidate` or `research_more`
+
+So selection is stricter than policy, but it is not a second scorer.
 
 ## Canonical evaluation snapshot
 

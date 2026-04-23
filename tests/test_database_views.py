@@ -75,6 +75,9 @@ def test_build_validation_review_row_prefers_canonical_snapshot_fields():
     assert result["decision_reason"] == "park_recurrence"
     assert result["selection_status"] == "research_more"
     assert result["selection_reason"] == "selection_gate_not_met"
+    assert result["decision_score"] == 0.0
+    assert result["problem_truth_score"] == 0.0
+    assert result["revenue_readiness_score"] == 0.0
     assert result["composite_score"] == 0.29
     assert result["value_support"] == 0.43
     assert result["recurrence_state"] == "supported"

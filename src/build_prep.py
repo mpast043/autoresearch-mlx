@@ -578,6 +578,164 @@ def _selection_policy_inputs(
     return resolved_decision, resolved_scorecard, resolved_corroboration, resolved_market
 
 
+def _selection_gate_context(
+    *,
+    decision: str,
+    scorecard: dict[str, Any],
+    corroboration: dict[str, Any],
+    market_enrichment: dict[str, Any],
+    opportunity_evaluation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    decision, scorecard, corroboration, market_enrichment = _selection_policy_inputs(
+        decision=decision,
+        scorecard=scorecard,
+        corroboration=corroboration,
+        market_enrichment=market_enrichment,
+        opportunity_evaluation=opportunity_evaluation,
+    )
+
+    corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
+    core_family_diversity = int(corroboration.get("source_family_diversity", 0) or 0)
+    cluster_family_diversity = int(corroboration.get("cluster_source_family_diversity", 0) or 0)
+    cluster_origin_diversity = int(corroboration.get("cluster_origin_family_diversity", 0) or 0)
+    effective_family_diversity = max(core_family_diversity, cluster_family_diversity, cluster_origin_diversity)
+    generalizability_class = str(corroboration.get("generalizability_class", "") or "")
+    recurrence_state = str(corroboration.get("recurrence_state", "") or "")
+    cluster_signal_count = int(scorecard.get("cluster_signal_count", scorecard.get("cluster_atom_count", 1)) or 1)
+    cluster_atom_count = int(scorecard.get("cluster_atom_count", cluster_signal_count) or cluster_signal_count)
+    decision_score = float(scorecard.get("decision_score", 0.0) or 0.0)
+    problem_truth_score = float(scorecard.get("problem_truth_score", 0.0) or 0.0)
+    revenue_readiness_score = float(scorecard.get("revenue_readiness_score", 0.0) or 0.0)
+    frequency_score = float(scorecard.get("frequency_score", 0.0) or 0.0)
+    workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
+    cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
+    buildability = float(scorecard.get("buildability", 0.0) or 0.0)
+    cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
+    generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
+    wedge_active = bool(market_enrichment.get("wedge_active"))
+
+    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or effective_family_diversity >= 2
+    reusable_workflow = generalizability_class == "reusable_workflow_pain"
+    supported_recurrence = recurrence_state in {"supported", "strong"}
+    checkpoint_recurrence = recurrence_state in {"thin", "supported", "strong", "timeout"}
+
+    reasons: list[str] = []
+    blocked_by: list[str] = []
+
+    if decision == "promote":
+        reasons.append("validation_recommended_promote")
+    elif decision == "kill":
+        blocked_by.append("decision_kill")
+    else:
+        blocked_by.append("decision_not_promote")
+
+    if minimum_cluster_ok:
+        reasons.append("cluster_size_threshold_met")
+    else:
+        blocked_by.append("single_signal_single_family_cluster")
+
+    if reusable_workflow:
+        reasons.append("generalizable_workflow_pain")
+    else:
+        blocked_by.append("not_generalizable_enough")
+
+    if effective_family_diversity >= 2:
+        reasons.append("multi_family_support")
+    else:
+        blocked_by.append("single_family_support")
+
+    if supported_recurrence:
+        reasons.append("recurrence_state_supported")
+    elif recurrence_state == "timeout":
+        blocked_by.append("recurrence_timeout")
+    elif recurrence_state:
+        blocked_by.append("recurrence_not_supported")
+    else:
+        blocked_by.append("recurrence_unknown")
+
+    if corroboration_score >= 0.6:
+        reasons.append("corroboration_threshold_met")
+    elif corroboration_score >= 0.25:
+        reasons.append("corroboration_checkpoint_met")
+    else:
+        blocked_by.append("corroboration_below_checkpoint")
+
+    if wedge_active:
+        reasons.append("wedge_active")
+
+    validated_candidate = (
+        decision == "promote"
+        and minimum_cluster_ok
+        and reusable_workflow
+        and effective_family_diversity >= 2
+        and supported_recurrence
+        and corroboration_score >= 0.6
+    )
+    multifamily_checkpoint_candidate = (
+        decision == "promote"
+        and minimum_cluster_ok
+        and reusable_workflow
+        and effective_family_diversity >= 2
+        and checkpoint_recurrence
+        and corroboration_score >= 0.25
+        and (cross_source_match_score >= 0.16 or generalizability_score >= 0.58)
+    )
+    sharp_checkpoint_candidate = (
+        decision == "promote"
+        and minimum_cluster_ok
+        and reusable_workflow
+        and effective_family_diversity >= 2
+        and checkpoint_recurrence
+        and corroboration_score >= 0.22
+        and cross_source_match_score >= 0.16
+        and generalizability_score >= 0.58
+        and frequency_score >= 0.25
+        and workaround_density >= 0.34
+        and cost_of_inaction >= 0.4
+        and buildability >= 0.52
+    )
+    single_family_checkpoint_candidate = (
+        decision == "promote"
+        and minimum_cluster_ok
+        and reusable_workflow
+        and effective_family_diversity == 1
+        and supported_recurrence
+        and corroboration_score >= 0.3
+        and frequency_score >= 0.25
+        and buildability >= 0.52
+    )
+
+    return {
+        "decision": decision,
+        "scorecard": scorecard,
+        "corroboration": corroboration,
+        "market_enrichment": market_enrichment,
+        "decision_score": decision_score,
+        "problem_truth_score": problem_truth_score,
+        "revenue_readiness_score": revenue_readiness_score,
+        "frequency_score": frequency_score,
+        "workaround_density": workaround_density,
+        "cost_of_inaction": cost_of_inaction,
+        "buildability": buildability,
+        "corroboration_score": corroboration_score,
+        "effective_family_diversity": effective_family_diversity,
+        "generalizability_class": generalizability_class,
+        "generalizability_score": generalizability_score,
+        "recurrence_state": recurrence_state,
+        "cross_source_match_score": cross_source_match_score,
+        "wedge_active": wedge_active,
+        "cluster_signal_count": cluster_signal_count,
+        "cluster_atom_count": cluster_atom_count,
+        "minimum_cluster_ok": minimum_cluster_ok,
+        "validated_candidate": validated_candidate,
+        "multifamily_checkpoint_candidate": multifamily_checkpoint_candidate,
+        "sharp_checkpoint_candidate": sharp_checkpoint_candidate,
+        "single_family_checkpoint_candidate": single_family_checkpoint_candidate,
+        "reasons": reasons,
+        "blocked_by": blocked_by,
+    }
+
+
 def determine_selection_state(
     *,
     decision: str,
@@ -587,13 +745,14 @@ def determine_selection_state(
     opportunity_evaluation: dict[str, Any] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Map validation output into the first build-prep lifecycle state."""
-    decision, scorecard, corroboration, market_enrichment = _selection_policy_inputs(
+    context = _selection_gate_context(
         decision=decision,
         scorecard=scorecard,
         corroboration=corroboration,
         market_enrichment=market_enrichment,
         opportunity_evaluation=opportunity_evaluation,
     )
+    decision = str(context["decision"] or "")
 
     if decision == "kill":
         return (
@@ -607,214 +766,50 @@ def determine_selection_state(
             },
         )
 
-    corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
-    # Use source_family_diversity (total unique confirming sources) rather than
-    # core_source_family_diversity (only "core" origin sources). A finding confirmed
-    # by Reddit + Web should count as multi-family support regardless of origin.
-    core_family_diversity = int(corroboration.get("source_family_diversity", 0) or 0)
-    # Cluster-level diversity aggregates source families across ALL cluster member
-    # findings — a Reddit-origin finding + a web-origin finding in the same cluster
-    # counts as multi-family even if each individual finding has diversity=1.
-    cluster_family_diversity = int(corroboration.get("cluster_source_family_diversity", 0) or 0)
-    cluster_origin_diversity = int(corroboration.get("cluster_origin_family_diversity", 0) or 0)
-    # Effective diversity: use the max of per-finding and cluster-level diversity.
-    effective_family_diversity = max(core_family_diversity, cluster_family_diversity, cluster_origin_diversity)
-    generalizability_class = str(corroboration.get("generalizability_class", "") or "")
-    recurrence_state = str(corroboration.get("recurrence_state", "") or "")
-    evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
-    value_support = float(scorecard.get("value_support", 0.0) or 0.0)
-    composite_score = float(scorecard.get("composite_score", 0.0) or 0.0)
-    cluster_signal_count = int(scorecard.get("cluster_signal_count", scorecard.get("cluster_atom_count", 1)) or 1)
-    cluster_atom_count = int(scorecard.get("cluster_atom_count", cluster_signal_count) or cluster_signal_count)
-    frequency_score = float(scorecard.get("frequency_score", 0.0) or 0.0)
-    workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
-    cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
-    buildability = float(scorecard.get("buildability", 0.0) or 0.0)
-    cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
-    generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
-    wedge_active = bool(market_enrichment.get("wedge_active"))
-
-    reasons: list[str] = []
-    blocked_by: list[str] = []
-
-    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or effective_family_diversity >= 2
-    if minimum_cluster_ok:
-        reasons.append("cluster_size_threshold_met")
-    else:
-        blocked_by.append("single_signal_single_family_cluster")
-
-    if generalizability_class == "reusable_workflow_pain":
-        reasons.append("generalizable_workflow_pain")
-    else:
-        blocked_by.append("not_generalizable_enough")
-
-    if effective_family_diversity >= 2:
-        reasons.append("multi_family_support")
-    else:
-        blocked_by.append("single_family_support")
-
-    if recurrence_state == "timeout":
-        blocked_by.append("recurrence_timeout")
-    elif recurrence_state in {"supported", "strong"}:
-        reasons.append("recurrence_state_supported")
-
-    if corroboration_score >= 0.6:
-        reasons.append("corroboration_threshold_met")
-    else:
-        blocked_by.append("corroboration_below_threshold")
-
-    if value_support >= 0.55:
-        reasons.append("value_support_threshold_met")
-    else:
-        blocked_by.append("value_support_below_threshold")
-
-    if evidence_quality >= 0.6:
-        reasons.append("evidence_quality_threshold_met")
-    else:
-        blocked_by.append("evidence_quality_below_threshold")
-
-    if composite_score >= 0.5:
-        reasons.append("composite_threshold_met")
-    else:
-        blocked_by.append("composite_below_threshold")
-
-    if wedge_active:
-        reasons.append("wedge_active")
-
-    promote_requalified = (
-        decision == "promote"
-        and generalizability_class == "reusable_workflow_pain"
-        and minimum_cluster_ok
-        and effective_family_diversity >= 2
-        and corroboration_score >= 0.3
-        and evidence_quality >= 0.4
-    )
-
-    # A single finding with strong multi-source corroboration can also
-    # qualify as prototype_candidate — the multi-family evidence itself
-    # substitutes for multiple cluster members.
-    promote_single_signal_multifamily = (
-        decision == "promote"
-        and generalizability_class == "reusable_workflow_pain"
-        and not minimum_cluster_ok
-        and effective_family_diversity >= 2
-        and corroboration_score >= 0.5
-        and evidence_quality >= 0.5
-    )
-
-    if decision == "promote" and (promote_requalified or promote_single_signal_multifamily):
-        gate_reason = (
-            "promotion_requalification_passed"
-            if promote_requalified
-            else "promotion_single_signal_multifamily"
+    if decision != "promote":
+        return (
+            "research_more",
+            "selection_gate_not_met",
+            {
+                "eligible": False,
+                "gate_version": BUILD_PREP_RULE_VERSION,
+                "reasons": list(dict.fromkeys(context["reasons"])),
+                "blocked_by": list(dict.fromkeys(context["blocked_by"])),
+            },
         )
+
+    if context["validated_candidate"]:
         return (
             "prototype_candidate",
             "validated_selection_gate",
             {
                 "eligible": True,
                 "gate_version": BUILD_PREP_RULE_VERSION,
-                "reasons": ["validation_recommended_promote", gate_reason],
+                "reasons": list(
+                    dict.fromkeys(
+                        [*context["reasons"], "validated_multifamily_support"]
+                    )
+                ),
                 "blocked_by": [],
             },
         )
 
-    eligible = (
-        generalizability_class == "reusable_workflow_pain"
-        and minimum_cluster_ok
-        and effective_family_diversity >= 2
-        and corroboration_score >= 0.6
-        and value_support >= 0.55
-        and evidence_quality >= 0.6
-        and composite_score >= 0.5
-    )
+    exploratory_reason = ""
+    if context["sharp_checkpoint_candidate"]:
+        exploratory_reason = "prototype_candidate_sharp_checkpoint"
+    elif context["multifamily_checkpoint_candidate"]:
+        exploratory_reason = "prototype_candidate_multifamily_checkpoint"
+    elif context["single_family_checkpoint_candidate"]:
+        exploratory_reason = "prototype_candidate_single_family_exception"
 
-    # Timeout can happen in constrained environments (e.g. bridge/auth failures or strict budgets),
-    # but we only treat timeout as exploratory-eligible under stronger evidence conditions.
-    exploratory_recurrence_ok = recurrence_state in {"thin", "supported", "strong"}
-    timeout_checkpoint_candidate = (
-        recurrence_state == "timeout"
-        and effective_family_diversity >= 2
-        and corroboration_score >= 0.45
-        and value_support >= 0.6
-        and evidence_quality >= 0.5
-        and composite_score >= 0.4
-    )
-    sharp_checkpoint_candidate = (
-        effective_family_diversity >= 2
-        and recurrence_state in {"thin", "timeout", "supported", "strong"}
-        and corroboration_score >= 0.22
-        and cross_source_match_score >= 0.16
-        and generalizability_score >= 0.58
-        and frequency_score >= 0.25
-        and value_support >= 0.46
-        and evidence_quality >= 0.42
-        and composite_score >= 0.31
-        and workaround_density >= 0.34
-        and cost_of_inaction >= 0.4
-        and buildability >= 0.52
-    )
-
-    exploratory_candidate = (
-        generalizability_class == "reusable_workflow_pain"
-        and minimum_cluster_ok
-        and (
-            (
-                effective_family_diversity >= 2
-                and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
-                and corroboration_score >= 0.25
-                and value_support >= 0.55
-                and evidence_quality >= 0.45
-                and composite_score >= 0.34
-            )
-            or (
-                sharp_checkpoint_candidate
-            )
-            or (
-                effective_family_diversity == 1
-                and exploratory_recurrence_ok
-                and corroboration_score >= 0.3
-                and value_support >= 0.5
-                and evidence_quality >= 0.49
-                and composite_score >= 0.39
-            )
-        )
-    )
-
-    if eligible:
-        return (
-            "prototype_candidate",
-            "validated_selection_gate",
-            {
-                "eligible": True,
-                "gate_version": BUILD_PREP_RULE_VERSION,
-                "reasons": reasons,
-                "blocked_by": blocked_by,
-            },
-        )
-
-    if exploratory_candidate:
-        exploratory_reasons = list(dict.fromkeys(reasons))
-        if sharp_checkpoint_candidate and not (
-            effective_family_diversity >= 2
-            and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
-            and corroboration_score >= 0.25
-            and value_support >= 0.55
-            and evidence_quality >= 0.45
-            and composite_score >= 0.34
-        ):
-            exploratory_reasons.append("prototype_candidate_sharp_checkpoint")
-        elif effective_family_diversity >= 2:
-            exploratory_reasons.append("prototype_candidate_multifamily_near_miss")
-        else:
-            exploratory_reasons.append("prototype_candidate_single_family_exception")
+    if exploratory_reason:
         return (
             "prototype_candidate",
             "prototype_candidate_gate",
             {
                 "eligible": True,
                 "gate_version": PROTOTYPE_CANDIDATE_RULE_VERSION,
-                "reasons": exploratory_reasons,
+                "reasons": list(dict.fromkeys([*context["reasons"], exploratory_reason])),
                 "blocked_by": [],
             },
         )
@@ -825,8 +820,8 @@ def determine_selection_state(
         {
             "eligible": False,
             "gate_version": BUILD_PREP_RULE_VERSION,
-            "reasons": reasons,
-            "blocked_by": blocked_by,
+            "reasons": list(dict.fromkeys(context["reasons"])),
+            "blocked_by": list(dict.fromkeys(context["blocked_by"])),
         },
     )
 
@@ -847,7 +842,7 @@ def explain_selection_gate_detail(
         market_enrichment=market_enrichment,
         opportunity_evaluation=opportunity_evaluation,
     )
-    decision, scorecard, corroboration, market_enrichment = _selection_policy_inputs(
+    context = _selection_gate_context(
         decision=decision,
         scorecard=scorecard,
         corroboration=corroboration,
@@ -855,163 +850,106 @@ def explain_selection_gate_detail(
         opportunity_evaluation=opportunity_evaluation,
     )
 
-    corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
-    # Use source_family_diversity (total unique confirming sources) rather than
-    # core_source_family_diversity (only "core" origin sources). A finding confirmed
-    # by Reddit + Web should count as multi-family support regardless of origin.
-    core_family_diversity = int(corroboration.get("source_family_diversity", 0) or 0)
-    cluster_family_diversity = int(corroboration.get("cluster_source_family_diversity", 0) or 0)
-    cluster_origin_diversity = int(corroboration.get("cluster_origin_family_diversity", 0) or 0)
-    effective_family_diversity = max(core_family_diversity, cluster_family_diversity, cluster_origin_diversity)
-    generalizability_class = str(corroboration.get("generalizability_class", "") or "")
-    recurrence_state = str(corroboration.get("recurrence_state", "") or "")
-    evidence_quality = float(scorecard.get("evidence_quality", 0.0) or 0.0)
-    value_support = float(scorecard.get("value_support", 0.0) or 0.0)
-    composite_score = float(scorecard.get("composite_score", 0.0) or 0.0)
-    cluster_signal_count = int(scorecard.get("cluster_signal_count", scorecard.get("cluster_atom_count", 1)) or 1)
-    cluster_atom_count = int(scorecard.get("cluster_atom_count", cluster_signal_count) or cluster_signal_count)
-    frequency_score = float(scorecard.get("frequency_score", 0.0) or 0.0)
-    workaround_density = float(scorecard.get("workaround_density", 0.0) or 0.0)
-    cost_of_inaction = float(scorecard.get("cost_of_inaction", 0.0) or 0.0)
-    buildability = float(scorecard.get("buildability", 0.0) or 0.0)
-    cross_source_match_score = float(corroboration.get("cross_source_match_score", 0.0) or 0.0)
-    generalizability_score = float(corroboration.get("generalizability_score", 0.0) or 0.0)
-    wedge_active = bool(market_enrichment.get("wedge_active"))
-    minimum_cluster_ok = cluster_signal_count >= 2 or cluster_atom_count >= 2 or effective_family_diversity >= 2
-
-    exploratory_recurrence_ok = recurrence_state in {"thin", "supported", "strong"}
-    timeout_checkpoint_candidate = (
-        recurrence_state == "timeout"
-        and effective_family_diversity >= 2
-        and corroboration_score >= 0.45
-        and value_support >= 0.6
-        and evidence_quality >= 0.5
-        and composite_score >= 0.4
-    )
-    sharp_checkpoint_candidate = (
-        effective_family_diversity >= 2
-        and recurrence_state in {"thin", "timeout", "supported", "strong"}
-        and corroboration_score >= 0.22
-        and cross_source_match_score >= 0.16
-        and generalizability_score >= 0.58
-        and frequency_score >= 0.25
-        and value_support >= 0.46
-        and evidence_quality >= 0.42
-        and composite_score >= 0.31
-        and workaround_density >= 0.34
-        and cost_of_inaction >= 0.4
-        and buildability >= 0.52
-    )
-
     strict_checks: list[dict[str, Any]] = [
         {
+            "id": "decision_promote",
+            "pass": context["decision"] == "promote",
+            "actual": context["decision"],
+            "need": "promote",
+        },
+        {
             "id": "minimum_cluster_size",
-            "pass": minimum_cluster_ok,
-            "actual": {"cluster_signal_count": cluster_signal_count, "cluster_atom_count": cluster_atom_count},
+            "pass": context["minimum_cluster_ok"],
+            "actual": {
+                "cluster_signal_count": context["cluster_signal_count"],
+                "cluster_atom_count": context["cluster_atom_count"],
+            },
             "need": ">= 2 signals/atoms or >= 2 source families",
         },
         {
             "id": "generalizability_class",
-            "pass": generalizability_class == "reusable_workflow_pain",
-            "actual": generalizability_class,
+            "pass": context["generalizability_class"] == "reusable_workflow_pain",
+            "actual": context["generalizability_class"],
             "need": "reusable_workflow_pain",
         },
         {
             "id": "source_family_diversity",
-            "pass": effective_family_diversity >= 2,
-            "actual": effective_family_diversity,
+            "pass": context["effective_family_diversity"] >= 2,
+            "actual": context["effective_family_diversity"],
             "need": ">= 2",
         },
         {
-            "id": "corroboration_score",
-            "pass": corroboration_score >= 0.6,
-            "actual": round(corroboration_score, 4),
+            "id": "recurrence_state",
+            "pass": context["recurrence_state"] in {"supported", "strong"},
+            "actual": context["recurrence_state"],
+            "need": "supported/strong",
+        },
+        {
+            "id": "corroboration_score_strict",
+            "pass": context["corroboration_score"] >= 0.6,
+            "actual": round(context["corroboration_score"], 4),
             "need": ">= 0.6",
-        },
-        {
-            "id": "value_support",
-            "pass": value_support >= 0.55,
-            "actual": round(value_support, 4),
-            "need": ">= 0.55",
-        },
-        {
-            "id": "evidence_quality",
-            "pass": evidence_quality >= 0.6,
-            "actual": round(evidence_quality, 4),
-            "need": ">= 0.6",
-        },
-        {
-            "id": "composite_score",
-            "pass": composite_score >= 0.5,
-            "actual": round(composite_score, 4),
-            "need": ">= 0.5",
         },
     ]
 
-    multifamily_explore = (
-        minimum_cluster_ok
-        and
-        effective_family_diversity >= 2
-        and (exploratory_recurrence_ok or timeout_checkpoint_candidate)
-        and corroboration_score >= 0.25
-        and value_support >= 0.55
-        and evidence_quality >= 0.45
-        and composite_score >= 0.34
-    )
-    single_family_explore = (
-        minimum_cluster_ok
-        and
-        effective_family_diversity == 1
-        and exploratory_recurrence_ok
-        and corroboration_score >= 0.3
-        and value_support >= 0.5
-        and evidence_quality >= 0.49
-        and composite_score >= 0.39
-    )
+    score_language_checks: list[dict[str, Any]] = [
+        {
+            "id": "decision_score",
+            "pass": context["decision"] == "promote",
+            "actual": round(context["decision_score"], 4),
+            "need": "promote policy already cleared this threshold",
+        },
+        {
+            "id": "problem_truth_score",
+            "pass": context["problem_truth_score"] >= 0.11,
+            "actual": round(context["problem_truth_score"], 4),
+            "need": ">= 0.11",
+        },
+        {
+            "id": "revenue_readiness_score",
+            "pass": context["revenue_readiness_score"] >= 0.22,
+            "actual": round(context["revenue_readiness_score"], 4),
+            "need": ">= 0.22",
+        },
+    ]
 
     exploratory_checks: list[dict[str, Any]] = [
         {
-            "id": "exploratory_base_generalizability",
-            "pass": generalizability_class == "reusable_workflow_pain",
-            "actual": generalizability_class,
-            "need": "reusable_workflow_pain",
-        },
-        {
-            "id": "exploratory_multifamily_branch",
-            "pass": multifamily_explore,
+            "id": "multifamily_checkpoint_branch",
+            "pass": context["multifamily_checkpoint_candidate"],
             "detail": {
-                "recurrence_ok_or_timeout_checkpoint": exploratory_recurrence_ok or timeout_checkpoint_candidate,
-                "timeout_checkpoint_candidate": timeout_checkpoint_candidate,
-                "corroboration_floor": 0.25,
-                "value_support_floor": 0.55,
-                "evidence_quality_floor": 0.45,
-                "composite_floor": 0.34,
+                "decision": context["decision"],
+                "recurrence_state": context["recurrence_state"],
+                "effective_family_diversity": context["effective_family_diversity"],
+                "corroboration_score": round(context["corroboration_score"], 4),
+                "cross_source_match_score": round(context["cross_source_match_score"], 4),
+                "generalizability_score": round(context["generalizability_score"], 4),
             },
         },
         {
-            "id": "exploratory_sharp_checkpoint_branch",
-            "pass": sharp_checkpoint_candidate,
+            "id": "sharp_checkpoint_branch",
+            "pass": context["sharp_checkpoint_candidate"],
             "detail": {
-                "cross_source_match_score": round(cross_source_match_score, 4),
-                "generalizability_score": round(generalizability_score, 4),
-                "frequency_score": round(frequency_score, 4),
-                "workaround_density": round(workaround_density, 4),
-                "cost_of_inaction": round(cost_of_inaction, 4),
-                "buildability": round(buildability, 4),
-                "value_support_floor": 0.46,
-                "evidence_quality_floor": 0.42,
-                "composite_floor": 0.31,
+                "decision": context["decision"],
+                "frequency_score": round(context["frequency_score"], 4),
+                "workaround_density": round(context["workaround_density"], 4),
+                "cost_of_inaction": round(context["cost_of_inaction"], 4),
+                "buildability": round(context["buildability"], 4),
+                "cross_source_match_score": round(context["cross_source_match_score"], 4),
+                "generalizability_score": round(context["generalizability_score"], 4),
             },
         },
         {
-            "id": "exploratory_single_family_branch",
-            "pass": single_family_explore,
+            "id": "single_family_exception_branch",
+            "pass": context["single_family_checkpoint_candidate"],
             "detail": {
-                "requires_recurrence_ok_not_timeout_only": exploratory_recurrence_ok,
+                "decision": context["decision"],
+                "recurrence_state": context["recurrence_state"],
+                "effective_family_diversity": context["effective_family_diversity"],
+                "frequency_score": round(context["frequency_score"], 4),
+                "buildability": round(context["buildability"], 4),
                 "corroboration_floor": 0.3,
-                "value_support_floor": 0.5,
-                "evidence_quality_floor": 0.49,
-                "composite_floor": 0.39,
+                "requires_supported_recurrence": True,
             },
         },
     ]
@@ -1020,14 +958,27 @@ def explain_selection_gate_detail(
         "resolved_selection_status": status,
         "resolved_selection_reason": reason,
         "selection_gate": gate,
-        "recurrence_state": recurrence_state,
+        "score_language": {
+            "primary": {
+                "decision_score": round(context["decision_score"], 4),
+                "problem_truth_score": round(context["problem_truth_score"], 4),
+                "revenue_readiness_score": round(context["revenue_readiness_score"], 4),
+            },
+            "diagnostic": {
+                "composite_score": round(float(context["scorecard"].get("composite_score", 0.0) or 0.0), 4),
+                "value_support": round(float(context["scorecard"].get("value_support", 0.0) or 0.0), 4),
+                "evidence_quality": round(float(context["scorecard"].get("evidence_quality", 0.0) or 0.0), 4),
+            },
+        },
+        "recurrence_state": context["recurrence_state"],
+        "score_language_checks": score_language_checks,
         "strict_path_checks": strict_checks,
         "exploratory_path_checks": exploratory_checks,
-        "wedge_active": wedge_active,
+        "wedge_active": context["wedge_active"],
         "hints": [
-            "If decision is park/kill, prototype_candidate is never selected regardless of corroboration.",
-            "timeout + multi-family can still reach prototype_candidate via timeout_checkpoint_candidate floors.",
-            "Strict numeric gates ignore recurrence_state; timeout still adds blocked_by labels in the gate payload.",
+            "prototype_candidate is only available when the canonical decision is promote.",
+            "Selection uses canonical decision plus routing checks; composite/value/evidence remain diagnostic only.",
+            "prototype_candidate_gate is a promoted checkpoint path, not a park override.",
         ],
     }
 
@@ -1442,7 +1393,7 @@ def _prototype_gate_metadata(
     basis = "full_market_proof"
     if "prototype_candidate_single_family_exception" in gate_reasons:
         basis = "supported_single_family_workflow_pain"
-    elif "prototype_candidate_multifamily_near_miss" in gate_reasons:
+    elif "prototype_candidate_multifamily_checkpoint" in gate_reasons:
         basis = "multifamily_near_miss"
 
     evidence_assessment = evidence_payload.get("evidence_assessment") or canonical_evidence_assessment(opportunity_evaluation)

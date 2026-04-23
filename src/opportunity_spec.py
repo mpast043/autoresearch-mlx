@@ -46,8 +46,12 @@ def build_research_spec(
     evaluation_policy = opportunity_evaluation.get("policy", {}) or {}
     evaluation_selection = opportunity_evaluation.get("selection", {}) or {}
 
-    scorecard = evidence.get("opportunity_scorecard") or canonical_scorecard_snapshot(opportunity_evaluation)
-    evidence_assessment = evidence.get("evidence_assessment") or canonical_evidence_assessment(opportunity_evaluation)
+    legacy_scorecard = evidence.get("opportunity_scorecard") or {}
+    canonical_scorecard = canonical_scorecard_snapshot(opportunity_evaluation)
+    scorecard = {**legacy_scorecard, **canonical_scorecard}
+    legacy_evidence_assessment = evidence.get("evidence_assessment") or {}
+    canonical_assessment = canonical_evidence_assessment(opportunity_evaluation)
+    evidence_assessment = {**legacy_evidence_assessment, **canonical_assessment}
     selection_status = str(
         evaluation_selection.get("selection_status")
         or evidence.get("selection_status", "")
@@ -89,7 +93,7 @@ def build_research_spec(
             or "unknown"
         ),
         "market_gap": dict(evaluation_evidence.get("market_gap") or evidence.get("market_gap", {}) or {}),
-        "validation_plan": dict(evaluation_evidence.get("validation_plan", validation_plan) or {}),
+        "validation_plan": dict(evaluation_evidence.get("validation_plan") or validation_plan or {}),
         "opportunity_scorecard": scorecard,
         "evidence_assessment": evidence_assessment,
         "selection_status": selection_status,
@@ -104,9 +108,7 @@ def build_research_spec(
             or {}
         ),
         "counterevidence": list(
-            evaluation_evidence.get("counterevidence")
-            or evidence.get("counterevidence", [])
-            or []
+            evaluation_evidence.get("counterevidence") or evidence.get("counterevidence", []) or []
         ),
         "opportunity_evaluation": opportunity_evaluation,
         "source_validation": source_validation,

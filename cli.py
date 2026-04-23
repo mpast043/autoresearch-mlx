@@ -94,8 +94,6 @@ def _normalize_revalidation_notes(
     existing_notes: dict | None,
     scorecard: dict[str, float | int | str],
     cluster_summary: dict | None,
-    market_gap: dict | None,
-    counterevidence: list[dict] | None,
     scoring_version: str,
     formula_version: str,
     threshold_version: str,
@@ -109,20 +107,7 @@ def _normalize_revalidation_notes(
         normalized_cluster_summary["signal_count"] = int(scorecard.get("cluster_signal_count") or 0)
     if scorecard.get("cluster_atom_count") is not None:
         normalized_cluster_summary["atom_count"] = int(scorecard.get("cluster_atom_count") or 0)
-
-    prior_scorecard = dict(notes.get("scorecard") or {})
-    normalized_scorecard = {
-        **prior_scorecard,
-        **scorecard,
-        "scoring_version": scoring_version,
-        "formula_version": formula_version,
-        "threshold_version": threshold_version,
-    }
-
-    notes["scorecard"] = normalized_scorecard
     notes["cluster_summary"] = normalized_cluster_summary
-    notes["market_gap"] = dict(market_gap or {})
-    notes["counterevidence"] = list(counterevidence or [])
     notes["revalidation"] = {
         "recommendation": recommendation,
         "selection_status": selection_status,
@@ -778,6 +763,7 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
         CURRENT_THRESHOLD_VERSION,
         stage_decision,
     )
+    from src.opportunity_evaluation import canonical_scorecard_snapshot
     from src.research_tools import ResearchToolkit
 
     config, _ = load_runtime_config(args.config)
@@ -831,8 +817,6 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
 
             notes = opportunity.notes or {}
             cluster_summary = notes.get("cluster_summary", {}) or {}
-            market_gap = notes.get("market_gap") or {"market_gap": opportunity.market_gap}
-            counterevidence = notes.get("counterevidence", []) or []
             cluster_record = db.get_cluster_record(opportunity.cluster_id)
             cluster_signal_count = (
                 cluster_summary.get("signal_count")
@@ -897,8 +881,8 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
             else:
                 decision = stage_decision(
                     scorecard,
-                    market_gap,
-                    counterevidence,
+                    {"market_gap": opportunity.market_gap},
+                    [],
                     promotion_threshold=promote_thresh,
                     park_threshold=park_thresh,
                 )
@@ -906,9 +890,34 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
             brief = db.get_build_brief_for_opportunity(opportunity.id or 0)
             validation = db.get_validation(brief.validation_id) if brief and brief.validation_id else None
             validation_evidence = validation.evidence_dict if validation else {}
-            corroboration = validation_evidence.get("corroboration", {}) or {}
-            if not corroboration:
-                corroboration = notes.get("corroboration", {}) or {}
+            canonical_evaluation = (
+                validation_evidence.get("opportunity_evaluation")
+                if isinstance(validation_evidence.get("opportunity_evaluation"), dict)
+                else {}
+            )
+            canonical_inputs = canonical_evaluation.get("inputs", {}) or {}
+            canonical_evidence = canonical_evaluation.get("evidence", {}) or {}
+            canonical_scorecard = canonical_scorecard_snapshot(canonical_evaluation)
+            if canonical_scorecard:
+                scorecard.update(
+                    {
+                        key: value
+                        for key, value in canonical_scorecard.items()
+                        if key in scorecard
+                    }
+                )
+
+            market_gap = (
+                canonical_evidence.get("market_gap")
+                or validation_evidence.get("market_gap")
+                or {"market_gap": opportunity.market_gap}
+            )
+            counterevidence = (
+                canonical_evidence.get("counterevidence")
+                or validation_evidence.get("counterevidence")
+                or []
+            )
+            corroboration = canonical_inputs.get("corroboration", {}) or validation_evidence.get("corroboration", {}) or {}
             # Also check latest corroboration record from DB — it may have
             # been updated after the opportunity was first validated.
             if not corroboration and cluster_atoms:
@@ -922,24 +931,32 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
                         corroboration = _json.loads(latest_cor[0])
                     except Exception:
                         pass
-            market_enrichment = validation_evidence.get("market_enrichment", {}) or {}
-            if not market_enrichment:
-                market_enrichment = notes.get("market_enrichment", {}) or {}
+            market_enrichment = canonical_inputs.get("market_enrichment", {}) or validation_evidence.get("market_enrichment", {}) or {}
 
-            if validation or corroboration:
+            if not low_quality_web_cluster:
+                decision = stage_decision(
+                    scorecard,
+                    market_gap,
+                    counterevidence,
+                    promotion_threshold=promote_thresh,
+                    park_threshold=park_thresh,
+                )
+
+            if validation or corroboration or market_enrichment or canonical_evaluation:
                 selection_status, selection_reason, _ = determine_selection_state(
                     decision=decision["recommendation"],
                     scorecard=scorecard,
                     corroboration=corroboration,
                     market_enrichment=market_enrichment,
+                    opportunity_evaluation=canonical_evaluation or None,
                 )
             else:
                 selection_status = (
                     "archive"
                     if decision["recommendation"] == "kill"
-                    else ("prototype_candidate" if decision["recommendation"] == "promote" else "research_more")
+                    else "research_more"
                 )
-                selection_reason = "revalidated_without_full_validation_context"
+                selection_reason = "revalidated_missing_selection_inputs"
 
             if low_quality_web_cluster:
                 selection_status = "archive"
@@ -963,8 +980,6 @@ async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None
                 existing_notes=notes,
                 scorecard=scorecard,
                 cluster_summary=cluster_summary,
-                market_gap=market_gap,
-                counterevidence=counterevidence,
                 scoring_version=CURRENT_SCORING_VERSION,
                 formula_version=CURRENT_FORMULA_VERSION,
                 threshold_version=CURRENT_THRESHOLD_VERSION,
@@ -1800,7 +1815,9 @@ async def main() -> None:
             statuses = ["build_ready", "prototype_candidate", "prototype_ready"]
             placeholders = ",".join("?" * len(statuses))
             _rows = _conn.execute(
-                f"SELECT id FROM opportunities WHERE selection_status IN ({placeholders}) ORDER BY composite_score DESC",
+                f"""SELECT id FROM opportunities
+                    WHERE selection_status IN ({placeholders})
+                    ORDER BY decision_score DESC, problem_truth_score DESC, revenue_readiness_score DESC""",
                 statuses,
             ).fetchall()
             _conn.close()

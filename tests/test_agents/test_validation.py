@@ -171,6 +171,9 @@ def test_process_validation_message_sends_orchestrator_result(temp_db):
     assert "corroboration" not in (validation.evidence or {})
     assert "market_enrichment" not in (validation.evidence or {})
     assert "review_feedback" not in (validation.evidence or {})
+    opportunity = temp_db.get_opportunity(result["opportunity_id"])
+    assert opportunity is not None
+    assert opportunity.notes == {"cluster_summary": opportunity.notes.get("cluster_summary", {})}
 
     queued = asyncio.run(queue.get_for_agent("orchestrator"))
     assert queued is not None

@@ -495,7 +495,7 @@ def _build_wedge_query(db: Database) -> str:
         LEFT JOIN problem_atoms pa ON {atom_cluster_expr} = {cluster_key_expr}
         LEFT JOIN raw_signals rs ON rs.id = {raw_signal_expr}
         WHERE o.status IN ('promoted', 'active')
-            AND (o.decision_score > 0 OR o.composite_score > 0)
+            AND o.decision_score > 0
         ORDER BY o.decision_score DESC, o.problem_truth_score DESC
         LIMIT 500
     """
@@ -585,8 +585,8 @@ def validate_candidate(candidate: WedgeCandidate) -> tuple[bool, str]:
     """
     candidate.current_stage = "validation"
 
-    # Gate 1: Must have passed validation (decision_score > 0 or promoted status)
-    if candidate.decision_score <= 0 and candidate.composite_score <= 0:
+    # Gate 1: Must have passed the canonical decision-score path
+    if candidate.decision_score <= 0:
         return False, "no_validation_score"
 
     # Gate 2: Minimum problem truth score

@@ -62,6 +62,8 @@ def test_explain_validation_evidence_prefers_canonical_snapshot():
     assert detail["canonical_evaluation"]["decision"] == "promote"
     assert detail["canonical_evaluation"]["selection_status"] == "prototype_candidate"
     assert detail["canonical_evaluation"]["build_prep_route"] == "prototype_candidate"
+    assert detail["selection_gate"]["score_language"]["primary"]["decision_score"] == 0.31
+    assert detail["selection_gate"]["score_language"]["diagnostic"]["composite_score"] == 0.27
     assert detail["stage_decision"]["decision"]["recommendation"] in {"park", "promote", "kill"}
 
 
