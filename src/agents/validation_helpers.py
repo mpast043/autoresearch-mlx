@@ -284,9 +284,6 @@ def build_evidence_payload(
         "opportunity_id": opportunity_id,
         "experiment_id": experiment_id,
         "validation_plan": validation_plan,
-        "selection_status": selection_status,
-        "selection_reason": selection_reason,
-        "selection_gate": selection_gate,
         "opportunity_evaluation": evaluation,
         "high_leverage": high_leverage or {},
     }
