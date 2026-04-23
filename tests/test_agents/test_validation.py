@@ -157,6 +157,8 @@ def test_process_validation_message_sends_orchestrator_result(temp_db):
     assert evaluation["inputs"]["ids"]["validation_id"] == result["validation_id"]
     assert evaluation["policy"]["decision"] == result["decision"]
     assert evaluation["selection"]["selection_status"] == result["selection_status"]
+    assert "opportunity_scorecard" not in (validation.evidence or {})
+    assert "evidence_assessment" not in (validation.evidence or {})
 
     queued = asyncio.run(queue.get_for_agent("orchestrator"))
     assert queued is not None
@@ -254,3 +256,5 @@ def test_validation_persists_recurrence_runtime_fields_for_reporting(temp_db):
     assert evaluation["schema_version"] == "opportunity_evaluation_v1"
     assert evaluation["inputs"]["atom"]["trigger_event"] == ""
     assert evaluation["selection"]["build_prep_route"] in {"none", "spec_draft", "prototype_candidate"}
+    assert "opportunity_scorecard" not in (validation.evidence or {})
+    assert "evidence_assessment" not in (validation.evidence or {})

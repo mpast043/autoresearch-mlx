@@ -269,14 +269,6 @@ def build_evidence_payload(
         },
         "market_gap_state": market_gap["market_gap"],
         "market_gap": market_gap,
-        "opportunity_scorecard": scorecard,
-        "evidence_assessment": {
-            "problem_plausibility": scorecard.get("problem_plausibility", 0.0),
-            "evidence_sufficiency": scorecard.get("evidence_sufficiency", 0.0),
-            "value_support": scorecard.get("value_support", 0.0),
-            "composite_score": scorecard.get("composite_score", 0.0),
-            "evidence_quality": cluster.evidence_quality,
-        },
         "corroboration": corroboration,
         "market_enrichment": market_enrichment,
         "review_feedback": {
