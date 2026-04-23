@@ -1,6 +1,16 @@
 # Scoring and gates
 
-This pipeline applies **several independent layers**. A finding can pass one layer and still fail another.
+This branch is moving the repo away from "many competing score blobs" and toward
+one canonical post-validation snapshot: `OpportunityEvaluationV1`.
+
+There are still multiple gates in the pipeline, but after validation they should
+be read as:
+
+`raw inputs -> canonical evaluation -> policy -> selection/build-prep routing`
+
+So a finding can still pass one layer and fail another, but the downstream
+layers should now consume the same evaluated snapshot instead of rebuilding
+their own partial truth.
 
 ## 1) Discovery candidate filter
 
@@ -8,19 +18,36 @@ Configured under `discovery.candidate_filter` (see `config.yaml`). Used when dec
 
 ## 2) Evidence / `validate_problem` scores
 
-`ResearchToolkit.validate_problem` produces `problem_score`, `feasibility_score`, `value_score`, etc. These feed into `score_opportunity` → **composite_score**, `evidence_quality`, `value_support`, `problem_plausibility`, …
+`ResearchToolkit.validate_problem` produces `problem_score`, `feasibility_score`,
+`value_score`, etc. These feed into `score_opportunity` and become the reusable
+measures written into `OpportunityEvaluationV1`.
+
+The current canonical snapshot still carries legacy transition fields such as
+`composite_score`, `problem_plausibility`, and `evidence_sufficiency`, but they
+now live alongside the newer decision language rather than in a separate store.
 
 ## 3) `stage_decision` (promote / park / kill)
 
 Implemented in `src/opportunity_engine.py` (`stage_decision`).
 
-- **Kill** (“hard kill”) if the market is already solved, counterevidence is overwhelming, or weak composite + plausibility + sufficiency, etc.
-- **Promote** only if **all** hold:
-  - `composite_score` (± review biases) ≥ **promotion_threshold**
-  - `problem_plausibility` ≥ 0.6
-  - `evidence_quality` ≥ 0.55
-  - supported counterevidence hits ≤ 1
-  - `value_support` ≥ 0.58
+Current runtime behavior is the newer v4 path:
+
+- primary promote language:
+  - `decision_score`
+  - `problem_truth_score`
+  - `revenue_readiness_score`
+- supporting floors:
+  - `frequency_score`
+  - evidence / value / counterevidence checks
+
+`stage_decision` is still implemented in `src/opportunity_engine.py`, but the
+result is now written into `OpportunityEvaluationV1.policy.*` so downstream
+consumers do not need to recompute it.
+
+- **Kill** on hard-kill conditions such as overwhelming counterevidence,
+  extremely weak problem truth, or obviously dead opportunity shape.
+- **Promote** when the decision path clears the decision score and support
+  floors.
 - Otherwise **park** with a subreason (`park_recurrence`, `park_value`, …).
 
 ### Promotion / park thresholds in config
@@ -36,9 +63,44 @@ The repo `config.yaml` uses (3) — `validation.promotion_threshold` and `valida
 
 ## 4) Build-prep selection (`prototype_candidate` vs `research_more`)
 
-Implemented in `src/build_prep.py` (`determine_selection_state`). Uses **corroboration** (families, `corroboration_score`, `generalizability_class`, `recurrence_state`) plus scorecard fields. Can admit **exploratory** `prototype_candidate` when strict gates miss but “near-miss” thresholds pass.
+Implemented in `src/build_prep.py` (`determine_selection_state`).
 
-**Important:** If `stage_decision` returns **park** or **kill**, you will not get `validated_selection_gate` from promotion — selection uses the recommendation string; kills map to `archive`.
+Selection is stricter than promote/park/kill, but it should now be understood
+as a **policy layer on top of the canonical evaluation**, not a second
+independent scorer.
+
+It reads:
+
+- canonical policy decision (`promote` / `park` / `kill`)
+- corroboration structure (`source_family_diversity`, `corroboration_score`,
+  `generalizability_class`, `recurrence_state`, `cross_source_match_score`)
+- canonical measures (`evidence_quality`, `value_support`, `frequency_score`,
+  `buildability`, `cost_of_inaction`, `workaround_density`)
+
+It can still admit exploratory `prototype_candidate` cases when strict gates
+miss but explicit near-miss rules pass.
+
+**Important:** `kill -> archive` remains a hard mapping. `promote` can still
+resolve to either `prototype_candidate` or `research_more` depending on explicit
+selection checks.
+
+## Canonical evaluation snapshot
+
+The canonical post-validation store now lives at:
+
+`validations.evidence["opportunity_evaluation"]`
+
+It owns these top-level groups:
+
+- `inputs`
+- `measures`
+- `evidence`
+- `policy`
+- `selection`
+- `shadow`
+
+Downstream artifact builders such as build briefs and research specs should
+prefer this snapshot over reconstructing evaluation facts from scattered fields.
 
 ## `run_once` completion
 
@@ -55,19 +117,32 @@ python cli.py gate-diagnostics --finding-id 42 --limit 5
 
 # Specific run:
 python cli.py gate-diagnostics --run-id <run_id> --limit 20
+
+# Shadow comparison report:
+python cli.py scoring-report --limit 20
+
+# Canonical backfill (dry run by default):
+python cli.py backfill-evaluations --limit 5000
+
+# Apply canonical backfill:
+python cli.py backfill-evaluations --limit 5000 --apply
 ```
 
 Output includes:
 
 - Effective **promotion_threshold** / **park_threshold**
-- `stage_decision` diagnostics (`diagnose_stage_decision`): which promotion floors failed, hard-kill reasons
-- `selection_gate` (`explain_selection_gate_detail`): strict vs exploratory checks
+- `canonical_evaluation`: stored decision/selection snapshot when available
+- `stage_decision` diagnostics (`diagnose_stage_decision`): which promotion
+  floors failed, hard-kill reasons
+- `selection_gate` (`explain_selection_gate_detail`): strict vs exploratory
+  checks from the canonical evaluation when present
 
 Programmatic helpers:
 
 - `opportunity_engine.diagnose_stage_decision`
 - `build_prep.explain_selection_gate_detail`
 - `gate_diagnostics.explain_validation_evidence`
+- `opportunity_evaluation_report.build_shadow_scoring_report`
 
 ## `summary_counts` semantics
 
