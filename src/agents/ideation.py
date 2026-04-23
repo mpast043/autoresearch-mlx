@@ -51,22 +51,34 @@ class IdeationAgent(BaseAgent):
             return {"success": False, "reason": "missing validation context"}
 
         evidence = validation.evidence_dict
+        opportunity_evaluation = evidence.get("opportunity_evaluation")
+        if not isinstance(opportunity_evaluation, dict):
+            opportunity_evaluation = {}
+        evaluation_evidence = opportunity_evaluation.get("evidence", {}) or {}
         cluster = evidence.get("cluster", {})
         scorecard = evidence.get("opportunity_scorecard") or canonical_scorecard_snapshot(
-            evidence.get("opportunity_evaluation")
+            opportunity_evaluation
         )
         experiment_id = evidence.get("experiment_id")
         experiment_rows = []
         if experiment_id and hasattr(self.db, "get_experiments"):
             experiment_rows = self.db.get_experiments(opportunity_id=payload.get("opportunity_id"))
         experiment = experiment_rows[0] if experiment_rows else None
-        validation_plan = experiment.plan if experiment else evidence.get("validation_plan", {})
+        validation_plan = (
+            experiment.plan
+            if experiment
+            else dict(evaluation_evidence.get("validation_plan") or evidence.get("validation_plan", {}) or {})
+        )
 
         title, description, product_type, audience, monetization, features = await self._generate_idea_fields(
             finding=finding,
             cluster=cluster,
             scorecard=scorecard,
-            market_gap_state=evidence.get("market_gap_state", "unknown"),
+            market_gap_state=str(
+                evaluation_evidence.get("market_gap_state")
+                or evidence.get("market_gap_state", "unknown")
+                or "unknown"
+            ),
             experiment=experiment,
             evidence=evidence,
         )
@@ -180,12 +192,21 @@ class IdeationAgent(BaseAgent):
             )
             if llm_result:
                 return llm_result
+        opportunity_evaluation = evidence.get("opportunity_evaluation")
+        if not isinstance(opportunity_evaluation, dict):
+            opportunity_evaluation = {}
+        evaluation_evidence = opportunity_evaluation.get("evidence", {}) or {}
         return self._idea_from_validation(
             finding=finding,
             cluster=cluster,
             scorecard=scorecard,
             market_gap_state=market_gap_state,
             experiment=experiment,
+            validation_plan=dict(
+                evaluation_evidence.get("validation_plan")
+                or evidence.get("validation_plan", {})
+                or {}
+            ),
         )
 
     async def _llm_generate_idea(
@@ -205,7 +226,17 @@ class IdeationAgent(BaseAgent):
         cluster_label = cluster.get("label") or finding.product_built or "Opportunity"
         scores = evidence.get("scores", {})
         validation_plan = experiment.plan if experiment else {}
-        counterevidence = evidence.get("counterevidence", [])
+        opportunity_evaluation = evidence.get("opportunity_evaluation")
+        if not isinstance(opportunity_evaluation, dict):
+            opportunity_evaluation = {}
+        evaluation_evidence = opportunity_evaluation.get("evidence", {}) or {}
+        if not validation_plan:
+            validation_plan = dict(evaluation_evidence.get("validation_plan") or evidence.get("validation_plan", {}) or {})
+        counterevidence = list(
+            evaluation_evidence.get("counterevidence")
+            or evidence.get("counterevidence", [])
+            or []
+        )
 
         system_prompt = (
             "You are a product ideation analyst. Given evidence about a validated problem, "
@@ -262,11 +293,12 @@ class IdeationAgent(BaseAgent):
         scorecard: Dict[str, Any],
         market_gap_state: str,
         experiment,
+        validation_plan: Dict[str, Any] | None = None,
     ) -> tuple[str, str, str, str, str, list[str]]:
         cluster_label = cluster.get("label") or finding.product_built or "Opportunity"
         product_title = f"{cluster_label[:44].strip()} Brief"
         audience = cluster.get("summary", {}).get("segment", "") or "operators dealing with repeated workflow pain"
-        validation_plan = experiment.plan if experiment else {}
+        validation_plan = dict(validation_plan or (experiment.plan if experiment else {}) or {})
         description = (
             f"Research brief for the opportunity around '{finding.product_built or cluster_label}'. "
             f"Market state: {market_gap_state}. Next falsifiable test: "

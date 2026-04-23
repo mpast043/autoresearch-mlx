@@ -86,8 +86,9 @@ def _extract_shadow_row(row: dict[str, Any]) -> dict[str, Any] | None:
         shadow_diagnostics = dict(shadow_block.get("comparison_diagnostics", {}) or {})
         shadow_origin = "canonical_snapshot"
     else:
-        corroboration = evidence.get("corroboration", {}) or {}
-        market_enrichment = evidence.get("market_enrichment", {}) or {}
+        evaluation_inputs = evaluation.get("inputs", {}) or {}
+        corroboration = evidence.get("corroboration", {}) or evaluation_inputs.get("corroboration", {}) or {}
+        market_enrichment = evidence.get("market_enrichment", {}) or evaluation_inputs.get("market_enrichment", {}) or {}
         has_inputs = bool(legacy_scorecard or corroboration or market_enrichment)
         if not has_inputs:
             return None

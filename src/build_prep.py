@@ -1514,7 +1514,11 @@ def build_brief_payload(
     resolved_selection_gate = dict(
         evaluation_selection.get("selection_checks") or selection_gate or {}
     )
-    counterevidence = evidence_payload.get("counterevidence", []) or []
+    counterevidence = list(
+        evaluation_evidence.get("counterevidence")
+        or evidence_payload.get("counterevidence", [])
+        or []
+    )
     open_questions = [
         item.get("summary", "")
         for item in counterevidence

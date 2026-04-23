@@ -561,7 +561,6 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "summary": {"problem_statement": "ops teams are stuck in spreadsheet handoff chaos"},
                 "queries_executed": ['"spreadsheet workaround" "small business"'],
                 "recurrence_budget_profile": {"query_limit": 3, "subreddit_limit": 2},
-                "counterevidence": [{"status": "supported", "summary": "Need broader buyer proof"}],
                 "opportunity_evaluation": {
                     "schema_version": "opportunity_evaluation_v1",
                     "measures": {
@@ -573,6 +572,9 @@ class TestBuildPrepHelpers(unittest.TestCase):
                             "problem_plausibility": 0.61,
                             "composite_score": 0.4102,
                         },
+                    },
+                    "evidence": {
+                        "counterevidence": [{"status": "supported", "summary": "Need broader buyer proof"}],
                     },
                 },
             },
@@ -594,6 +596,7 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertEqual(evidence_strength["value_support"], 0.5164)
         self.assertEqual(evidence_strength["problem_plausibility"], 0.61)
         self.assertEqual(evidence_strength["composite_score"], 0.4102)
+        self.assertIn("Need broader buyer proof", payload["open_questions_risks"])
 
     def test_downstream_consumer_preserves_certainty_boundary(self):
         validated_payload = build_brief_payload(

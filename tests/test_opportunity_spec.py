@@ -25,6 +25,7 @@ def test_build_research_spec_preserves_validation_contract():
             "inputs": {"validation": {"overall_score": 0.81}},
             "evidence": {
                 "market_gap_state": "underserved_edge_case",
+                "market_gap": {"market_gap": "underserved_edge_case", "solution_gap_score": 0.73},
                 "validation_plan": {"test_type": "workflow_walkthrough"},
                 "counterevidence": [{"claim": "rare", "status": "contradicted"}],
             },
@@ -60,6 +61,7 @@ def test_build_research_spec_preserves_validation_contract():
     assert spec["opportunity_scorecard"]["decision_score"] == 0.42
     assert spec["opportunity_evaluation"]["schema_version"] == "opportunity_evaluation_v1"
     assert spec["market_gap_state"] == "underserved_edge_case"
+    assert spec["market_gap"]["solution_gap_score"] == 0.73
     assert spec["validation_plan"]["test_type"] == "workflow_walkthrough"
     assert spec["selection_status"] == "prototype_candidate"
     assert spec["selection_gate"]["eligible"] is True

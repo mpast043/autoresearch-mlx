@@ -181,6 +181,7 @@ def test_backfill_opportunity_evaluations_reconstructs_and_writes_snapshot():
         assert evaluation["policy"]["decision"] == "promote"
         assert evaluation["selection"]["selection_status"] == "prototype_candidate"
         assert evaluation["selection"]["build_prep_route"] == "prototype_candidate"
+        assert evaluation["evidence"]["market_gap"]["market_gap"] == "needs_more_recurrence_evidence"
         assert metadata["status"] == "reconstructable"
         assert metadata["sources_used"]["measures"] == "opportunities"
     finally:

@@ -47,7 +47,11 @@ def test_explain_validation_evidence_prefers_canonical_snapshot():
                 "corroboration": {"source_family_diversity": 2, "generalizability_class": "reusable_workflow_pain"},
                 "market_enrichment": {"wedge_active": True},
             },
-            "evidence": {"market_gap_state": "needs_more_recurrence_evidence"},
+            "evidence": {
+                "market_gap_state": "needs_more_recurrence_evidence",
+                "market_gap": {"market_gap": "needs_more_recurrence_evidence", "solution_gap_score": 0.58},
+                "counterevidence": [{"claim": "rare", "status": "contradicted"}],
+            },
             "shadow": {"shadow_score_v2_lite": 0.49},
         },
     }
@@ -86,7 +90,11 @@ class _FakeDB:
                             "transition": {"composite_score": 0.27},
                         },
                         "inputs": {"corroboration": {}, "market_enrichment": {}},
-                        "evidence": {"market_gap_state": "needs_more_recurrence_evidence"},
+                        "evidence": {
+                            "market_gap_state": "needs_more_recurrence_evidence",
+                            "market_gap": {"market_gap": "needs_more_recurrence_evidence", "solution_gap_score": 0.58},
+                            "counterevidence": [{"claim": "rare", "status": "contradicted"}],
+                        },
                         "shadow": {"shadow_score_v2_lite": 0.49},
                     },
                 },

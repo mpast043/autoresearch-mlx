@@ -288,6 +288,7 @@ def build_opportunity_evaluation(
         },
         "evidence": {
             "market_gap_state": evidence.get("market_gap_state", "unknown"),
+            "market_gap": dict(evidence.get("market_gap", {}) or {}),
             "recurrence_state": evidence.get("recurrence_state", ""),
             "family_confirmation_count": int(evidence.get("family_confirmation_count", 0) or 0),
             "source_family_diversity": int(corroboration_inputs.get("source_family_diversity", 0) or 0),

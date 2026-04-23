@@ -54,14 +54,6 @@ def test_ideation_generates_research_brief_with_db_validation_accessor(temp_db: 
                 "cluster": {"label": "Stripe/QBO drift", "summary": {"segment": "finance operations"}},
                 "opportunity_scorecard": {"total_score": 0.72, "decision": "promote"},
                 "scores": {"feasibility_score": 0.61},
-                "market_gap_state": "underserved",
-                "market_gap": {"market_gap": "underserved", "solution_gap_score": 0.72},
-                "selection_status": "prototype_candidate",
-                "selection_reason": "validated_selection_gate",
-                "selection_gate": {"eligible": True, "reasons": ["multi_family_support"], "blocked_by": []},
-                "counterevidence": [
-                    {"claim": "The pain is rare or isolated.", "status": "contradicted", "summary": "Frequency score 0.72 clears the recurrence bar."}
-                ],
                 "opportunity_evaluation": {
                     "schema_version": "opportunity_evaluation_v1",
                     "policy": {"decision": "promote", "decision_reason": "validated_selection_gate"},
@@ -72,6 +64,7 @@ def test_ideation_generates_research_brief_with_db_validation_accessor(temp_db: 
                     },
                     "evidence": {
                         "market_gap_state": "underserved",
+                        "market_gap": {"market_gap": "underserved", "solution_gap_score": 0.72},
                         "validation_plan": {"test_type": "workflow_walkthrough"},
                         "counterevidence": [
                             {

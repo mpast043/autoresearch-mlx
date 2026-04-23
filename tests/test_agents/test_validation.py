@@ -164,6 +164,13 @@ def test_process_validation_message_sends_orchestrator_result(temp_db):
     assert "selection_gate" not in (validation.evidence or {})
     assert "decision" not in (validation.evidence or {})
     assert "decision_reason" not in (validation.evidence or {})
+    assert "market_gap_state" not in (validation.evidence or {})
+    assert "market_gap" not in (validation.evidence or {})
+    assert "counterevidence" not in (validation.evidence or {})
+    assert "validation_plan" not in (validation.evidence or {})
+    assert "corroboration" not in (validation.evidence or {})
+    assert "market_enrichment" not in (validation.evidence or {})
+    assert "review_feedback" not in (validation.evidence or {})
 
     queued = asyncio.run(queue.get_for_agent("orchestrator"))
     assert queued is not None

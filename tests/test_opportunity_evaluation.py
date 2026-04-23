@@ -76,6 +76,7 @@ def test_build_opportunity_evaluation_enforces_contract_boundaries():
         },
         evidence={
             "market_gap_state": "needs_more_recurrence_evidence",
+            "market_gap": {"market_gap": "needs_more_recurrence_evidence", "solution_gap_score": 0.62},
             "recurrence_state": "supported",
             "family_confirmation_count": 2,
             "counterevidence": [{"claim": "rare", "status": "contradicted"}],
@@ -102,6 +103,7 @@ def test_build_opportunity_evaluation_enforces_contract_boundaries():
     assert evaluation["measures"]["dimensions"]["segment_concentration"] == 0.52
     assert evaluation["measures"]["transition"]["composite_score"] == 0.22
     assert evaluation["evidence"]["market_gap_state"] == "needs_more_recurrence_evidence"
+    assert evaluation["evidence"]["market_gap"]["solution_gap_score"] == 0.62
     assert evaluation["policy"]["policy_checks"]["promotion_threshold"] == 0.25
     assert evaluation["selection"]["build_prep_eligible"] is True
     assert evaluation["selection"]["build_prep_route"] == "spec_draft"

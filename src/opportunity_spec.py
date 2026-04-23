@@ -88,7 +88,7 @@ def build_research_spec(
             or evidence.get("market_gap_state", "unknown")
             or "unknown"
         ),
-        "market_gap": evidence.get("market_gap", {}),
+        "market_gap": dict(evaluation_evidence.get("market_gap") or evidence.get("market_gap", {}) or {}),
         "validation_plan": dict(evaluation_evidence.get("validation_plan", validation_plan) or {}),
         "opportunity_scorecard": scorecard,
         "evidence_assessment": evidence_assessment,

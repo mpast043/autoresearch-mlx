@@ -12,10 +12,14 @@ from src.validation_thresholds import resolve_promotion_park_thresholds
 
 def _review_feedback_for_engine(evidence: dict[str, Any]) -> dict[str, Any]:
     """Map validation evidence.review_feedback into stage_decision review_feedback shape."""
-    rf = evidence.get("review_feedback") or {}
+    evaluation = evidence.get("opportunity_evaluation")
+    canonical_feedback = {}
+    if isinstance(evaluation, dict):
+        canonical_feedback = ((evaluation.get("inputs", {}) or {}).get("review_feedback", {}) or {})
+    rf = evidence.get("review_feedback") or canonical_feedback or {}
     return {
-        "park_bias": float(rf.get("review_feedback_park_bias", 0.0) or 0.0),
-        "kill_bias": float(rf.get("review_feedback_kill_bias", 0.0) or 0.0),
+        "park_bias": float(rf.get("review_feedback_park_bias", rf.get("park_bias", 0.0)) or 0.0),
+        "kill_bias": float(rf.get("review_feedback_kill_bias", rf.get("kill_bias", 0.0)) or 0.0),
     }
 
 
@@ -78,12 +82,17 @@ def explain_validation_evidence(evidence: dict[str, Any], config: dict[str, Any]
     cfg = config or {}
     promote, park = resolve_promotion_park_thresholds(cfg)
     canonical = _canonical_snapshot(evidence)
+    canonical_evidence = (
+        ((canonical.get("evaluation") or {}).get("evidence", {}) or {})
+        if canonical.get("available")
+        else {}
+    )
 
     scorecard = evidence.get("opportunity_scorecard") or (
         _scorecard_from_canonical(canonical) if canonical["available"] else {}
     )
-    market_gap = evidence.get("market_gap") or {}
-    counterevidence = evidence.get("counterevidence") or []
+    market_gap = evidence.get("market_gap") or canonical_evidence.get("market_gap") or {}
+    counterevidence = evidence.get("counterevidence") or canonical_evidence.get("counterevidence") or []
     review_fb = _review_feedback_for_engine(evidence)
 
     stage_diag = diagnose_stage_decision(

@@ -310,6 +310,8 @@ def build_backfilled_opportunity_evaluation(
     market_gap_state = str(evidence.get("market_gap_state") or market_gap.get("market_gap") or "")
     if market_gap_state:
         sources_used["evidence.market_gap_state"] = "validations.evidence" if evidence.get("market_gap_state") else "opportunities"
+    if market_gap:
+        sources_used["evidence.market_gap"] = "validations.evidence" if evidence.get("market_gap") else "opportunities"
 
     counterevidence = _coerce_list(evidence.get("counterevidence"))
     if not counterevidence and opportunity is not None:
@@ -329,6 +331,7 @@ def build_backfilled_opportunity_evaluation(
     recurrence_state = str(evidence.get("recurrence_state") or corroboration_inputs.get("recurrence_state", "") or "")
     evidence_block = {
         "market_gap_state": market_gap_state or "unknown",
+        "market_gap": market_gap,
         "recurrence_state": recurrence_state,
         "family_confirmation_count": family_confirmation_count,
         "counterevidence": counterevidence,

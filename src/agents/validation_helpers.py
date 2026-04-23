@@ -44,6 +44,7 @@ def build_canonical_opportunity_evaluation(
     """Build the canonical evaluation snapshot from current validation state."""
     evaluation_evidence = {
         "market_gap_state": market_gap["market_gap"],
+        "market_gap": dict(market_gap or {}),
         "recurrence_state": evidence_scores["evidence"].get("recurrence_state"),
         "family_confirmation_count": evidence_scores["evidence"].get("family_confirmation_count", 0),
         "counterevidence": counterevidence,
@@ -265,23 +266,8 @@ def build_evidence_payload(
             "signal_count": cluster.signal_count,
             "evidence_quality": cluster.evidence_quality,
         },
-        "market_gap_state": market_gap["market_gap"],
-        "market_gap": market_gap,
-        "corroboration": corroboration,
-        "market_enrichment": market_enrichment,
-        "review_feedback": {
-            "review_feedback_count": review_feedback.get("count", 0),
-            "review_feedback_labels": review_feedback.get("labels", []),
-            "review_feedback_strongest_label": review_feedback.get("strongest_label", ""),
-            "review_feedback_strongest_count": review_feedback.get("strongest_count", 0),
-            "review_feedback_consistency": review_feedback.get("consistency", 0.0),
-            "review_feedback_park_bias": review_feedback.get("park_bias", 0.0),
-            "review_feedback_kill_bias": review_feedback.get("kill_bias", 0.0),
-        },
-        "counterevidence": counterevidence,
         "opportunity_id": opportunity_id,
         "experiment_id": experiment_id,
-        "validation_plan": validation_plan,
         "opportunity_evaluation": evaluation,
         "high_leverage": high_leverage or {},
     }
