@@ -2259,6 +2259,15 @@ class Database:
     def upsert_validation(self, validation: Validation) -> int:
         return self.insert_validation(validation)
 
+    def update_validation_evidence(self, validation_id: int, evidence: dict[str, Any]) -> None:
+        conn = self._get_connection()
+        conn.execute(
+            "UPDATE validations SET evidence = ?, validated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (_json_dumps(evidence or {}), validation_id),
+        )
+        if not getattr(self._local, "batch_depth", 0):
+            self._commit(conn)
+
     def get_validation(self, validation_id: int) -> Optional[Validation]:
         conn = self._get_connection()
         row = conn.execute("SELECT * FROM validations WHERE id = ?", (validation_id,)).fetchone()
@@ -2296,23 +2305,47 @@ class Database:
         return results
 
     def list_validation_evidence_payloads(
-        self, *, run_id: Optional[str] = None, limit: int = 50
+        self, *, run_id: Optional[str] = None, limit: int = 50, all_runs: bool = False
     ) -> list[dict[str, Any]]:
         """Return parsed validation evidence JSON for gate diagnostics (``gate-diagnostics`` CLI)."""
         conn = self._get_connection()
-        rid = run_id or self.get_latest_run_id()
-        if not rid:
-            return []
-        rows = conn.execute(
-            """
-            SELECT id AS validation_id, finding_id, evidence
-            FROM validations
-            WHERE run_id = ?
-            ORDER BY validated_at DESC, id DESC
-            LIMIT ?
-            """,
-            (rid, limit),
-        ).fetchall()
+        rid = (run_id or "").strip()
+        if rid:
+            rows = conn.execute(
+                """
+                SELECT id AS validation_id, finding_id, run_id, evidence
+                FROM validations
+                WHERE run_id = ?
+                ORDER BY validated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (rid, limit),
+            ).fetchall()
+        else:
+            if not all_runs:
+                rid = self.get_latest_run_id()
+                if not rid:
+                    return []
+                rows = conn.execute(
+                    """
+                    SELECT id AS validation_id, finding_id, run_id, evidence
+                    FROM validations
+                    WHERE run_id = ?
+                    ORDER BY validated_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (rid, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id AS validation_id, finding_id, run_id, evidence
+                    FROM validations
+                    ORDER BY validated_at DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
         results: list[dict[str, Any]] = []
         for row in rows:
             evidence = _json_loads(row["evidence"], {})
@@ -2320,6 +2353,7 @@ class Database:
                 {
                     "validation_id": int(row["validation_id"]),
                     "finding_id": int(row["finding_id"]),
+                    "run_id": str(row["run_id"] or ""),
                     "evidence": evidence,
                 }
             )
@@ -2595,6 +2629,15 @@ class Database:
         row = conn.execute(
             "SELECT * FROM market_enrichments WHERE run_id = ? AND finding_id = ? ORDER BY id DESC LIMIT 1",
             (rid, finding_id),
+        ).fetchone()
+        return MarketEnrichment(**dict(row)) if row else None
+
+    def get_latest_market_enrichment(self, finding_id: int) -> Optional[MarketEnrichment]:
+        """Return the most recent market enrichment for a finding across all runs."""
+        conn = self._get_connection()
+        row = conn.execute(
+            "SELECT * FROM market_enrichments WHERE finding_id = ? ORDER BY updated_at DESC LIMIT 1",
+            (finding_id,),
         ).fetchone()
         return MarketEnrichment(**dict(row)) if row else None
 

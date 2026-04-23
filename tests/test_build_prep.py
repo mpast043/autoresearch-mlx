@@ -159,6 +159,63 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertTrue(gate["eligible"])
         self.assertIn("validation_recommended_promote", gate["reasons"])
 
+    def test_selection_gate_can_resolve_from_canonical_evaluation_snapshot(self):
+        status, reason, gate = determine_selection_state(
+            decision="park",
+            scorecard={},
+            corroboration={},
+            market_enrichment={},
+            opportunity_evaluation={
+                "schema_version": "opportunity_evaluation_v1",
+                "inputs": {
+                    "validation": {
+                        "cluster_signal_count": 2,
+                        "cluster_atom_count": 2,
+                    },
+                    "corroboration": {
+                        "corroboration_score": 0.48,
+                        "source_family_diversity": 2,
+                        "cluster_source_family_diversity": 2,
+                        "generalizability_class": "reusable_workflow_pain",
+                        "generalizability_score": 0.66,
+                        "recurrence_state": "timeout",
+                        "cross_source_match_score": 0.21,
+                    },
+                    "market_enrichment": {
+                        "wedge_active": False,
+                    },
+                },
+                "measures": {
+                    "scores": {
+                        "decision_score": 0.18,
+                        "problem_truth_score": 0.15,
+                        "revenue_readiness_score": 0.26,
+                    },
+                    "dimensions": {
+                        "frequency_score": 0.28,
+                        "cost_of_inaction": 0.48,
+                        "workaround_density": 0.41,
+                        "buildability": 0.61,
+                        "value_support": 0.49,
+                        "evidence_quality": 0.43,
+                    },
+                    "transition": {
+                        "composite_score": 0.32,
+                    },
+                },
+                "evidence": {
+                    "recurrence_state": "timeout",
+                },
+                "policy": {
+                    "decision": "park",
+                },
+            },
+        )
+        self.assertEqual(status, "prototype_candidate")
+        self.assertEqual(reason, "prototype_candidate_gate")
+        self.assertTrue(gate["eligible"])
+        self.assertIn("prototype_candidate_sharp_checkpoint", gate["reasons"])
+
     def test_selection_gate_allows_multifamily_near_miss_prototype_candidate(self):
         status, reason, gate = determine_selection_state(
             decision="park",
@@ -329,6 +386,23 @@ class TestBuildPrepHelpers(unittest.TestCase):
                 "recurrence_failure_class": "single_source_only",
                 "recurrence_probe_summary": {"probe_hit_count": 1, "branched_after_probe": False},
                 "counterevidence": [{"status": "supported", "summary": "Need clearer buyer ownership"}],
+                "opportunity_evaluation": {
+                    "schema_version": "opportunity_evaluation_v1",
+                    "measures": {
+                        "dimensions": {"value_support": 0.72, "evidence_quality": 0.66},
+                        "transition": {"problem_plausibility": 0.68},
+                    },
+                    "evidence": {
+                        "recurrence_state": "supported",
+                        "family_confirmation_count": 2,
+                        "source_family_diversity": 2,
+                    },
+                    "selection": {
+                        "selection_status": "prototype_candidate",
+                        "selection_reason": "validated_selection_gate",
+                        "selection_checks": {"eligible": True, "reasons": ["multi_family_support"], "blocked_by": []},
+                    },
+                },
             },
             experiment_hypothesis="Ops teams will engage with a restore workflow diagnostic.",
             selection_status="prototype_candidate",
@@ -346,6 +420,8 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertEqual(payload["evidence_provenance"]["recurrence_failure_class"], "single_source_only")
         self.assertIn("single_source_confirmation_only", payload["open_questions_risks"])
         self.assertTrue(payload["launch_artifact_plan"])
+        self.assertEqual(payload["opportunity_evaluation"]["schema_version"], "opportunity_evaluation_v1")
+        self.assertEqual(payload["source_family_corroboration"]["family_confirmation_count"], 2)
         self.assertEqual(payload["prototype_gate"]["prototype_gate_mode"], "strict_validated")
         self.assertEqual(payload["prototype_gate"]["market_confidence_level"], "market_confirmed")
         self.assertEqual(payload["prototype_gate"]["validation_certainty"], "validated_selection_gate_met")

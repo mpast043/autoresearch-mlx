@@ -531,6 +531,58 @@ def test_cli_command_import_paths_use_src_modules(monkeypatch, capsys, argv, mod
     assert expected_fragment in output
 
 
+def test_cli_scoring_report_uses_temp_db(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "autoresearch.db"
+    db = Database(str(db_path))
+    db.init_schema()
+    db.close()
+
+    module = types.ModuleType("src.opportunity_evaluation_report")
+    setattr(
+        module,
+        "build_shadow_scoring_report",
+        lambda db, run_id=None, limit=25: {"ok": True, "command": "scoring-report", "limit": limit},
+    )
+    monkeypatch.setitem(sys.modules, "src.opportunity_evaluation_report", module)
+    monkeypatch.setattr(cli, "resolve_database_path_from_config", lambda _config: db_path)
+
+    monkeypatch.setattr(sys, "argv", ["cli.py", "scoring-report", "--limit", "7"])
+    asyncio.run(cli.main())
+
+    output = capsys.readouterr().out
+    assert '"command": "scoring-report"' in output
+    assert '"limit": 7' in output
+
+
+def test_cli_backfill_evaluations_uses_temp_db(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "autoresearch.db"
+    db = Database(str(db_path))
+    db.init_schema()
+    db.close()
+
+    module = types.ModuleType("src.opportunity_evaluation_backfill")
+    setattr(
+        module,
+        "backfill_opportunity_evaluations",
+        lambda db, config, run_id=None, limit=25, apply=False: {
+            "ok": True,
+            "command": "backfill-evaluations",
+            "limit": limit,
+            "apply": apply,
+        },
+    )
+    monkeypatch.setitem(sys.modules, "src.opportunity_evaluation_backfill", module)
+    monkeypatch.setattr(cli, "resolve_database_path_from_config", lambda _config: db_path)
+
+    monkeypatch.setattr(sys, "argv", ["cli.py", "backfill-evaluations", "--limit", "9", "--apply"])
+    asyncio.run(cli.main())
+
+    output = capsys.readouterr().out
+    assert '"command": "backfill-evaluations"' in output
+    assert '"limit": 9' in output
+    assert '"apply": true' in output
+
+
 def test_cmd_rescreen_revives_pre_atom_reconciliation_signal(monkeypatch, tmp_path):
     db_path = tmp_path / "autoresearch.db"
     db = Database(str(db_path))

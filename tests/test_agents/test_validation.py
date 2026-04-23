@@ -150,6 +150,13 @@ def test_process_validation_message_sends_orchestrator_result(temp_db):
     signals = temp_db.get_raw_signals_by_finding(finding_id)
     assert signals
     assert "high_leverage" in (signals[0].metadata or {})
+    validation = temp_db.get_validation(result["validation_id"])
+    assert validation is not None
+    evaluation = (validation.evidence or {}).get("opportunity_evaluation", {})
+    assert evaluation["schema_version"] == "opportunity_evaluation_v1"
+    assert evaluation["inputs"]["ids"]["validation_id"] == result["validation_id"]
+    assert evaluation["policy"]["decision"] == result["decision"]
+    assert evaluation["selection"]["selection_status"] == result["selection_status"]
 
     queued = asyncio.run(queue.get_for_agent("orchestrator"))
     assert queued is not None
@@ -241,3 +248,9 @@ def test_validation_persists_recurrence_runtime_fields_for_reporting(temp_db):
     assert review[0]["matched_docs_by_source"]["web"][0]["match_class"] == "strong"
     assert review[0]["reviewable_recurrence_matches_by_source"]["web"][0]["match_class"] == "strong"
     assert review[0]["reviewable_recurrence_matches_by_source"]["web"][1]["match_class"] == "partial"
+    validation = temp_db.get_validation(result["validation_id"])
+    assert validation is not None
+    evaluation = (validation.evidence or {}).get("opportunity_evaluation", {})
+    assert evaluation["schema_version"] == "opportunity_evaluation_v1"
+    assert evaluation["inputs"]["atom"]["trigger_event"] == ""
+    assert evaluation["selection"]["build_prep_route"] in {"none", "spec_draft", "prototype_candidate"}

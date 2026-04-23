@@ -433,6 +433,7 @@ def test_promoted_research_more_candidate_starts_spec_draft_without_build_ready(
         assert brief is not None
         assert brief.status == "spec_draft"
         assert brief.brief["spec_mode"] == "product_spec_draft"
+        assert brief.brief["opportunity_evaluation"]["selection"]["build_prep_route"] == "spec_draft"
 
         solution_agent = SolutionFramingAgent(db)
         experiment_agent = ExperimentDesignAgent(db)

@@ -513,14 +513,86 @@ def is_allowed_selection_transition(current: str, target: str) -> bool:
     return target in ALLOWED_SELECTION_TRANSITIONS.get(current, set())
 
 
+def _selection_policy_inputs(
+    *,
+    decision: str,
+    scorecard: dict[str, Any],
+    corroboration: dict[str, Any],
+    market_enrichment: dict[str, Any],
+    opportunity_evaluation: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if not isinstance(opportunity_evaluation, dict) or not opportunity_evaluation:
+        return decision, dict(scorecard or {}), dict(corroboration or {}), dict(market_enrichment or {})
+
+    evaluation_inputs = opportunity_evaluation.get("inputs", {}) or {}
+    validation_inputs = evaluation_inputs.get("validation", {}) or {}
+    evaluation_corroboration = evaluation_inputs.get("corroboration", {}) or {}
+    evaluation_market = evaluation_inputs.get("market_enrichment", {}) or {}
+    evaluation_measures = opportunity_evaluation.get("measures", {}) or {}
+    evaluation_scores = evaluation_measures.get("scores", {}) or {}
+    evaluation_dimensions = evaluation_measures.get("dimensions", {}) or {}
+    evaluation_transition = evaluation_measures.get("transition", {}) or {}
+    evaluation_evidence = opportunity_evaluation.get("evidence", {}) or {}
+    evaluation_policy = opportunity_evaluation.get("policy", {}) or {}
+
+    resolved_decision = str(evaluation_policy.get("decision") or decision or "")
+    resolved_scorecard = dict(scorecard or {})
+    resolved_corroboration = {**dict(corroboration or {}), **evaluation_corroboration}
+    resolved_market = {**dict(market_enrichment or {}), **evaluation_market}
+
+    if "decision_score" in evaluation_scores:
+        resolved_scorecard["decision_score"] = float(evaluation_scores.get("decision_score", 0.0) or 0.0)
+    if "problem_truth_score" in evaluation_scores:
+        resolved_scorecard["problem_truth_score"] = float(evaluation_scores.get("problem_truth_score", 0.0) or 0.0)
+    if "revenue_readiness_score" in evaluation_scores:
+        resolved_scorecard["revenue_readiness_score"] = float(
+            evaluation_scores.get("revenue_readiness_score", 0.0) or 0.0
+        )
+
+    for field in (
+        "frequency_score",
+        "cost_of_inaction",
+        "workaround_density",
+        "buildability",
+        "value_support",
+        "evidence_quality",
+    ):
+        if field in evaluation_dimensions:
+            resolved_scorecard[field] = float(evaluation_dimensions.get(field, 0.0) or 0.0)
+
+    if "composite_score" in evaluation_transition:
+        resolved_scorecard["composite_score"] = float(evaluation_transition.get("composite_score", 0.0) or 0.0)
+    if "cluster_signal_count" in validation_inputs:
+        resolved_scorecard["cluster_signal_count"] = int(validation_inputs.get("cluster_signal_count", 0) or 0)
+    if "cluster_atom_count" in validation_inputs:
+        resolved_scorecard["cluster_atom_count"] = int(validation_inputs.get("cluster_atom_count", 0) or 0)
+
+    resolved_corroboration["recurrence_state"] = str(
+        evaluation_evidence.get("recurrence_state")
+        or evaluation_corroboration.get("recurrence_state")
+        or resolved_corroboration.get("recurrence_state", "")
+    )
+
+    return resolved_decision, resolved_scorecard, resolved_corroboration, resolved_market
+
+
 def determine_selection_state(
     *,
     decision: str,
     scorecard: dict[str, Any],
     corroboration: dict[str, Any],
     market_enrichment: dict[str, Any],
+    opportunity_evaluation: dict[str, Any] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Map validation output into the first build-prep lifecycle state."""
+    decision, scorecard, corroboration, market_enrichment = _selection_policy_inputs(
+        decision=decision,
+        scorecard=scorecard,
+        corroboration=corroboration,
+        market_enrichment=market_enrichment,
+        opportunity_evaluation=opportunity_evaluation,
+    )
+
     if decision == "kill":
         return (
             "archive",
@@ -763,6 +835,7 @@ def explain_selection_gate_detail(
     scorecard: dict[str, Any],
     corroboration: dict[str, Any],
     market_enrichment: dict[str, Any],
+    opportunity_evaluation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Structured mirror of ``determine_selection_state`` thresholds for operator debugging."""
     status, reason, gate = determine_selection_state(
@@ -770,6 +843,14 @@ def explain_selection_gate_detail(
         scorecard=scorecard,
         corroboration=corroboration,
         market_enrichment=market_enrichment,
+        opportunity_evaluation=opportunity_evaluation,
+    )
+    decision, scorecard, corroboration, market_enrichment = _selection_policy_inputs(
+        decision=decision,
+        scorecard=scorecard,
+        corroboration=corroboration,
+        market_enrichment=market_enrichment,
+        opportunity_evaluation=opportunity_evaluation,
     )
 
     corroboration_score = float(corroboration.get("corroboration_score", 0.0) or 0.0)
@@ -1412,6 +1493,23 @@ def build_brief_payload(
     screening = (getattr(finding, "evidence", {}) or {})
     source_policy = screening.get("source_policy", {})
     source_classification = screening.get("source_classification", {})
+    opportunity_evaluation = evidence_payload.get("opportunity_evaluation")
+    if not isinstance(opportunity_evaluation, dict):
+        opportunity_evaluation = {}
+    evaluation_measures = opportunity_evaluation.get("measures", {}) or {}
+    evaluation_dimensions = evaluation_measures.get("dimensions", {}) or {}
+    evaluation_transition = evaluation_measures.get("transition", {}) or {}
+    evaluation_evidence = opportunity_evaluation.get("evidence", {}) or {}
+    evaluation_selection = opportunity_evaluation.get("selection", {}) or {}
+    resolved_selection_status = str(
+        evaluation_selection.get("selection_status") or selection_status or ""
+    )
+    resolved_selection_reason = str(
+        evaluation_selection.get("selection_reason") or selection_reason or ""
+    )
+    resolved_selection_gate = dict(
+        evaluation_selection.get("selection_checks") or selection_gate or {}
+    )
     counterevidence = evidence_payload.get("counterevidence", []) or []
     open_questions = [
         item.get("summary", "")
@@ -1434,8 +1532,8 @@ def build_brief_payload(
     # For backward compatibility, use product_name as the narrow output type
     recommended_output_type = platform_fit.product_name
     prototype_gate = _prototype_gate_metadata(
-        selection_reason=selection_reason,
-        selection_gate=selection_gate,
+        selection_reason=resolved_selection_reason,
+        selection_gate=resolved_selection_gate,
         corroboration=corroboration,
         market_enrichment=market_enrichment,
         evidence_payload=evidence_payload,
@@ -1448,10 +1546,11 @@ def build_brief_payload(
         "opportunity_id": opportunity_id,
         "validation_id": validation_id,
         "cluster_id": cluster_id,
-        "selection_status": selection_status,
-        "selection_reason": selection_reason,
-        "selection_gate": selection_gate,
+        "selection_status": resolved_selection_status,
+        "selection_reason": resolved_selection_reason,
+        "selection_gate": resolved_selection_gate,
         "prototype_gate": prototype_gate,
+        "opportunity_evaluation": opportunity_evaluation,
         "linked_finding_ids": linked_finding_ids,
         "problem_summary": _prefer_specific_problem_summary(
             cluster.get("summary", {}).get("human_summary")
@@ -1513,20 +1612,29 @@ def build_brief_payload(
             "reshaped_query_history": evidence_payload.get("reshaped_query_history", []),
         },
         "source_family_corroboration": {
-            "recurrence_state": corroboration.get("recurrence_state", ""),
+            "recurrence_state": evaluation_evidence.get("recurrence_state", corroboration.get("recurrence_state", "")),
             "recurrence_gap_reason": evidence_payload.get("recurrence_gap_reason", ""),
             "recurrence_failure_class": evidence_payload.get("recurrence_failure_class", ""),
-            "family_confirmation_count": evidence_payload.get("family_confirmation_count", 0),
+            "family_confirmation_count": evaluation_evidence.get(
+                "family_confirmation_count",
+                evidence_payload.get("family_confirmation_count", 0),
+            ),
             "source_families": corroboration.get("source_families", []),
             "source_family_match_counts": corroboration.get("source_family_match_counts", {}),
             "core_source_families": corroboration.get("core_source_families", []),
             "core_source_family_diversity": corroboration.get("core_source_family_diversity", 0),
-            "source_family_diversity": corroboration.get("source_family_diversity", 0),
+            "source_family_diversity": evaluation_evidence.get(
+                "source_family_diversity",
+                corroboration.get("source_family_diversity", 0),
+            ),
             "cross_source_match_score": corroboration.get("cross_source_match_score", 0.0),
             "corroboration_score": corroboration.get("corroboration_score", 0.0),
             "generalizability_class": corroboration.get("generalizability_class", ""),
             "generalizability_score": corroboration.get("generalizability_score", 0.0),
-            "evidence_quality": evidence_payload.get("evidence_assessment", {}).get("evidence_quality", 0.0),
+            "evidence_quality": evaluation_dimensions.get(
+                "evidence_quality",
+                evidence_payload.get("evidence_assessment", {}).get("evidence_quality", 0.0),
+            ),
         },
         "screening_summary": {
             "source_class": source_classification.get("source_class", getattr(finding, "source_class", "")),
@@ -1538,12 +1646,18 @@ def build_brief_payload(
             "wedge_name": wedge_name,
             "wedge_active": market_enrichment.get("wedge_active", False),
             "wedge_fit_score": market_enrichment.get("wedge_fit_score", 0.0),
-            "value_support": evidence_payload.get("evidence_assessment", {}).get("value_support", 0.0),
+            "value_support": evaluation_dimensions.get(
+                "value_support",
+                evidence_payload.get("evidence_assessment", {}).get("value_support", 0.0),
+            ),
             "demand_score": market_enrichment.get("demand_score", 0.0),
             "buyer_intent_score": market_enrichment.get("buyer_intent_score", 0.0),
             "willingness_to_pay_signal": market_enrichment.get("willingness_to_pay_signal", 0.0),
             "multi_source_value_lift": market_enrichment.get("multi_source_value_lift", 0.0),
-            "relevance_score": evidence_payload.get("evidence_assessment", {}).get("problem_plausibility", 0.0),
+            "relevance_score": evaluation_transition.get(
+                "problem_plausibility",
+                evidence_payload.get("evidence_assessment", {}).get("problem_plausibility", 0.0),
+            ),
         },
         "recommended_narrow_output_type": recommended_output_type,
         "platform_fit": platform_fit.to_dict(),

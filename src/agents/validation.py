@@ -36,7 +36,10 @@ from src.opportunity_engine import (
 )
 from src.research_tools import ResearchToolkit
 from src.source_policy import atom_generation_allowed
-from src.agents.validation_helpers import build_evidence_payload
+from src.agents.validation_helpers import (
+    build_canonical_opportunity_evaluation,
+    build_evidence_payload,
+)
 from src.high_leverage import (
     build_high_leverage_cluster_context,
     persist_high_leverage_assessment,
@@ -235,11 +238,49 @@ class ValidationAgent(BaseAgent):
         experiment_plan: dict[str, Any],
     ) -> Dict[str, Any]:
         """Persist validation results: opportunity, validation, build brief, ledger, and message dispatch."""
+        overall_score = scorecard["composite_score"]
+
+        preselection_evaluation = build_canonical_opportunity_evaluation(
+            run_id=self.db.active_run_id,
+            finding_id=finding_id,
+            finding_kind=getattr(finding, "finding_kind", ""),
+            atom_summary={
+                "segment": getattr(anchor_atom, "segment", ""),
+                "user_role": getattr(anchor_atom, "user_role", ""),
+                "job_to_be_done": getattr(anchor_atom, "job_to_be_done", ""),
+                "trigger_event": getattr(anchor_atom, "trigger_event", ""),
+                "failure_mode": getattr(anchor_atom, "failure_mode", ""),
+                "current_workaround": getattr(anchor_atom, "current_workaround", ""),
+            },
+            evidence_scores=evidence_scores,
+            corroboration=validation_payload.get("corroboration", {}),
+            market_enrichment=validation_payload.get("market_enrichment", {}),
+            review_feedback=review_feedback,
+            market_score=market_score,
+            technical_score=technical_score,
+            distribution_score=distribution_score,
+            overall_score=overall_score,
+            cluster_id=cluster_id,
+            cluster=cluster,
+            market_gap=market_gap,
+            scorecard=scorecard,
+            opportunity_id=None,
+            validation_plan=experiment_plan,
+            counterevidence=counterevidence,
+            decision=decision,
+            selection_status="",
+            selection_reason="",
+            selection_gate={},
+            promotion_threshold=self.promotion_threshold,
+            park_threshold=self.park_threshold,
+        )
+
         selection_status, selection_reason, selection_gate = determine_selection_state(
             decision=decision["recommendation"],
             scorecard=scorecard,
             corroboration=validation_payload.get("corroboration", {}),
             market_enrichment=validation_payload.get("market_enrichment", {}),
+            opportunity_evaluation=preselection_evaluation,
         )
 
         opportunity = Opportunity(
@@ -307,7 +348,6 @@ class ValidationAgent(BaseAgent):
         experiment_id = self.db.insert_experiment(experiment)
 
         passed = decision["recommendation"] == "promote"
-        overall_score = scorecard["composite_score"]
         high_leverage_context = build_high_leverage_cluster_context(self.db, finding, anchor_atom)
         high_leverage_context.update(
             {
@@ -340,10 +380,19 @@ class ValidationAgent(BaseAgent):
             high_leverage_context,
         )
         evidence = build_evidence_payload(
+            run_id=self.db.active_run_id,
             finding_id=finding_id,
             finding_kind=finding.finding_kind,
             title=title,
             summary=summary,
+            atom_summary={
+                "segment": getattr(anchor_atom, "segment", ""),
+                "user_role": getattr(anchor_atom, "user_role", ""),
+                "job_to_be_done": getattr(anchor_atom, "job_to_be_done", ""),
+                "trigger_event": getattr(anchor_atom, "trigger_event", ""),
+                "failure_mode": getattr(anchor_atom, "failure_mode", ""),
+                "current_workaround": getattr(anchor_atom, "current_workaround", ""),
+            },
             evidence_scores=evidence_scores,
             corroboration=validation_payload.get("corroboration", {}),
             market_enrichment=validation_payload.get("market_enrichment", {}),
@@ -358,6 +407,7 @@ class ValidationAgent(BaseAgent):
             scorecard=scorecard,
             opportunity_id=opportunity_id,
             experiment_id=experiment_id,
+            validation_plan=experiment_plan,
             counterevidence=counterevidence,
             decision=decision,
             selection_status=selection_status,
@@ -365,6 +415,7 @@ class ValidationAgent(BaseAgent):
             selection_gate=selection_gate,
             gate_threshold=self.gate_threshold,
             promotion_threshold=self.promotion_threshold,
+            park_threshold=self.park_threshold,
             high_leverage=high_leverage,
         )
 
@@ -379,6 +430,17 @@ class ValidationAgent(BaseAgent):
             run_id=self.db.active_run_id,
         )
         validation_id = self.db.upsert_validation(validation)
+        evaluation = dict(evidence.get("opportunity_evaluation") or {})
+        if evaluation:
+            inputs_block = dict(evaluation.get("inputs") or {})
+            ids_block = dict(inputs_block.get("ids") or {})
+            ids_block["validation_id"] = validation_id
+            inputs_block["ids"] = ids_block
+            evaluation["inputs"] = inputs_block
+            evidence["opportunity_evaluation"] = evaluation
+            validation.evidence = evidence
+            validation.evidence_json = json.dumps(evidence)
+            self.db.upsert_validation(validation)
         persist_high_leverage_assessment(
             self.db,
             finding_id=finding_id,

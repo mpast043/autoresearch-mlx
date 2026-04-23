@@ -34,13 +34,38 @@ def build_research_spec(
     The contract keeps computed validation facts beside product framing so
     markdown exporters, idea rows, and build-prep handoffs do not drift apart.
     """
+    opportunity_evaluation = evidence.get("opportunity_evaluation")
+    if not isinstance(opportunity_evaluation, dict):
+        opportunity_evaluation = {}
+
+    evaluation_inputs = opportunity_evaluation.get("inputs", {}) or {}
+    evaluation_validation = evaluation_inputs.get("validation", {}) or {}
+    evaluation_evidence = opportunity_evaluation.get("evidence", {}) or {}
+    evaluation_policy = opportunity_evaluation.get("policy", {}) or {}
+    evaluation_selection = opportunity_evaluation.get("selection", {}) or {}
+
     scorecard = evidence.get("opportunity_scorecard", {}) or {}
-    selection_status = evidence.get("selection_status", "")
+    selection_status = str(
+        evaluation_selection.get("selection_status")
+        or evidence.get("selection_status", "")
+        or ""
+    )
     source_validation = {
-        "decision": evidence.get("decision", ""),
-        "decision_reason": evidence.get("decision_reason", ""),
+        "decision": str(
+            evaluation_policy.get("decision")
+            or evidence.get("decision", "")
+            or ""
+        ),
+        "decision_reason": str(
+            evaluation_policy.get("decision_reason")
+            or evidence.get("decision_reason", "")
+            or ""
+        ),
         "passed": bool(getattr(validation, "passed", False)),
-        "overall_score": float(getattr(validation, "overall_score", 0.0) or 0.0),
+        "overall_score": float(
+            evaluation_validation.get("overall_score", getattr(validation, "overall_score", 0.0))
+            or 0.0
+        ),
     }
 
     return {
@@ -55,15 +80,32 @@ def build_research_spec(
         "monetization_strategy": monetization_strategy,
         "source_finding_kind": source_finding_kind,
         "evidence_refresh_from_validation_id": getattr(validation, "id", None),
-        "market_gap_state": evidence.get("market_gap_state", "unknown"),
+        "market_gap_state": str(
+            evaluation_evidence.get("market_gap_state")
+            or evidence.get("market_gap_state", "unknown")
+            or "unknown"
+        ),
         "market_gap": evidence.get("market_gap", {}),
-        "validation_plan": validation_plan,
+        "validation_plan": dict(evaluation_evidence.get("validation_plan", validation_plan) or {}),
         "opportunity_scorecard": scorecard,
         "evidence_assessment": evidence.get("evidence_assessment", {}),
         "selection_status": selection_status,
-        "selection_reason": evidence.get("selection_reason", ""),
-        "selection_gate": evidence.get("selection_gate", {}),
-        "counterevidence": evidence.get("counterevidence", []),
+        "selection_reason": str(
+            evaluation_selection.get("selection_reason")
+            or evidence.get("selection_reason", "")
+            or ""
+        ),
+        "selection_gate": dict(
+            evaluation_selection.get("selection_checks")
+            or evidence.get("selection_gate", {})
+            or {}
+        ),
+        "counterevidence": list(
+            evaluation_evidence.get("counterevidence")
+            or evidence.get("counterevidence", [])
+            or []
+        ),
+        "opportunity_evaluation": opportunity_evaluation,
         "source_validation": source_validation,
         "build_ready": build_ready,
     }

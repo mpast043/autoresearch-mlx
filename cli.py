@@ -723,86 +723,50 @@ async def cmd_patterns(args: argparse.Namespace, _app: AutoResearcher) -> None:
 
 
 async def cmd_scoring_report(args: argparse.Namespace, _app: AutoResearcher) -> None:
-    import sqlite3
+    from src.database import Database
+    from src.opportunity_evaluation_report import build_shadow_scoring_report
 
     db_path = resolve_database_path_from_config(args.config)
     if not db_path.exists():
         print(f"No database found at {db_path}")
         return
 
+    db = Database(str(db_path))
+    try:
+        print_json(
+            build_shadow_scoring_report(
+                db,
+                run_id=args.run_id or None,
+                limit=max(1, args.limit),
+            )
+        )
+    finally:
+        db.close()
+
+
+async def cmd_backfill_evaluations(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    from src.database import Database
+    from src.opportunity_evaluation_backfill import backfill_opportunity_evaluations
+
     config, _ = load_runtime_config(args.config)
-    promote_thresh, park_thresh = resolve_promotion_park_thresholds(config)
-
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT scoring_version, COUNT(*) FROM opportunities GROUP BY scoring_version")
-    version_dist = cursor.fetchall()
-    print("=== SCORING VERSION DISTRIBUTION ===")
-    has_legacy = False
-    for ver, count in version_dist:
-        marker = ""
-        if ver in ('0', 'v1', 'v2', 'v3'):
-            marker = " (LEGACY - needs rescore)"
-            has_legacy = True
-        elif ver == 'v4':
-            marker = " <-- CURRENT"
-        print(f"  {ver}: {count}{marker}")
-    if has_legacy:
-        print("\n⚠️  WARNING: Legacy-scored rows detected. Run revalidation for accurate analysis.")
-    print()
-
-    cursor.execute("SELECT composite_score, frequency_score, evidence_quality, education_burden, adoption_friction FROM opportunities ORDER BY composite_score DESC")
-    rows = cursor.fetchall()
-    scores = [r[0] for r in rows]
-    total = len(scores)
-
-    if total == 0:
-        print("No opportunities in database")
-        conn.close()
+    db_path = resolve_database_path_from_config(args.config)
+    if not db_path.exists():
+        print(f"No database found at {db_path}")
         return
 
-    sorted_scores = sorted(scores)
-    p99 = sorted_scores[int(total * 0.99)] if total > 0 else 0
-    p95 = sorted_scores[int(total * 0.95)] if total > 0 else 0
-    p90 = sorted_scores[int(total * 0.90)] if total > 0 else 0
-    median = sorted_scores[int(total * 0.50)] if total > 0 else 0
-
-    above_promote = sum(1 for s in scores if s >= promote_thresh)
-    above_park = sum(1 for s in scores if s >= park_thresh)
-
-    print("=== SCORING PERCENTILE MONITOR ===\n")
-    print(f"Total opportunities: {total}\n")
-    print("PERCENTILES:")
-    print(f"  Max:   {max(scores):.4f}")
-    print(f"  P99:   {p99:.4f}")
-    print(f"  P95:   {p95:.4f}")
-    print(f"  P90:   {p90:.4f}")
-    print(f"  Median:{median:.4f}")
-    print(f"\nDECISION BUCKETS (thresholds: promote={promote_thresh}, park={park_thresh}):")
-    print(f"  Promote (≥{promote_thresh}): {above_promote} ({above_promote/total*100:.1f}%)")
-    print(f"  Park ({park_thresh}-{promote_thresh}): {above_park-above_promote} ({(above_park-above_promote)/total*100:.1f}%)")
-    print(f"  Kill (<{park_thresh}): {total-above_park} ({(total-above_park)/total*100:.1f}%)")
-
-    cursor.execute("""
-        SELECT
-            AVG(frequency_score) as avg_freq,
-            AVG(evidence_quality) as avg_eq,
-            AVG(education_burden) as avg_edu,
-            AVG(adoption_friction) as avg_fric
-        FROM opportunities
-        WHERE composite_score >= ? AND composite_score < ?
-    """, (park_thresh, promote_thresh))
-    parked = cursor.fetchone()
-    park_count = above_park - above_promote
-    if parked and parked[0]:
-        print(f"\nPARKED OPPORTUNITY ANALYSIS (n={park_count}):")
-        print(f"  Avg frequency:        {parked[0]:.3f}")
-        print(f"  Avg evidence_quality: {parked[1]:.3f}")
-        print(f"  Avg education_burden: {parked[2]:.3f} ⚠️")
-        print(f"  Avg adoption_friction:{parked[3]:.3f} ⚠️")
-
-    conn.close()
+    db = Database(str(db_path))
+    try:
+        print_json(
+            backfill_opportunity_evaluations(
+                db,
+                config=config,
+                run_id=args.run_id or None,
+                limit=max(1, args.limit),
+                apply=bool(args.apply),
+            )
+        )
+    finally:
+        db.close()
 
 
 async def cmd_revalidate(args: argparse.Namespace, _app: AutoResearcher) -> None:
@@ -1653,6 +1617,7 @@ COMMANDS: dict[str, Callable[..., Awaitable[None]]] = {
     "sre-health": cmd_sre_health,
     "patterns": cmd_patterns,
     "scoring-report": cmd_scoring_report,
+    "backfill-evaluations": cmd_backfill_evaluations,
     "revalidate": cmd_revalidate,
     "rescreen": cmd_rescreen,
     "rescore-v4": cmd_rescore_v4,
@@ -1707,6 +1672,7 @@ async def main() -> None:
             "suggest-discovery",
             "patterns",
             "scoring-report",
+            "backfill-evaluations",
             "revalidate",
             "rescreen",
             "rescore-v4",
@@ -1738,7 +1704,12 @@ async def main() -> None:
         "--limit",
         type=int,
         default=25,
-        help="gate-diagnostics: max validation rows; suggest-discovery: max clusters scanned (default: 25)",
+        help="gate-diagnostics/scoring-report/backfill-evaluations: max rows; suggest-discovery: max clusters scanned (default: 25)",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="backfill-evaluations: write canonical evaluation snapshots instead of dry-run",
     )
     parser.add_argument(
         "--min-atoms",
