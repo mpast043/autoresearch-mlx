@@ -4,6 +4,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.opportunity_evaluation import canonical_evidence_assessment, canonical_scorecard_snapshot
+
+
+def _canonical_evaluation(evidence: dict[str, Any]) -> dict[str, Any]:
+    value = evidence.get("opportunity_evaluation")
+    return dict(value or {}) if isinstance(value, dict) else {}
+
+
+def _canonical_policy(evidence: dict[str, Any]) -> dict[str, Any]:
+    return _canonical_evaluation(evidence).get("policy", {}) or {}
+
+
+def _canonical_selection(evidence: dict[str, Any]) -> dict[str, Any]:
+    return _canonical_evaluation(evidence).get("selection", {}) or {}
+
+
+def _canonical_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    return _canonical_evaluation(evidence).get("evidence", {}) or {}
+
 
 def sorted_recurrence_match_records(records: Any) -> list[dict[str, Any]]:
     if not isinstance(records, list):
@@ -34,6 +53,7 @@ def reviewable_recurrence_matches_by_source(evidence: dict[str, Any]) -> dict[st
 
 
 def build_recent_validation_row(row: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    canonical_policy = _canonical_policy(evidence)
     matched_docs_by_source = {
         source: sorted_recurrence_match_records(records)
         for source, records in (evidence.get("matched_docs_by_source", {}) or {}).items()
@@ -44,7 +64,7 @@ def build_recent_validation_row(row: dict[str, Any], evidence: dict[str, Any]) -
     }
     return {
         **row,
-        "decision": evidence.get("decision", "park"),
+        "decision": canonical_policy.get("decision") or evidence.get("decision", "park"),
         "passed": bool(row["passed"]),
         "matched_docs_by_source": matched_docs_by_source,
         "partial_docs_by_source": partial_docs_by_source,
@@ -70,6 +90,11 @@ def build_validation_review_row(
     market_evidence: dict[str, Any] | None = None,
     market_row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    canonical_policy = _canonical_policy(evidence)
+    canonical_selection = _canonical_selection(evidence)
+    canonical_evidence = _canonical_evidence(evidence)
+    scorecard_snapshot = canonical_scorecard_snapshot(_canonical_evaluation(evidence))
+    evidence_assessment = evidence.get("evidence_assessment") or canonical_evidence_assessment(_canonical_evaluation(evidence))
     matched_docs_by_source = {
         source: sorted_recurrence_match_records(records)
         for source, records in (evidence.get("matched_docs_by_source", {}) or {}).items()
@@ -83,25 +108,19 @@ def build_validation_review_row(
         "run_id": row["run_id"] or "",
         "finding_id": row["finding_id"],
         "title": finding_evidence.get("title") or row["outcome_summary"] or row["product_built"] or row["source_url"],
-        "decision": evidence.get("decision"),
-        "decision_reason": evidence.get("decision_reason"),
-        "selection_status": evidence.get("selection_status", "research_more"),
-        "selection_reason": evidence.get("selection_reason", ""),
+        "decision": canonical_policy.get("decision") or evidence.get("decision"),
+        "decision_reason": canonical_policy.get("decision_reason") or evidence.get("decision_reason"),
+        "selection_status": canonical_selection.get("selection_status") or evidence.get("selection_status", "research_more"),
+        "selection_reason": canonical_selection.get("selection_reason") or evidence.get("selection_reason", ""),
         "park_subreason": evidence.get("park_subreason"),
-        "composite_score": evidence.get("composite_score", row["overall_score"] or 0.0),
+        "composite_score": scorecard_snapshot.get("composite_score", evidence.get("composite_score", row["overall_score"] or 0.0)),
         "overall_score": row["overall_score"] or 0.0,
         "market_score": row["market_score"] or 0.0,
         "technical_score": row["technical_score"] or 0.0,
         "distribution_score": row["distribution_score"] or 0.0,
-        "recurrence_state": evidence.get("recurrence_state"),
+        "recurrence_state": canonical_evidence.get("recurrence_state") or evidence.get("recurrence_state"),
         "corroboration_score": 0.0,
-        "value_support": evidence.get(
-            "value_support",
-            evidence.get("evidence_assessment", {}).get(
-                "value_support",
-                evidence.get("opportunity_scorecard", {}).get("value_support", 0.0),
-            ),
-        ),
+        "value_support": evidence.get("value_support", evidence_assessment.get("value_support", scorecard_snapshot.get("value_support", 0.0))),
         "review_feedback_count": evidence.get("review_feedback_count", 0),
         "source": row["source"],
         "source_url": row["source_url"],
@@ -146,7 +165,7 @@ def build_validation_review_row(
                 "partial_docs_by_source": partial_docs_by_source,
             }
         ),
-        "family_confirmation_count": evidence.get("family_confirmation_count", 0),
+        "family_confirmation_count": canonical_evidence.get("family_confirmation_count", evidence.get("family_confirmation_count", 0)),
         "source_yield": evidence.get("source_yield", {}),
         "reshaped_query_history": evidence.get("reshaped_query_history", []),
     }

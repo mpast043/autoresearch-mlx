@@ -4,7 +4,6 @@ Submodules:
 - scraping: Web search, fetching, Reddit, YouTube
 - classification: Signal classification, keyword matching
 - enrichment: Recurrence queries, corroboration planning
-- scoring: Validation scoring logic
 
 Can import from this package or directly from src.research_tools.
 """
@@ -35,17 +34,6 @@ from src.research.enrichment import (
     decompose_recurrence_queries,
     decompose_low_info_atom,
     prioritize_queries,
-)
-
-# Re-export scoring functions
-from src.research.scoring import (
-    score_market_fit,
-    score_technical_fit,
-    score_distribution_fit,
-    compute_composite_score,
-    make_decision,
-    score_recurrence,
-    score_corroboration,
 )
 
 # Re-export research_tools for backward compatibility

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.opportunity_evaluation import canonical_evidence_assessment, canonical_scorecard_snapshot
+
 
 RESEARCH_SPEC_SCHEMA_VERSION = "research_spec_v1"
 RESEARCH_SPEC_ARTIFACT_TYPE = "research_spec"
@@ -44,7 +46,8 @@ def build_research_spec(
     evaluation_policy = opportunity_evaluation.get("policy", {}) or {}
     evaluation_selection = opportunity_evaluation.get("selection", {}) or {}
 
-    scorecard = evidence.get("opportunity_scorecard", {}) or {}
+    scorecard = evidence.get("opportunity_scorecard") or canonical_scorecard_snapshot(opportunity_evaluation)
+    evidence_assessment = evidence.get("evidence_assessment") or canonical_evidence_assessment(opportunity_evaluation)
     selection_status = str(
         evaluation_selection.get("selection_status")
         or evidence.get("selection_status", "")
@@ -88,7 +91,7 @@ def build_research_spec(
         "market_gap": evidence.get("market_gap", {}),
         "validation_plan": dict(evaluation_evidence.get("validation_plan", validation_plan) or {}),
         "opportunity_scorecard": scorecard,
-        "evidence_assessment": evidence.get("evidence_assessment", {}),
+        "evidence_assessment": evidence_assessment,
         "selection_status": selection_status,
         "selection_reason": str(
             evaluation_selection.get("selection_reason")

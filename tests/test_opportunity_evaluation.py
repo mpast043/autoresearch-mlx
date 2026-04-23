@@ -5,6 +5,8 @@ from __future__ import annotations
 from src.opportunity_evaluation import (
     OPPORTUNITY_EVALUATION_SCHEMA_VERSION,
     build_opportunity_evaluation,
+    canonical_evidence_assessment,
+    canonical_scorecard_snapshot,
     v2_lite_shadow_score,
 )
 
@@ -170,3 +172,51 @@ def test_v2_lite_shadow_score_uses_existing_proxies_and_penalties():
     assert diagnostics["components"]["competition_headroom"] == 0.75
     assert diagnostics["penalties"]["dependency_risk"] == 0.01
     assert diagnostics["penalties"]["adoption_friction"] == 0.015
+
+
+def test_canonical_snapshot_helpers_provide_legacy_views():
+    evaluation = build_opportunity_evaluation(
+        run_id="run-helpers",
+        finding_id=1,
+        cluster_id=2,
+        opportunity_id=3,
+        validation_id=4,
+        source_finding_kind="problem_signal",
+        atom_summary={},
+        validation_inputs={"overall_score": 0.61},
+        corroboration_inputs={},
+        market_enrichment_inputs={},
+        review_feedback_inputs={},
+        measures={
+            "decision_score": 0.31,
+            "problem_truth_score": 0.22,
+            "revenue_readiness_score": 0.39,
+            "value_support": 0.44,
+            "evidence_quality": 0.53,
+            "composite_score": 0.28,
+            "problem_plausibility": 0.46,
+            "evidence_sufficiency": 0.49,
+        },
+        evidence={},
+        decision="park",
+        decision_reason="plausible_but_unproven",
+        promotion_threshold=0.25,
+        park_threshold=0.1,
+        selection_status="research_more",
+        selection_reason="selection_gate_not_met",
+        selection_checks={},
+    )
+
+    scorecard = canonical_scorecard_snapshot(evaluation)
+    evidence_assessment = canonical_evidence_assessment(evaluation)
+
+    assert scorecard["decision"] == "park"
+    assert scorecard["total_score"] == 0.61
+    assert scorecard["decision_score"] == 0.31
+    assert evidence_assessment == {
+        "problem_plausibility": 0.46,
+        "evidence_sufficiency": 0.49,
+        "value_support": 0.44,
+        "composite_score": 0.28,
+        "evidence_quality": 0.53,
+    }

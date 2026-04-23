@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from src.agents.base import BaseAgent
 from src.database import Database, Idea
 from src.messaging import MessageQueue, MessageType
+from src.opportunity_evaluation import canonical_scorecard_snapshot
 from src.opportunity_spec import build_research_spec
 from src.research_tools import slugify
 
@@ -51,7 +52,9 @@ class IdeationAgent(BaseAgent):
 
         evidence = validation.evidence_dict
         cluster = evidence.get("cluster", {})
-        scorecard = evidence.get("opportunity_scorecard", {})
+        scorecard = evidence.get("opportunity_scorecard") or canonical_scorecard_snapshot(
+            evidence.get("opportunity_evaluation")
+        )
         experiment_id = evidence.get("experiment_id")
         experiment_rows = []
         if experiment_id and hasattr(self.db, "get_experiments"):

@@ -26,6 +26,10 @@ def _clamp01(value: Any) -> float:
     return max(0.0, min(1.0, numeric))
 
 
+def _coerce_dict(value: Any) -> dict[str, Any]:
+    return dict(value or {}) if isinstance(value, dict) else {}
+
+
 def _average_available(*values: Any) -> float:
     usable = []
     for value in values:
@@ -147,6 +151,37 @@ def v2_lite_shadow_score(
         "net_score": shadow_score,
     }
     return shadow_score, diagnostics
+
+
+def canonical_scorecard_snapshot(opportunity_evaluation: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a legacy-shaped scorecard view from the canonical evaluation."""
+    evaluation = _coerce_dict(opportunity_evaluation)
+    validation_inputs = _coerce_dict(_coerce_dict(evaluation.get("inputs")).get("validation"))
+    policy = _coerce_dict(evaluation.get("policy"))
+    measures = _coerce_dict(evaluation.get("measures"))
+    scores = _coerce_dict(measures.get("scores"))
+    dimensions = _coerce_dict(measures.get("dimensions"))
+    transition = _coerce_dict(measures.get("transition"))
+    return {
+        "decision": str(policy.get("decision", "") or ""),
+        "overall_score": float(validation_inputs.get("overall_score", 0.0) or 0.0),
+        "total_score": float(validation_inputs.get("overall_score", 0.0) or 0.0),
+        **scores,
+        **dimensions,
+        **transition,
+    }
+
+
+def canonical_evidence_assessment(opportunity_evaluation: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the legacy evidence_assessment view from the canonical evaluation."""
+    snapshot = canonical_scorecard_snapshot(opportunity_evaluation)
+    return {
+        "problem_plausibility": float(snapshot.get("problem_plausibility", 0.0) or 0.0),
+        "evidence_sufficiency": float(snapshot.get("evidence_sufficiency", 0.0) or 0.0),
+        "value_support": float(snapshot.get("value_support", 0.0) or 0.0),
+        "composite_score": float(snapshot.get("composite_score", 0.0) or 0.0),
+        "evidence_quality": float(snapshot.get("evidence_quality", 0.0) or 0.0),
+    }
 
 
 def build_opportunity_evaluation(

@@ -511,6 +511,90 @@ class TestBuildPrepHelpers(unittest.TestCase):
         self.assertIn("narrow and diagnostic", payload["prototype_spec_posture"]["build_scope_rule"])
         self.assertIn("do not claim full market validation", payload["prototype_spec_posture"]["messaging_rule"])
 
+    def test_build_brief_payload_can_derive_prototype_gate_strength_from_canonical_evaluation(self):
+        payload = build_brief_payload(
+            run_id="run-2b",
+            opportunity_id=3,
+            validation_id=4,
+            cluster_id=5,
+            linked_finding_ids=[3],
+            finding=DummyFinding(),
+            cluster={
+                "job_to_be_done": "keep operations data sync without manual spreadsheet breakage",
+                "user_role": "operations lead",
+                "summary": {"human_summary": "ops teams are held together by duct tape and spreadsheets"},
+            },
+            anchor_atom=type(
+                "OpsAtom",
+                (),
+                {
+                    "pain_statement": "business operations are held together by duct tape and Excel",
+                    "failure_mode": "handoff data gets lost between spreadsheets",
+                    "current_workaround": "copy and paste between spreadsheets and email",
+                    "current_tools": "excel, email",
+                    "trigger_event": "status updates and approvals arrive out of order",
+                },
+            )(),
+            corroboration={
+                "source_families": ["reddit"],
+                "source_family_match_counts": {"reddit": 2},
+                "core_source_families": ["reddit"],
+                "core_source_family_diversity": 1,
+                "cross_source_match_score": 0.31,
+                "corroboration_score": 0.4569,
+                "generalizability_class": "reusable_workflow_pain",
+                "generalizability_score": 0.78,
+                "query_set_hash": "ops-123",
+                "results_by_source": {"reddit": 5},
+                "recurrence_state": "supported",
+            },
+            market_enrichment={
+                "wedge_name": "",
+                "wedge_active": False,
+                "wedge_fit_score": 0.12,
+                "demand_score": 0.38,
+                "buyer_intent_score": 0.41,
+                "willingness_to_pay_signal": 0.47,
+                "multi_source_value_lift": 0.24,
+            },
+            evidence_payload={
+                "summary": {"problem_statement": "ops teams are stuck in spreadsheet handoff chaos"},
+                "queries_executed": ['"spreadsheet workaround" "small business"'],
+                "recurrence_budget_profile": {"query_limit": 3, "subreddit_limit": 2},
+                "counterevidence": [{"status": "supported", "summary": "Need broader buyer proof"}],
+                "opportunity_evaluation": {
+                    "schema_version": "opportunity_evaluation_v1",
+                    "measures": {
+                        "dimensions": {
+                            "value_support": 0.5164,
+                            "evidence_quality": 0.494,
+                        },
+                        "transition": {
+                            "problem_plausibility": 0.61,
+                            "composite_score": 0.4102,
+                        },
+                    },
+                },
+            },
+            experiment_hypothesis="Ops teams will try a workflow reliability assistant that replaces spreadsheet handoffs.",
+            selection_status="prototype_candidate",
+            selection_reason="prototype_candidate_gate",
+            selection_gate={
+                "eligible": True,
+                "gate_version": "prototype_candidate_v1",
+                "reasons": [
+                    "generalizable_workflow_pain",
+                    "recurrence_state_supported",
+                    "prototype_candidate_single_family_exception",
+                ],
+                "blocked_by": [],
+            },
+        )
+        evidence_strength = payload["prototype_gate"]["prototype_gate_evidence_strength"]
+        self.assertEqual(evidence_strength["value_support"], 0.5164)
+        self.assertEqual(evidence_strength["problem_plausibility"], 0.61)
+        self.assertEqual(evidence_strength["composite_score"], 0.4102)
+
     def test_downstream_consumer_preserves_certainty_boundary(self):
         validated_payload = build_brief_payload(
             run_id="run-validated",

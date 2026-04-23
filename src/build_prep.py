@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass, field, asdict
 from typing import TYPE_CHECKING, Any
 
+from src.opportunity_evaluation import canonical_evidence_assessment
+
 if TYPE_CHECKING:
     from src.database import Finding, ProblemAtom
 
@@ -1433,6 +1435,7 @@ def _prototype_gate_metadata(
     corroboration: dict[str, Any],
     market_enrichment: dict[str, Any],
     evidence_payload: dict[str, Any],
+    opportunity_evaluation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     gate_mode = "strict_validated" if selection_reason == "validated_selection_gate" else "prototype_candidate_exception"
     gate_reasons = list(selection_gate.get("reasons", []) or [])
@@ -1442,13 +1445,14 @@ def _prototype_gate_metadata(
     elif "prototype_candidate_multifamily_near_miss" in gate_reasons:
         basis = "multifamily_near_miss"
 
+    evidence_assessment = evidence_payload.get("evidence_assessment") or canonical_evidence_assessment(opportunity_evaluation)
     evidence_strength = {
         "recurrence_state": str(corroboration.get("recurrence_state", "") or ""),
         "corroboration_score": float(corroboration.get("corroboration_score", 0.0) or 0.0),
         "family_count": int(corroboration.get("core_source_family_diversity", 0) or 0),
-        "value_support": float((evidence_payload.get("evidence_assessment", {}) or {}).get("value_support", 0.0) or 0.0),
-        "problem_plausibility": float((evidence_payload.get("evidence_assessment", {}) or {}).get("problem_plausibility", 0.0) or 0.0),
-        "composite_score": float((evidence_payload.get("evidence_assessment", {}) or {}).get("composite_score", 0.0) or 0.0),
+        "value_support": float((evidence_assessment or {}).get("value_support", 0.0) or 0.0),
+        "problem_plausibility": float((evidence_assessment or {}).get("problem_plausibility", 0.0) or 0.0),
+        "composite_score": float((evidence_assessment or {}).get("composite_score", 0.0) or 0.0),
         "wedge_active": bool(market_enrichment.get("wedge_active")),
     }
 
@@ -1537,6 +1541,7 @@ def build_brief_payload(
         corroboration=corroboration,
         market_enrichment=market_enrichment,
         evidence_payload=evidence_payload,
+        opportunity_evaluation=opportunity_evaluation,
     )
 
     return {
