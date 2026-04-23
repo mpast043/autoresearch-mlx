@@ -209,6 +209,32 @@ def test_consume_until_quiet_drains_orchestrator_queue(temp_db):
     assert queued.payload["finding_id"] == 321
 
 
+def test_validation_decision_breakdown_prefers_canonical_policy(temp_db):
+    orchestrator = Orchestrator(temp_db)
+    breakdown = orchestrator._validation_decision_breakdown(
+        [
+            {
+                "decision": "",
+                "evidence": {
+                    "opportunity_evaluation": {
+                        "policy": {"decision": "promote"},
+                    }
+                },
+            },
+            {
+                "decision": "",
+                "evidence": {
+                    "opportunity_evaluation": {
+                        "policy": {"decision": "park"},
+                    }
+                },
+            },
+        ]
+    )
+
+    assert breakdown == {"promote": 1, "park": 1}
+
+
 def test_orchestrator_routes_spec_generation_completion_to_builder_when_auto_build_enabled(temp_db):
     orchestrator = Orchestrator(temp_db, auto_build=True)
     finding_id = temp_db.insert_finding(

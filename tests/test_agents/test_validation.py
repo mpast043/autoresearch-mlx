@@ -162,6 +162,8 @@ def test_process_validation_message_sends_orchestrator_result(temp_db):
     assert "selection_status" not in (validation.evidence or {})
     assert "selection_reason" not in (validation.evidence or {})
     assert "selection_gate" not in (validation.evidence or {})
+    assert "decision" not in (validation.evidence or {})
+    assert "decision_reason" not in (validation.evidence or {})
 
     queued = asyncio.run(queue.get_for_agent("orchestrator"))
     assert queued is not None
@@ -264,3 +266,5 @@ def test_validation_persists_recurrence_runtime_fields_for_reporting(temp_db):
     assert "selection_status" not in (validation.evidence or {})
     assert "selection_reason" not in (validation.evidence or {})
     assert "selection_gate" not in (validation.evidence or {})
+    assert "decision" not in (validation.evidence or {})
+    assert "decision_reason" not in (validation.evidence or {})

@@ -193,8 +193,6 @@ def build_evidence_payload(
     return {
         "finding_id": finding_id,
         "finding_kind": finding_kind,
-        "decision": decision["recommendation"],
-        "decision_reason": decision.get("decision_reason", decision.get("reason", "")),
         "park_subreason": decision.get("park_subreason", ""),
         "recurrence_timeout": evidence_scores["evidence"].get("recurrence_timeout", False),
         "competitor_timeout": evidence_scores["evidence"].get("competitor_timeout", False),

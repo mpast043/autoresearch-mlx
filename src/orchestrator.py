@@ -462,7 +462,11 @@ class Orchestrator:
                     except Exception:
                         evidence = {}
                 if isinstance(evidence, dict):
-                    decision = evidence.get("decision")
+                    evaluation = evidence.get("opportunity_evaluation")
+                    if isinstance(evaluation, dict):
+                        decision = (evaluation.get("policy", {}) or {}).get("decision")
+                    if not decision:
+                        decision = evidence.get("decision")
             key = decision or "unknown"
             breakdown[key] = breakdown.get(key, 0) + 1
         return breakdown
