@@ -41,6 +41,12 @@ def _preview(row: dict[str, Any]) -> dict[str, Any]:
         "decision_score": row["decision_score"],
         "shadow_score_v2_lite": row["shadow_score_v2_lite"],
         "shadow_origin": row["shadow_origin"],
+        "query_overlap_ratio": row.get("query_overlap_ratio", 0.0),
+        "matched_url_overlap_ratio": row.get("matched_url_overlap_ratio", 0.0),
+        "comparison_sibling_finding_id": row.get("comparison_sibling_finding_id", 0),
+        "comparison_scope": row.get("comparison_scope", ""),
+        "query_origin_counts": row.get("query_origin_counts", {}),
+        "attribution_scope_counts": row.get("attribution_scope_counts", {}),
     }
 
 
@@ -64,6 +70,7 @@ def _extract_shadow_row(row: dict[str, Any]) -> dict[str, Any] | None:
     evaluation = evidence.get("opportunity_evaluation") if isinstance(evidence.get("opportunity_evaluation"), dict) else {}
     policy = evaluation.get("policy", {}) or {}
     selection = evaluation.get("selection", {}) or {}
+    evaluation_evidence = evaluation.get("evidence", {}) or {}
     measures = evaluation.get("measures", {}) or {}
     scores = measures.get("scores", {}) or {}
     legacy_scorecard = evidence.get("opportunity_scorecard", {}) or {}
@@ -114,6 +121,12 @@ def _extract_shadow_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "decision_score": round(decision_score, 4),
         "shadow_score_v2_lite": round(float(shadow_score), 4),
         "shadow_origin": shadow_origin,
+        "query_origin_counts": dict(evaluation_evidence.get("query_origin_counts", evidence.get("query_origin_counts", {}) or {})),
+        "attribution_scope_counts": dict(evaluation_evidence.get("attribution_scope_counts", evidence.get("attribution_scope_counts", {}) or {})),
+        "comparison_sibling_finding_id": int(evaluation_evidence.get("comparison_sibling_finding_id", evidence.get("comparison_sibling_finding_id", 0)) or 0),
+        "comparison_scope": str(evaluation_evidence.get("comparison_scope", evidence.get("comparison_scope", "")) or ""),
+        "query_overlap_ratio": float(evaluation_evidence.get("query_overlap_ratio", evidence.get("query_overlap_ratio", 0.0)) or 0.0),
+        "matched_url_overlap_ratio": float(evaluation_evidence.get("matched_url_overlap_ratio", evidence.get("matched_url_overlap_ratio", 0.0)) or 0.0),
         "shadow_diagnostics": shadow_diagnostics,
     }
 

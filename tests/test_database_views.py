@@ -53,6 +53,15 @@ def test_build_validation_review_row_prefers_canonical_snapshot_fields():
             "evidence": {
                 "recurrence_state": "supported",
                 "family_confirmation_count": 2,
+                "requested_specific_queries": 2,
+                "generated_specific_queries": 2,
+                "executed_specific_queries": 2,
+                "query_origin_counts": {"finding_specific": 1},
+                "attribution_scope_counts": {"finding": 1},
+                "comparison_sibling_finding_id": 77,
+                "comparison_scope": "same_domain",
+                "query_overlap_ratio": 0.75,
+                "compression_signal": "high",
             },
             "policy": {
                 "decision": "park",
@@ -82,3 +91,8 @@ def test_build_validation_review_row_prefers_canonical_snapshot_fields():
     assert result["value_support"] == 0.43
     assert result["recurrence_state"] == "supported"
     assert result["family_confirmation_count"] == 2
+    assert result["requested_specific_queries"] == 2
+    assert result["executed_specific_queries"] == 2
+    assert result["query_origin_counts"]["finding_specific"] == 1
+    assert result["comparison_sibling_finding_id"] == 77
+    assert result["compression_signal"] == "high"

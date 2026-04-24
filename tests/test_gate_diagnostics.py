@@ -51,6 +51,15 @@ def test_explain_validation_evidence_prefers_canonical_snapshot():
                 "market_gap_state": "needs_more_recurrence_evidence",
                 "market_gap": {"market_gap": "needs_more_recurrence_evidence", "solution_gap_score": 0.58},
                 "counterevidence": [{"claim": "rare", "status": "contradicted"}],
+                "requested_specific_queries": 2,
+                "generated_specific_queries": 2,
+                "executed_specific_queries": 2,
+                "query_origin_counts": {"finding_specific": 1},
+                "attribution_scope_counts": {"finding": 1},
+                "comparison_sibling_finding_id": 88,
+                "comparison_scope": "same_domain",
+                "query_overlap_ratio": 0.75,
+                "compression_signal": "high",
             },
             "shadow": {"shadow_score_v2_lite": 0.49},
         },
@@ -64,6 +73,10 @@ def test_explain_validation_evidence_prefers_canonical_snapshot():
     assert detail["canonical_evaluation"]["build_prep_route"] == "prototype_candidate"
     assert detail["selection_gate"]["score_language"]["primary"]["decision_score"] == 0.31
     assert detail["selection_gate"]["score_language"]["diagnostic"]["composite_score"] == 0.27
+    assert detail["evidence_summary"]["executed_specific_queries"] == 2
+    assert detail["evidence_summary"]["query_origin_counts"]["finding_specific"] == 1
+    assert detail["evidence_summary"]["comparison_sibling_finding_id"] == 88
+    assert detail["evidence_summary"]["compression_signal"] == "high"
     assert detail["stage_decision"]["decision"]["recommendation"] in {"park", "promote", "kill"}
 
 
@@ -96,6 +109,15 @@ class _FakeDB:
                             "market_gap_state": "needs_more_recurrence_evidence",
                             "market_gap": {"market_gap": "needs_more_recurrence_evidence", "solution_gap_score": 0.58},
                             "counterevidence": [{"claim": "rare", "status": "contradicted"}],
+                            "requested_specific_queries": 2,
+                            "generated_specific_queries": 2,
+                            "executed_specific_queries": 2,
+                            "query_origin_counts": {"finding_specific": 1},
+                            "attribution_scope_counts": {"finding": 1},
+                            "comparison_sibling_finding_id": 88,
+                            "comparison_scope": "same_domain",
+                            "query_overlap_ratio": 0.75,
+                            "compression_signal": "high",
                         },
                         "shadow": {"shadow_score_v2_lite": 0.49},
                     },
@@ -117,3 +139,6 @@ def test_build_gate_diagnostics_report_uses_canonical_top_level_state():
     assert report["validations"][0]["decision"] == "promote"
     assert report["validations"][0]["selection_status"] == "prototype_candidate"
     assert report["validations"][0]["selection_reason"] == "validated_selection_gate"
+    evidence_summary = report["validations"][0]["diagnostics"]["evidence_summary"]
+    assert evidence_summary["executed_specific_queries"] == 2
+    assert evidence_summary["comparison_sibling_finding_id"] == 88

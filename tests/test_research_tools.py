@@ -1161,15 +1161,18 @@ def test_build_recurrence_queries_prioritize_accounting_reconciliation_terms():
         cost_consequence_clues="time loss",
     )
 
-    queries = toolkit.build_recurrence_queries(
+    query_plan = toolkit.build_recurrence_queries(
         title="",
         summary="Clients pay me through multiple channels and bank deposits do not match invoices cleanly.",
         atom=atom,
+        include_metadata=True,
     )
 
-    assert queries[0] == '"manual reconciliation" "small business"'
-    assert any("payment reconciliation" in query for query in queries[:4])
-    assert any("bank deposits" in query and "invoices" in query for query in queries[:4])
+    queries = [item["query"] for item in query_plan]
+    assert query_plan[0]["query_origin"] == "finding_specific"
+    assert query_plan[1]["query_origin"] == "finding_specific"
+    assert any('"manual reconciliation" "small business"' == query for query in queries)
+    assert any("payment reconciliation" in query for query in queries)
 
 
 def test_build_recurrence_queries_prioritize_multichannel_seller_reporting_terms():
@@ -1185,15 +1188,18 @@ def test_build_recurrence_queries_prioritize_multichannel_seller_reporting_terms
         cost_consequence_clues="time loss",
     )
 
-    queries = toolkit.build_recurrence_queries(
+    query_plan = toolkit.build_recurrence_queries(
         title="",
         summary="All the money goes into one bank account and I pull reports from each platform to match payouts manually.",
         atom=atom,
+        include_metadata=True,
     )
 
-    assert queries[0] == '"shopify amazon etsy" "payout reconciliation"'
-    assert any("sales channel profitability" in query for query in queries[:4])
-    assert any("bank deposits" in query and "payouts" in query for query in queries[:4])
+    queries = [item["query"] for item in query_plan]
+    assert query_plan[0]["query_origin"] == "finding_specific"
+    assert query_plan[1]["query_origin"] == "finding_specific"
+    assert any('"shopify amazon etsy" "payout reconciliation"' == query for query in queries)
+    assert any("sales channel profitability" in query for query in queries)
 
 
 def test_spreadsheet_operator_admin_queries_prioritize_channel_profitability_cases():
@@ -2953,6 +2959,69 @@ def test_recurrence_source_specific_queries_include_state_drift_confirmation_pac
     assert any("inventory counts out sync import" in query or "order analytics mismatch delete" in query for query in web_queries)
 
 
+def test_classify_finding_specific_query_requires_distinguishing_field_concept():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business bookkeeping",
+        user_role="bookkeeper",
+        job_to_be_done="keep monthly bookkeeping and client intake on track",
+        failure_mode="pdf bank statements arrive without csv exports",
+        trigger_event="after clients email statement pdfs",
+        current_workaround="manual invoice entry into quickbooks",
+        current_tools="quickbooks pdf email",
+        pain_statement="bookkeeping cleanup keeps expanding every close",
+    )
+
+    generic = toolkit._classify_finding_specific_query(
+        query='"small business bookkeeping" workflow',
+        atom=atom,
+    )
+    failure_specific = toolkit._classify_finding_specific_query(
+        query='"pdf bank statements" quickbooks small business',
+        atom=atom,
+    )
+    workaround_specific = toolkit._classify_finding_specific_query(
+        query='"manual invoice entry" quickbooks bookkeeping',
+        atom=atom,
+    )
+
+    assert generic["is_finding_specific"] is False
+    assert failure_specific["is_finding_specific"] is True
+    assert failure_specific["distinguishing_source_field"] == "failure_mode"
+    assert failure_specific["distinguishing_concept"]
+    assert failure_specific["distinguishing_concept_span"]
+    assert workaround_specific["is_finding_specific"] is True
+    assert workaround_specific["distinguishing_source_field"] == "current_workaround"
+
+
+def test_build_recurrence_queries_reserves_first_two_slots_for_finding_specific_queries():
+    toolkit = ResearchToolkit()
+    atom = SimpleNamespace(
+        segment="small business bookkeeping",
+        user_role="bookkeeper",
+        job_to_be_done="close the books without cleanup drift",
+        failure_mode="pdf bank statements arrive without csv exports",
+        trigger_event="after clients email statement pdfs",
+        current_workaround="manual invoice entry into quickbooks",
+        current_tools="quickbooks pdf email",
+        pain_statement="closing work expands every month",
+    )
+
+    plan = toolkit.build_recurrence_queries(
+        title="PDF bookkeeping cleanup every close",
+        summary="Bookkeepers still re-enter invoices by hand when statements only arrive as PDFs.",
+        atom=atom,
+        include_metadata=True,
+    )
+
+    assert len(plan) >= 2
+    assert plan[0]["query_origin"] == "finding_specific"
+    assert plan[1]["query_origin"] == "finding_specific"
+    assert plan[0]["distinguishing_source_field"] in {"failure_mode", "current_workaround", "trigger_event"}
+    assert plan[1]["distinguishing_source_field"] in {"failure_mode", "current_workaround", "trigger_event"}
+    assert plan[0]["query"] != plan[1]["query"]
+
+
 def test_classify_recurrence_match_strong_partial_none():
     toolkit = ResearchToolkit()
     atom = SimpleNamespace(
@@ -4243,11 +4312,18 @@ def test_gather_recurrence_evidence_records_yield_fields(monkeypatch):
     monkeypatch.setattr(toolkit, "reddit_search", fake_reddit_search)
     monkeypatch.setattr(toolkit, "search_web", fake_search_web)
 
+    query_plan = toolkit.build_recurrence_queries(
+        title="Spreadsheet cleanup workflow still manual",
+        summary="Teams still rely on manual csv cleanup after spreadsheet imports break.",
+        atom=atom,
+        include_metadata=True,
+    )
     _docs, meta = asyncio.run(
         toolkit.gather_recurrence_evidence(
-            ['"manual data entry" "spreadsheets manual work email"'],
+            [item["query"] for item in query_plan],
             finding_kind="problem_signal",
             atom=atom,
+            query_plan=query_plan,
         )
     )
 
@@ -4274,6 +4350,12 @@ def test_gather_recurrence_evidence_records_yield_fields(monkeypatch):
     assert first_match["normalized_url"] == "https://ops.example.com/manual-spreadsheet-cleanup"
     assert first_match["query_text"]
     assert first_match["title"] == "Spreadsheet cleanup workflow still manual"
+    assert meta["requested_specific_queries"] == 2
+    assert meta["generated_specific_queries"] >= 2
+    assert meta["executed_specific_queries"] >= 1
+    assert meta["query_origin_query_counts"]["finding_specific"] >= 1
+    assert first_match["query_origin"]
+    assert first_match["distinguishing_source_field"] in {"failure_mode", "current_workaround", "trigger_event", ""}
     assert meta["recurrence_failure_class"] in {"single_source_only", "partial_confirmation_only", "confirmed"}
 
 

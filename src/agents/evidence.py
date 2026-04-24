@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import re
+from collections import Counter
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -349,6 +350,179 @@ def _confirmed_recurrence_records(evidence: dict[str, Any]) -> list[dict[str, An
                 }
             )
     return confirmed
+
+
+def _normalized_query_set(queries: Any) -> set[str]:
+    if not isinstance(queries, list):
+        return set()
+    return {str(query).strip().lower() for query in queries if str(query or "").strip()}
+
+
+def _normalized_url_set(records: Any) -> set[str]:
+    if not isinstance(records, list):
+        return set()
+    urls: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        url = str(record.get("normalized_url") or record.get("url") or "").strip().lower()
+        if url:
+            urls.add(url)
+    return urls
+
+
+def _jaccard_ratio(left: set[str], right: set[str]) -> float:
+    if not left and not right:
+        return 0.0
+    union = left | right
+    if not union:
+        return 0.0
+    return round(len(left & right) / len(union), 4)
+
+
+def _overlap_signal(query_overlap_ratio: float, matched_url_overlap_ratio: float) -> str:
+    if query_overlap_ratio >= 0.75 or matched_url_overlap_ratio >= 0.75:
+        return "high"
+    if query_overlap_ratio >= 0.5:
+        return "moderate"
+    return "none"
+
+
+def _classify_attribution_scope(record: dict[str, Any]) -> str:
+    query_origin = str(record.get("query_origin", "") or "")
+    if str(record.get("distinguishing_source_field", "") or "").strip():
+        return "finding"
+    if query_origin == "finding_specific":
+        return "finding"
+    if query_origin == "strategy_pack":
+        return "cluster_only"
+    if query_origin in {"fallback", "specialized_surface"}:
+        return "cluster_only" if str(record.get("match_class", "") or "") == "strong" else "generic_domain"
+    return "generic_domain"
+
+
+def _summarize_attribution(records: list[dict[str, Any]]) -> dict[str, Any]:
+    query_origin_counts: Counter[str] = Counter()
+    attribution_scope_counts: Counter[str] = Counter()
+    cross_tab: Counter[str] = Counter()
+    for record in records:
+        query_origin = str(record.get("query_origin", "") or "unknown")
+        attribution_scope = str(record.get("attribution_scope", "") or "generic_domain")
+        query_origin_counts[query_origin] += 1
+        attribution_scope_counts[attribution_scope] += 1
+        cross_tab[f"{query_origin}->{attribution_scope}"] += 1
+    return {
+        "query_origin_counts": dict(sorted(query_origin_counts.items())),
+        "attribution_scope_counts": dict(sorted(attribution_scope_counts.items())),
+        "origin_scope_counts": dict(sorted(cross_tab.items())),
+        "finding_specific_match_count": int(attribution_scope_counts.get("finding", 0)),
+        "cluster_only_match_count": int(attribution_scope_counts.get("cluster_only", 0)),
+        "generic_domain_match_count": int(attribution_scope_counts.get("generic_domain", 0)),
+    }
+
+
+def _validation_overlap_snapshot(row: dict[str, Any]) -> dict[str, Any]:
+    evidence = row.get("evidence") or {}
+    evaluation = evidence.get("opportunity_evaluation") if isinstance(evidence.get("opportunity_evaluation"), dict) else {}
+    evaluation_evidence = evaluation.get("evidence", {}) or {}
+    corroboration_inputs = ((evaluation.get("inputs", {}) or {}).get("corroboration", {}) or {})
+    matched_records = _confirmed_recurrence_records(evidence)
+    return {
+        "finding_id": int(row.get("finding_id") or 0),
+        "validation_id": int(row.get("validation_id") or 0),
+        "domain_key": str(
+            evaluation_evidence.get("domain_key")
+            or evidence.get("domain_key")
+            or corroboration_inputs.get("domain_key")
+            or ""
+        ),
+        "retrieval_strategy_key": str(
+            evaluation_evidence.get("retrieval_strategy_key")
+            or evidence.get("retrieval_strategy_key")
+            or corroboration_inputs.get("retrieval_strategy_key")
+            or ""
+        ),
+        "queries": _normalized_query_set(evidence.get("queries_executed", [])),
+        "matched_urls": _normalized_url_set(matched_records),
+    }
+
+
+def _select_overlap_candidate(
+    *,
+    current_domain_key: str,
+    current_strategy_key: str,
+    current_queries: set[str],
+    current_matched_urls: set[str],
+    siblings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    def ranked(scope: str, items: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not items:
+            return None
+        scored: list[dict[str, Any]] = []
+        for item in items:
+            query_overlap_ratio = _jaccard_ratio(current_queries, item["queries"])
+            matched_url_overlap_ratio = _jaccard_ratio(current_matched_urls, item["matched_urls"])
+            scored.append(
+                {
+                    **item,
+                    "comparison_scope": scope,
+                    "query_overlap_ratio": query_overlap_ratio,
+                    "matched_url_overlap_ratio": matched_url_overlap_ratio,
+                    "shared_query_count": len(current_queries & item["queries"]),
+                    "shared_matched_url_count": len(current_matched_urls & item["matched_urls"]),
+                }
+            )
+        scored.sort(
+            key=lambda item: (
+                -float(item["query_overlap_ratio"]),
+                -float(item["matched_url_overlap_ratio"]),
+                int(item["finding_id"]),
+                int(item["validation_id"]),
+            )
+        )
+        return scored[0]
+
+    same_domain = [
+        item for item in siblings
+        if current_domain_key and str(item.get("domain_key") or "") == current_domain_key
+    ]
+    same_strategy = [
+        item for item in siblings
+        if current_strategy_key and str(item.get("retrieval_strategy_key") or "") == current_strategy_key
+    ]
+    candidate = ranked("same_domain", same_domain)
+    if candidate is None:
+        candidate = ranked("same_strategy", same_strategy)
+    if candidate is None:
+        candidate = ranked("overall", siblings)
+    if candidate is None:
+        return {
+            "comparison_sibling_finding_id": 0,
+            "comparison_sibling_validation_id": 0,
+            "comparison_sibling_domain_key": "",
+            "comparison_sibling_strategy_key": "",
+            "comparison_scope": "",
+            "query_overlap_ratio": 0.0,
+            "matched_url_overlap_ratio": 0.0,
+            "shared_query_count": 0,
+            "shared_matched_url_count": 0,
+            "compression_signal": "none",
+        }
+    return {
+        "comparison_sibling_finding_id": int(candidate["finding_id"]),
+        "comparison_sibling_validation_id": int(candidate["validation_id"]),
+        "comparison_sibling_domain_key": str(candidate.get("domain_key") or ""),
+        "comparison_sibling_strategy_key": str(candidate.get("retrieval_strategy_key") or ""),
+        "comparison_scope": str(candidate.get("comparison_scope") or ""),
+        "query_overlap_ratio": float(candidate["query_overlap_ratio"]),
+        "matched_url_overlap_ratio": float(candidate["matched_url_overlap_ratio"]),
+        "shared_query_count": int(candidate["shared_query_count"]),
+        "shared_matched_url_count": int(candidate["shared_matched_url_count"]),
+        "compression_signal": _overlap_signal(
+            float(candidate["query_overlap_ratio"]),
+            float(candidate["matched_url_overlap_ratio"]),
+        ),
+    }
 
 
 def _has_confirmed_source_yield(evidence: dict[str, Any]) -> bool:
@@ -973,6 +1147,20 @@ class EvidenceAgent(BaseAgent):
                         "recurrence_results_by_source": evidence_scores["evidence"].get("recurrence_results_by_source", {}),
                         "matched_results_by_source": evidence_scores["evidence"].get("matched_results_by_source", {}),
                         "partial_results_by_source": evidence_scores["evidence"].get("partial_results_by_source", {}),
+                        "requested_specific_queries": evidence_scores["evidence"].get("requested_specific_queries", 2),
+                        "generated_specific_queries": evidence_scores["evidence"].get("generated_specific_queries", 0),
+                        "executed_specific_queries": evidence_scores["evidence"].get("executed_specific_queries", 0),
+                        "strategy_pack_query_count": evidence_scores["evidence"].get("strategy_pack_query_count", 0),
+                        "query_origin_query_counts": evidence_scores["evidence"].get("query_origin_query_counts", {}),
+                        "query_origin_counts": evidence_scores["evidence"].get("query_origin_counts", {}),
+                        "attribution_scope_counts": evidence_scores["evidence"].get("attribution_scope_counts", {}),
+                        "origin_scope_counts": evidence_scores["evidence"].get("origin_scope_counts", {}),
+                        "comparison_sibling_finding_id": evidence_scores["evidence"].get("comparison_sibling_finding_id", 0),
+                        "comparison_sibling_validation_id": evidence_scores["evidence"].get("comparison_sibling_validation_id", 0),
+                        "comparison_scope": evidence_scores["evidence"].get("comparison_scope", ""),
+                        "query_overlap_ratio": evidence_scores["evidence"].get("query_overlap_ratio", 0.0),
+                        "matched_url_overlap_ratio": evidence_scores["evidence"].get("matched_url_overlap_ratio", 0.0),
+                        "compression_signal": evidence_scores["evidence"].get("compression_signal", "none"),
                         "evidence_attempts": evidence_attempts,
                         "family_confirmation_count": evidence_scores["evidence"].get("family_confirmation_count", 0),
                         "source_yield": evidence_scores["evidence"].get("source_yield", {}),
@@ -1038,6 +1226,15 @@ class EvidenceAgent(BaseAgent):
             budget_profile = self.toolkit._recurrence_budget_profile(atom)
         except Exception:
             budget_profile = {}
+        try:
+            strategy_metadata = self.toolkit._recurrence_strategy_metadata(atom=atom)
+        except Exception:
+            strategy_metadata = {
+                "domain_key": "",
+                "workflow_cluster_key": "",
+                "retrieval_strategy_key": "",
+                "corroboration_strategy_key": "",
+            }
         return {
             "problem_score": 0.18 if has_structure else 0.1,
             "value_score": 0.32 if value_hint else 0.24,
@@ -1071,6 +1268,33 @@ class EvidenceAgent(BaseAgent):
                 "recurrence_gap_reason": "evidence_agent_timeout",
                 "queries_considered": [],
                 "queries_executed": [],
+                "requested_specific_queries": 2,
+                "generated_specific_queries": 0,
+                "executed_specific_queries": 0,
+                "strategy_pack_query_count": 0,
+                "query_origin_query_counts": {
+                    "finding_specific": 0,
+                    "strategy_pack": 0,
+                    "fallback": 0,
+                    "specialized_surface": 0,
+                },
+                "query_origin_counts": {},
+                "attribution_scope_counts": {},
+                "origin_scope_counts": {},
+                "finding_specific_match_count": 0,
+                "cluster_only_match_count": 0,
+                "generic_domain_match_count": 0,
+                "comparison_sibling_finding_id": 0,
+                "comparison_sibling_validation_id": 0,
+                "comparison_sibling_domain_key": "",
+                "comparison_sibling_strategy_key": "",
+                "comparison_scope": "",
+                "query_overlap_ratio": 0.0,
+                "matched_url_overlap_ratio": 0.0,
+                "shared_query_count": 0,
+                "shared_matched_url_count": 0,
+                "compression_signal": "none",
+                **strategy_metadata,
                 "recurrence_budget_profile": budget_profile,
                 "candidate_meaningful": self.toolkit._meaningful_candidate_snapshot(atom),
                 "evidence_attempts": [
@@ -1301,7 +1525,16 @@ class EvidenceAgent(BaseAgent):
         results_by_source = evidence.get("recurrence_results_by_source", {}) or {}
         # Use full doc list for signature matching, not the truncated sample
         recurrence_docs = evidence.get("_all_recurrence_docs") or evidence.get("recurrence_docs", []) or []
+        matched_docs_by_source = evidence.get("matched_docs_by_source", {}) or {}
+        for records in matched_docs_by_source.values():
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                record["attribution_scope"] = _classify_attribution_scope(record)
         confirmed_records = _confirmed_recurrence_records(evidence)
+        attribution_summary = _summarize_attribution(confirmed_records)
         source_diversity = sum(1 for count in results_by_source.values() if count)
         query_breadth = sum(1 for count in results_by_query.values() if count)
         doc_count = len(confirmed_records) if confirmed_records else raw_doc_count
@@ -1492,6 +1725,47 @@ class EvidenceAgent(BaseAgent):
             confirmation_depth_score = 0.0
             domain_depth_score = 0.0
             source_concentration = 0.0
+            for records in matched_docs_by_source.values():
+                if not isinstance(records, list):
+                    continue
+                for record in records:
+                    if isinstance(record, dict):
+                        record["attribution_scope"] = "generic_domain"
+            confirmed_records = _confirmed_recurrence_records(evidence)
+            attribution_summary = _summarize_attribution(confirmed_records)
+
+        current_queries = _normalized_query_set(evidence.get("queries_executed", []))
+        current_matched_urls = _normalized_url_set(confirmed_records)
+        current_domain_key = str(evidence.get("domain_key", "") or "")
+        current_strategy_key = str(evidence.get("retrieval_strategy_key", "") or "")
+        list_validation_payloads = getattr(self.db, "list_validation_evidence_payloads", None)
+        sibling_rows = (
+            list_validation_payloads(
+                run_id=self.db.active_run_id,
+                limit=500,
+            )
+            if callable(list_validation_payloads)
+            else []
+        )
+        sibling_snapshots = [
+            _validation_overlap_snapshot(row)
+            for row in sibling_rows
+            if int(row.get("finding_id") or 0) != finding_id
+        ]
+        overlap_summary = _select_overlap_candidate(
+            current_domain_key=current_domain_key,
+            current_strategy_key=current_strategy_key,
+            current_queries=current_queries,
+            current_matched_urls=current_matched_urls,
+            siblings=sibling_snapshots,
+        )
+        evidence["query_origin_counts"] = attribution_summary["query_origin_counts"]
+        evidence["attribution_scope_counts"] = attribution_summary["attribution_scope_counts"]
+        evidence["origin_scope_counts"] = attribution_summary["origin_scope_counts"]
+        evidence["finding_specific_match_count"] = attribution_summary["finding_specific_match_count"]
+        evidence["cluster_only_match_count"] = attribution_summary["cluster_only_match_count"]
+        evidence["generic_domain_match_count"] = attribution_summary["generic_domain_match_count"]
+        evidence.update(overlap_summary)
         corroboration_json = {
             "finding_id": finding_id,
             "run_id": self.db.active_run_id,
@@ -1531,6 +1805,24 @@ class EvidenceAgent(BaseAgent):
             "single_source_penalty": round(single_source_penalty, 4),
             "contradiction_guard_applied": contradiction_guard["applied"],
             "contradiction_guard_reason": contradiction_guard["guard_reason"],
+            "requested_specific_queries": int(evidence.get("requested_specific_queries", 2) or 0),
+            "generated_specific_queries": int(evidence.get("generated_specific_queries", 0) or 0),
+            "executed_specific_queries": int(evidence.get("executed_specific_queries", 0) or 0),
+            "strategy_pack_query_count": int(evidence.get("strategy_pack_query_count", 0) or 0),
+            "query_origin_query_counts": dict(evidence.get("query_origin_query_counts", {}) or {}),
+            "query_origin_counts": attribution_summary["query_origin_counts"],
+            "attribution_scope_counts": attribution_summary["attribution_scope_counts"],
+            "origin_scope_counts": attribution_summary["origin_scope_counts"],
+            "finding_specific_match_count": attribution_summary["finding_specific_match_count"],
+            "cluster_only_match_count": attribution_summary["cluster_only_match_count"],
+            "generic_domain_match_count": attribution_summary["generic_domain_match_count"],
+            "domain_key": current_domain_key,
+            "workflow_cluster_key": str(evidence.get("workflow_cluster_key", "") or ""),
+            "retrieval_strategy_key": current_strategy_key,
+            "corroboration_strategy_key": str(evidence.get("corroboration_strategy_key", "") or ""),
+            "queries_executed": list(evidence.get("queries_executed", []) or []),
+            "matched_confirmation_urls": sorted(current_matched_urls),
+            **overlap_summary,
             **generalizability,
         }
         return CorroborationRecord(

@@ -11,7 +11,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from src.agents.evidence import EvidenceAgent
-from src.database import Database, Finding, ProblemAtom, RawSignal
+from src.database import Database, Finding, ProblemAtom, RawSignal, Validation
 from src.messaging import MessageQueue, MessageType
 
 
@@ -305,6 +305,143 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(market.demand_score, 0.0)
         self.assertIn("cost_pressure_score", market.evidence)
         self.assertIn("willingness_to_pay_signal", market.evidence)
+
+    async def test_corroboration_record_adds_attribution_and_overlap_summaries(self):
+        prior_finding_id = self.db.insert_finding(
+            Finding(
+                source="reddit-problem",
+                source_url="https://reddit.com/prior",
+                product_built="Prior bookkeeping drift",
+                outcome_summary="Prior bookkeeping drift.",
+                content_hash="prior-bookkeeping-drift",
+                finding_kind="pain_point",
+                source_class="pain_signal",
+                evidence_json=json.dumps({}),
+            )
+        )
+        self.db.upsert_validation(
+            Validation(
+                finding_id=prior_finding_id,
+                run_id="test-run",
+                evidence={
+                    "domain_key": "finance_operations",
+                    "retrieval_strategy_key": "accounting_focus",
+                    "queries_executed": [
+                        '"quickbooks payout reconciliation" forum',
+                        '"pdf bank statements" quickbooks',
+                    ],
+                    "matched_docs_by_source": {
+                        "web": [
+                            {
+                                "normalized_url": "https://evidence.example.com/reconciliation-gap",
+                                "source_family": "web",
+                                "query_origin": "strategy_pack",
+                                "match_class": "strong",
+                            }
+                        ]
+                    },
+                },
+            )
+        )
+
+        finding_id = self.db.insert_finding(
+            Finding(
+                source="reddit-problem",
+                source_url="https://reddit.com/current",
+                product_built="Current bookkeeping drift",
+                outcome_summary="Current bookkeeping drift.",
+                content_hash="current-bookkeeping-drift",
+                finding_kind="pain_point",
+                source_class="pain_signal",
+                evidence_json=json.dumps({}),
+            )
+        )
+        finding = self.db.get_finding(finding_id)
+        atom = ProblemAtom(
+            signal_id=0,
+            finding_id=finding_id,
+            cluster_key="bookkeeping-drift",
+            segment="small business bookkeeping",
+            user_role="bookkeeper",
+            job_to_be_done="close the books without reconciliation drift",
+            trigger_event="after clients email statement pdfs",
+            pain_statement="Bookkeepers still re-enter invoices by hand.",
+            failure_mode="pdf bank statements arrive without csv exports",
+            current_workaround="manual invoice entry into quickbooks",
+            current_tools="quickbooks pdf email",
+        )
+        evidence_scores = {
+            "problem_score": 0.36,
+            "evidence": {
+                "recurrence_state": "supported",
+                "recurrence_query_coverage": 0.75,
+                "recurrence_doc_count": 2,
+                "recurrence_domain_count": 2,
+                "recurrence_results_by_query": {
+                    '"pdf bank statements" quickbooks': 1,
+                    '"quickbooks payout reconciliation" forum': 1,
+                },
+                "recurrence_results_by_source": {"web": 1, "reddit": 1, "github": 0},
+                "queries_executed": [
+                    '"pdf bank statements" quickbooks',
+                    '"quickbooks payout reconciliation" forum',
+                ],
+                "requested_specific_queries": 2,
+                "generated_specific_queries": 2,
+                "executed_specific_queries": 2,
+                "strategy_pack_query_count": 1,
+                "query_origin_query_counts": {"finding_specific": 1, "strategy_pack": 1, "fallback": 0, "specialized_surface": 0},
+                "domain_key": "finance_operations",
+                "workflow_cluster_key": "accounting_reconciliation",
+                "retrieval_strategy_key": "accounting_focus",
+                "corroboration_strategy_key": "accounting_focus",
+                "matched_docs_by_source": {
+                    "web": [
+                        {
+                            "source_family": "web",
+                            "source": "web",
+                            "query_text": '"pdf bank statements" quickbooks',
+                            "query_origin": "finding_specific",
+                            "distinguishing_source_field": "failure_mode",
+                            "distinguishing_concept": "statements",
+                            "distinguishing_concept_span": "pdf bank statements arrive without csv",
+                            "normalized_url": "https://evidence.example.com/pdf-bank-statements",
+                            "title": "PDF statement cleanup remains manual",
+                            "snippet": "Bookkeepers still clean up statement PDFs manually.",
+                            "match_class": "strong",
+                        },
+                        {
+                            "source_family": "web",
+                            "source": "web",
+                            "query_text": '"quickbooks payout reconciliation" forum',
+                            "query_origin": "strategy_pack",
+                            "normalized_url": "https://evidence.example.com/reconciliation-gap",
+                            "title": "QuickBooks reconciliation gap",
+                            "snippet": "Operators still reconcile payout mismatches by hand.",
+                            "match_class": "strong",
+                        },
+                    ]
+                },
+                "source_yield": {
+                    "web": {"confirmed": True, "docs_strong_match": 2},
+                    "reddit": {"confirmed": True, "docs_strong_match": 1},
+                },
+                "family_confirmation_count": 2,
+                "_all_recurrence_docs": [],
+            },
+        }
+
+        record = await self.agent._build_corroboration_record(finding, atom, evidence_scores)
+
+        corroboration = record.evidence
+        current_matches = evidence_scores["evidence"]["matched_docs_by_source"]["web"]
+        self.assertEqual(current_matches[0]["attribution_scope"], "finding")
+        self.assertEqual(current_matches[1]["attribution_scope"], "cluster_only")
+        self.assertEqual(corroboration["query_origin_counts"]["finding_specific"], 1)
+        self.assertEqual(corroboration["attribution_scope_counts"]["cluster_only"], 1)
+        self.assertEqual(corroboration["comparison_sibling_finding_id"], prior_finding_id)
+        self.assertGreaterEqual(corroboration["query_overlap_ratio"], 0.5)
+        self.assertGreaterEqual(corroboration["matched_url_overlap_ratio"], 0.5)
 
     async def test_corroboration_record_degrades_timeout_without_attributable_confirmations(self):
         async def fake_validate_problem(**_kwargs):

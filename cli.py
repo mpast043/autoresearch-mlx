@@ -89,6 +89,63 @@ def print_json(value) -> None:
     print(json.dumps(value, indent=2, default=str))
 
 
+def _evidence_trace_summary(evidence: dict | None) -> dict:
+    payload = dict(evidence or {})
+    evaluation = payload.get("opportunity_evaluation") if isinstance(payload.get("opportunity_evaluation"), dict) else {}
+    evaluation_evidence = (evaluation.get("evidence", {}) or {}) if evaluation else {}
+    return {
+        "requested_specific_queries": evaluation_evidence.get("requested_specific_queries", payload.get("requested_specific_queries", 2)),
+        "generated_specific_queries": evaluation_evidence.get("generated_specific_queries", payload.get("generated_specific_queries", 0)),
+        "executed_specific_queries": evaluation_evidence.get("executed_specific_queries", payload.get("executed_specific_queries", 0)),
+        "strategy_pack_query_count": evaluation_evidence.get("strategy_pack_query_count", payload.get("strategy_pack_query_count", 0)),
+        "query_origin_query_counts": evaluation_evidence.get("query_origin_query_counts", payload.get("query_origin_query_counts", {})),
+        "query_origin_counts": evaluation_evidence.get("query_origin_counts", payload.get("query_origin_counts", {})),
+        "attribution_scope_counts": evaluation_evidence.get("attribution_scope_counts", payload.get("attribution_scope_counts", {})),
+        "origin_scope_counts": evaluation_evidence.get("origin_scope_counts", payload.get("origin_scope_counts", {})),
+        "comparison_sibling_finding_id": evaluation_evidence.get("comparison_sibling_finding_id", payload.get("comparison_sibling_finding_id", 0)),
+        "comparison_sibling_validation_id": evaluation_evidence.get("comparison_sibling_validation_id", payload.get("comparison_sibling_validation_id", 0)),
+        "comparison_scope": evaluation_evidence.get("comparison_scope", payload.get("comparison_scope", "")),
+        "query_overlap_ratio": evaluation_evidence.get("query_overlap_ratio", payload.get("query_overlap_ratio", 0.0)),
+        "matched_url_overlap_ratio": evaluation_evidence.get("matched_url_overlap_ratio", payload.get("matched_url_overlap_ratio", 0.0)),
+        "shared_query_count": evaluation_evidence.get("shared_query_count", payload.get("shared_query_count", 0)),
+        "shared_matched_url_count": evaluation_evidence.get("shared_matched_url_count", payload.get("shared_matched_url_count", 0)),
+        "compression_signal": evaluation_evidence.get("compression_signal", payload.get("compression_signal", "none")),
+    }
+
+
+def build_evidence_trace_report(db, *, finding_id: int | None = None, run_id: str | None = None, limit: int = 100) -> dict:
+    attempts = db.list_evidence_attempts(
+        finding_id=finding_id,
+        run_id=run_id or None,
+        limit=limit,
+    ) if db else []
+    attempt_rows = [attempt.__dict__ for attempt in attempts]
+    attempt_query_origin_counts: dict[str, int] = collections.Counter()
+    for attempt in attempt_rows:
+        metadata = attempt.get("metadata") if isinstance(attempt.get("metadata"), dict) else {}
+        attempt_query_origin_counts[str(metadata.get("query_origin") or "unknown")] += 1
+
+    validation_rows = db.list_validation_evidence_payloads(
+        run_id=run_id or None,
+        limit=max(limit * 5, 200),
+        all_runs=not bool(run_id),
+    ) if db else []
+    if finding_id is not None:
+        validation_rows = [row for row in validation_rows if int(row.get("finding_id") or 0) == int(finding_id)]
+    latest_validation = validation_rows[0] if validation_rows else {}
+    validation_evidence = latest_validation.get("evidence") or {}
+
+    return {
+        "run_id": run_id or "",
+        "finding_id": int(finding_id or 0),
+        "attempt_count": len(attempt_rows),
+        "attempt_query_origin_counts": dict(sorted(attempt_query_origin_counts.items())),
+        "latest_validation_id": int(latest_validation.get("validation_id") or 0),
+        "summary": _evidence_trace_summary(validation_evidence),
+        "attempts": attempt_rows,
+    }
+
+
 def _normalize_revalidation_notes(
     *,
     existing_notes: dict | None,
@@ -1856,12 +1913,14 @@ async def main() -> None:
             )
             print_json(report)
         elif args.command == "evidence-trace":
-            attempts = app.db.list_evidence_attempts(
-                finding_id=args.finding_id,
-                run_id=args.run_id or None,
-                limit=args.limit,
-            ) if app.db else []
-            print_json([attempt.__dict__ for attempt in attempts])
+            print_json(
+                build_evidence_trace_report(
+                    app.db,
+                    finding_id=args.finding_id or None,
+                    run_id=args.run_id or None,
+                    limit=args.limit,
+                )
+            )
         elif args.command == "pipeline-health":
             from src.pipeline_health import compute_pipeline_health
 

@@ -289,6 +289,31 @@ DISCOVERY_QUERY_GENERIC_TERMS = {
     "trying_to",
 }
 
+FINDING_SPECIFIC_GENERIC_TERMS = DISCOVERY_QUERY_GENERIC_TERMS | {
+    "business",
+    "operator",
+    "operators",
+    "operations",
+    "manager",
+    "lead",
+    "admin",
+    "admins",
+    "team",
+    "teams",
+    "small",
+    "reporting",
+    "tracking",
+    "cleanup",
+    "reconciliation",
+    "spreadsheet",
+    "spreadsheets",
+    "sync",
+    "reliable",
+    "work",
+    "process",
+    "processes",
+}
+
 DISCOVERY_QUERY_ANCHOR_TERMS = [
     "reconciliation",
     "spreadsheet",
@@ -3379,6 +3404,27 @@ class ResearchToolkit:
             return []
         return list(trace.get("docs", []))
 
+    async def _gather_recurrence_evidence_with_compat(self, *args: Any, **kwargs: Any) -> tuple[list[SearchDocument], dict[str, Any]]:
+        try:
+            return await self.gather_recurrence_evidence(*args, **kwargs)
+        except TypeError as exc:
+            if "query_plan" not in str(exc):
+                raise
+            kwargs.pop("query_plan", None)
+            return await self.gather_recurrence_evidence(*args, **kwargs)
+
+    async def _run_recurrence_collection_with_compat(
+        self,
+        **kwargs: Any,
+    ) -> tuple[list[SearchDocument], dict[str, int], dict[str, int], dict[str, Any]]:
+        try:
+            return await self._run_recurrence_collection(**kwargs)
+        except TypeError as exc:
+            if "query_plan" not in str(exc):
+                raise
+            kwargs.pop("query_plan", None)
+            return await self._run_recurrence_collection(**kwargs)
+
     def _timeout_recurrence_attempts(
         self,
         trace: Optional[dict[str, Any]],
@@ -3428,16 +3474,24 @@ class ResearchToolkit:
         atom: Optional[Any] = None,
     ) -> dict[str, Any]:
         evidence_query = self._build_validation_query(title, summary)
-        recurrence_queries = self.build_recurrence_queries(title=title, summary=summary, atom=atom)
+        recurrence_query_plan = self.build_recurrence_queries(
+            title=title,
+            summary=summary,
+            atom=atom,
+            finding_kind=finding_kind,
+            include_metadata=True,
+        )
+        recurrence_queries = [item["query"] for item in recurrence_query_plan]
         recurrence_timeout = False
         competitor_timeout = False
         recurrence_trace = self._new_recurrence_trace()
         try:
             recurrence_docs, recurrence_meta = await asyncio.wait_for(
-                self.gather_recurrence_evidence(
+                self._gather_recurrence_evidence_with_compat(
                     recurrence_queries,
                     finding_kind=finding_kind,
                     atom=atom,
+                    query_plan=recurrence_query_plan,
                     trace=recurrence_trace,
                 ),
                 timeout=self.validation_recurrence_budget_seconds,
@@ -3508,6 +3562,29 @@ class ResearchToolkit:
                 },
                 "queries_considered": list(recurrence_queries),
                 "queries_executed": sorted({str(attempt.get("query") or "") for attempt in evidence_attempts if attempt.get("query")}),
+                "query_plan": list(recurrence_query_plan),
+                "requested_specific_queries": 2,
+                "generated_specific_queries": sum(
+                    1 for item in recurrence_query_plan if item.get("query_origin") == "finding_specific"
+                ),
+                "executed_specific_queries": sum(
+                    1
+                    for item in recurrence_query_plan
+                    if item.get("query_origin") == "finding_specific"
+                    and item.get("query") in {
+                        str(attempt.get("query") or "") for attempt in evidence_attempts if attempt.get("query")
+                    }
+                ),
+                "strategy_pack_query_count": sum(
+                    1 for item in recurrence_query_plan if item.get("query_origin") == "strategy_pack"
+                ),
+                "query_origin_query_counts": {
+                    "finding_specific": sum(1 for item in recurrence_query_plan if item.get("query_origin") == "finding_specific"),
+                    "strategy_pack": sum(1 for item in recurrence_query_plan if item.get("query_origin") == "strategy_pack"),
+                    "fallback": sum(1 for item in recurrence_query_plan if item.get("query_origin") == "fallback"),
+                    "specialized_surface": 0,
+                },
+                **self._recurrence_strategy_metadata(atom=atom, finding_kind=finding_kind),
                 "evidence_attempts": evidence_attempts,
                 "recurrence_budget_profile": self._recurrence_budget_profile(atom),
                 "candidate_meaningful": self._meaningful_candidate_snapshot(atom),
@@ -3671,6 +3748,19 @@ class ResearchToolkit:
             "matched_docs_by_source": recurrence_meta.get("matched_docs_by_source", {}),
             "partial_docs_by_source": recurrence_meta.get("partial_docs_by_source", {}),
             "family_confirmation_count": recurrence_meta.get("family_confirmation_count", 0),
+            "query_plan": recurrence_meta.get("query_plan", recurrence_query_plan),
+            "requested_specific_queries": recurrence_meta.get("requested_specific_queries", 2),
+            "generated_specific_queries": recurrence_meta.get(
+                "generated_specific_queries",
+                sum(1 for item in recurrence_query_plan if item.get("query_origin") == "finding_specific"),
+            ),
+            "executed_specific_queries": recurrence_meta.get("executed_specific_queries", 0),
+            "strategy_pack_query_count": recurrence_meta.get("strategy_pack_query_count", 0),
+            "query_origin_query_counts": recurrence_meta.get("query_origin_query_counts", {}),
+            "domain_key": recurrence_meta.get("domain_key", ""),
+            "workflow_cluster_key": recurrence_meta.get("workflow_cluster_key", ""),
+            "retrieval_strategy_key": recurrence_meta.get("retrieval_strategy_key", ""),
+            "corroboration_strategy_key": recurrence_meta.get("corroboration_strategy_key", ""),
             "source_yield": recurrence_meta.get("source_yield", {}),
             "reshaped_query_history": recurrence_meta.get("reshaped_query_history", []),
             "recurrence_gap_reason": recurrence_meta.get("recurrence_gap_reason", ""),
@@ -3727,101 +3817,19 @@ class ResearchToolkit:
         summary: str,
         atom: Optional[Any] = None,
         limit: int = 4,
-    ) -> list[str]:
-        queries: list[str] = []
-
-        def add(query: str) -> None:
-            normalized = self._normalize_recurrence_query(query)
-            if normalized and normalized not in queries:
-                queries.append(normalized)
-
-        if atom is not None:
-            cohort_haystack = normalize_content(
-                " ".join(
-                    [
-                        title or "",
-                        summary or "",
-                        getattr(atom, "segment", "") or "",
-                        getattr(atom, "user_role", "") or "",
-                        getattr(atom, "pain_statement", "") or "",
-                        getattr(atom, "job_to_be_done", "") or "",
-                        getattr(atom, "failure_mode", "") or "",
-                        getattr(atom, "trigger_event", "") or "",
-                        getattr(atom, "current_workaround", "") or "",
-                        getattr(atom, "current_tools", "") or "",
-                    ]
-                )
-            )
-            accounting_focus = any(marker in cohort_haystack for marker in [
-                "reconciliation", "bank", "deposit", "invoice", "payment", "payout", "quickbooks", "qbo", "month end", "close",
-            ])
-            seller_reporting_focus = (
-                any(marker in cohort_haystack for marker in ["shopify", "amazon", "etsy", "seller", "merchant", "store"])
-                and any(marker in cohort_haystack for marker in ["profitability", "revenue", "payout", "bank deposit", "spreadsheet", "reporting", "reconciliation"])
-            )
-            role_terms = self._recurrence_role_terms(getattr(atom, "user_role", "") or "")
-            segment_terms = self._recurrence_segment_terms(getattr(atom, "segment", "") or "")
-            job_terms = _query_term_span(getattr(atom, "job_to_be_done", "") or "", max_terms=5)
-            tool_terms = _query_term_span(getattr(atom, "current_tools", "") or "", max_terms=3)
-            # Prefer pain_statement for focus phrases — it has the clearest
-            # problem description and is less prone to truncation than
-            # job_to_be_done.  Fall back to job_to_be_done if no pain_statement.
-            pain_text = getattr(atom, "pain_statement", "") or ""
-            job_text = getattr(atom, "job_to_be_done", "") or ""
-            primary_problem_text = pain_text if len(pain_text) >= len(job_text) else job_text
-            job_phrase = self._recurrence_focus_phrase(primary_problem_text, max_words=6)
-            failure_phrase = self._recurrence_focus_phrase(getattr(atom, "failure_mode", "") or "", max_words=5)
-            trigger_phrase = self._recurrence_focus_phrase(getattr(atom, "trigger_event", "") or "", max_words=5)
-            workaround_phrase = self._recurrence_focus_phrase(getattr(atom, "current_workaround", "") or "", max_words=4)
-            cost_phrase = self._recurrence_focus_phrase(getattr(atom, "cost_consequence_clues", "") or "", max_words=3)
-
-            if seller_reporting_focus:
-                for query in [
-                    '"shopify amazon etsy" "payout reconciliation"',
-                    '"sales channel profitability" spreadsheet',
-                    '"bank deposits" payouts spreadsheet',
-                    '"channel profitability reporting" spreadsheet',
-                ]:
-                    add(query)
-            elif accounting_focus:
-                for query in [
-                    '"manual reconciliation" "small business"',
-                    '"payment reconciliation" "small business"',
-                    '"bank deposits not matching invoices" spreadsheet',
-                    '"quickbooks payout reconciliation" forum',
-                ]:
-                    add(query)
-
-            for parts in [
-                [failure_phrase, workaround_phrase or tool_terms, segment_terms],
-                [trigger_phrase or failure_phrase, job_phrase or job_terms, role_terms],
-                [job_terms, tool_terms or workaround_phrase, segment_terms],
-                [failure_phrase or trigger_phrase, segment_terms, cost_phrase],
-            ]:
-                add(" ".join(part for part in parts if part))
-
-            # Add broader, concept-level queries that generalize beyond the
-            # specific finding.  These use the core problem nouns/verbs rather
-            # than exact phrases, so they find corroborating pain signals even
-            # when the vocabulary differs.
-            core_concepts = self._extract_core_problem_concepts(atom)
-            if core_concepts:
-                for combo in [
-                    " ".join(core_concepts[:3]),
-                    " ".join(core_concepts[:2]) + " pain point",
-                    " ".join(core_concepts[:2]) + " frustration",
-                ]:
-                    add(combo)
-
-        base_query = self._build_validation_query(title, summary)
-        if not queries:
-            add(base_query)
-        elif len(queries) < 2:
-            shortened_base = " ".join(base_query.split()[: min(self.validation_query_terms, 5)])
-            add(shortened_base)
-        profile = self._recurrence_budget_profile(atom)
-        effective_limit = min(limit, profile["query_limit"])
-        return queries[:effective_limit]
+        finding_kind: str = "problem_signal",
+        include_metadata: bool = False,
+    ) -> list[str] | list[dict[str, Any]]:
+        plan = self._plan_recurrence_queries(
+            title=title,
+            summary=summary,
+            atom=atom,
+            limit=limit,
+            finding_kind=finding_kind,
+        )
+        if include_metadata:
+            return plan
+        return [item["query"] for item in plan]
 
     def _build_competitor_query(self, *, title: str, summary: str, atom: Optional[Any] = None) -> str:
         if atom is None:
@@ -4011,6 +4019,332 @@ class ResearchToolkit:
             reverse=True,
         )
         return scored[:5]
+
+    def _query_specificity_tokens(self, text: str) -> list[str]:
+        cleaned = _clean_recurrence_text(text)
+        if not cleaned:
+            return []
+        tokens: list[str] = []
+        for token in re.findall(r"[a-z0-9&/-]+", cleaned):
+            if token in QUERY_STOPWORDS or token in WEAK_VALIDATION_TERMS or token in RECURRENCE_NOISE_TERMS:
+                continue
+            if len(token) <= 3 and token not in _SHORT_TECH_TERMS:
+                continue
+            if token not in tokens:
+                tokens.append(token)
+        return tokens
+
+    def _recurrence_strategy_metadata(
+        self,
+        *,
+        atom: Optional[Any],
+        finding_kind: str = "problem_signal",
+    ) -> dict[str, str]:
+        plan = self._build_corroboration_plan(atom=atom, queries=[], finding_kind=finding_kind)
+        if self._is_accounting_reconciliation_cohort(atom=atom, plan=plan):
+            return {
+                "domain_key": "finance_operations",
+                "workflow_cluster_key": "accounting_reconciliation",
+                "retrieval_strategy_key": "accounting_focus",
+                "corroboration_strategy_key": "accounting_focus",
+            }
+        if self._is_multichannel_seller_reporting_cohort(atom=atom, plan=plan):
+            return {
+                "domain_key": "commerce_operations",
+                "workflow_cluster_key": "multichannel_seller_reporting",
+                "retrieval_strategy_key": "seller_reporting_focus",
+                "corroboration_strategy_key": "seller_reporting_focus",
+            }
+        if self._is_state_drift_operator_cohort(atom=atom, plan=plan):
+            return {
+                "domain_key": "commerce_operations",
+                "workflow_cluster_key": "state_drift_operator",
+                "retrieval_strategy_key": "state_drift_operator",
+                "corroboration_strategy_key": "state_drift_operator",
+            }
+        return {
+            "domain_key": "general_operations",
+            "workflow_cluster_key": "generic_workflow",
+            "retrieval_strategy_key": "atom_shaped",
+            "corroboration_strategy_key": "atom_shaped",
+        }
+
+    def _distinguishing_context_tokens(self, atom: Optional[Any]) -> set[str]:
+        if atom is None:
+            return set(FINDING_SPECIFIC_GENERIC_TERMS)
+        context = " ".join(
+            [
+                getattr(atom, "segment", "") or "",
+                getattr(atom, "user_role", "") or "",
+                getattr(atom, "job_to_be_done", "") or "",
+                getattr(atom, "pain_statement", "") or "",
+            ]
+        )
+        return set(self._query_specificity_tokens(context)) | set(FINDING_SPECIFIC_GENERIC_TERMS)
+
+    def _field_distinguishing_candidates(
+        self,
+        atom: Optional[Any],
+        field_name: str,
+        *,
+        max_words: int = 5,
+        max_terms: int = 4,
+    ) -> list[dict[str, str]]:
+        if atom is None:
+            return []
+        raw_text = getattr(atom, field_name, "") or ""
+        if not raw_text:
+            return []
+        generic_context = self._distinguishing_context_tokens(atom)
+        spans = []
+        focus_phrase = self._recurrence_focus_phrase(raw_text, max_words=max_words)
+        term_span = _query_term_span(raw_text, max_terms=max_terms)
+        if focus_phrase:
+            spans.append(focus_phrase.strip('"'))
+        if term_span and term_span not in spans:
+            spans.append(term_span)
+
+        candidates: list[dict[str, str]] = []
+        for span in spans:
+            span_tokens = self._query_specificity_tokens(span)
+            distinct_tokens = [
+                token
+                for token in span_tokens
+                if token not in generic_context and token not in FINDING_SPECIFIC_GENERIC_TERMS
+            ]
+            if not distinct_tokens:
+                continue
+            concept = sorted(distinct_tokens, key=lambda token: (-len(token), token))[0]
+            candidates.append(
+                {
+                    "field": field_name,
+                    "concept": concept,
+                    "span": span,
+                }
+            )
+        return candidates
+
+    def _classify_finding_specific_query(
+        self,
+        *,
+        query: str,
+        atom: Optional[Any],
+    ) -> dict[str, Any]:
+        normalized_query = self._normalize_recurrence_query(query)
+        if not normalized_query or atom is None:
+            return {
+                "is_finding_specific": False,
+                "query_origin": "fallback",
+                "distinguishing_source_field": "",
+                "distinguishing_concept": "",
+                "distinguishing_concept_span": "",
+            }
+
+        matches: list[tuple[int, int, int, dict[str, str]]] = []
+        field_priority = {"failure_mode": 0, "current_workaround": 1, "trigger_event": 2}
+        for field_name in ("failure_mode", "current_workaround", "trigger_event"):
+            for candidate in self._field_distinguishing_candidates(atom, field_name):
+                concept = candidate["concept"]
+                span = candidate["span"]
+                if concept not in normalized_query and span not in normalized_query:
+                    continue
+                matches.append(
+                    (
+                        len(span.split()),
+                        len(concept),
+                        -field_priority[field_name],
+                        candidate,
+                    )
+                )
+
+        if not matches:
+            return {
+                "is_finding_specific": False,
+                "query_origin": "fallback",
+                "distinguishing_source_field": "",
+                "distinguishing_concept": "",
+                "distinguishing_concept_span": "",
+            }
+
+        _span_size, _concept_size, _priority, best = max(matches)
+        return {
+            "is_finding_specific": True,
+            "query_origin": "finding_specific",
+            "distinguishing_source_field": best["field"],
+            "distinguishing_concept": best["concept"],
+            "distinguishing_concept_span": best["span"],
+        }
+
+    def _plan_recurrence_queries(
+        self,
+        *,
+        title: str,
+        summary: str,
+        atom: Optional[Any] = None,
+        limit: int = 4,
+        finding_kind: str = "problem_signal",
+    ) -> list[dict[str, Any]]:
+        planned: list[dict[str, Any]] = []
+        strategy_metadata = self._recurrence_strategy_metadata(atom=atom, finding_kind=finding_kind)
+        requested_specific_queries = 2
+
+        def add(query: str, *, query_origin: str, classification: dict[str, Any] | None = None) -> None:
+            normalized = self._normalize_recurrence_query(query)
+            if not normalized:
+                return
+            if any(item["query"] == normalized for item in planned):
+                return
+            classification = dict(classification or {})
+            if query_origin == "finding_specific" and not classification:
+                classification = self._classify_finding_specific_query(query=normalized, atom=atom)
+                if not classification.get("is_finding_specific"):
+                    return
+            planned.append(
+                {
+                    "query": normalized,
+                    "query_origin": query_origin,
+                    "distinguishing_source_field": str(classification.get("distinguishing_source_field", "") or ""),
+                    "distinguishing_concept": str(classification.get("distinguishing_concept", "") or ""),
+                    "distinguishing_concept_span": str(classification.get("distinguishing_concept_span", "") or ""),
+                    **strategy_metadata,
+                }
+            )
+
+        if atom is not None:
+            role_terms = self._recurrence_role_terms(getattr(atom, "user_role", "") or "")
+            segment_terms = self._recurrence_segment_terms(getattr(atom, "segment", "") or "")
+            job_terms = _query_term_span(getattr(atom, "job_to_be_done", "") or "", max_terms=5)
+            tool_terms = _query_term_span(getattr(atom, "current_tools", "") or "", max_terms=3)
+            pain_text = getattr(atom, "pain_statement", "") or ""
+            job_text = getattr(atom, "job_to_be_done", "") or ""
+            primary_problem_text = pain_text if len(pain_text) >= len(job_text) else job_text
+            job_phrase = self._recurrence_focus_phrase(primary_problem_text, max_words=6)
+            failure_phrase = self._recurrence_focus_phrase(getattr(atom, "failure_mode", "") or "", max_words=5)
+            trigger_phrase = self._recurrence_focus_phrase(getattr(atom, "trigger_event", "") or "", max_words=5)
+            workaround_phrase = self._recurrence_focus_phrase(getattr(atom, "current_workaround", "") or "", max_words=4)
+            cost_phrase = self._recurrence_focus_phrase(getattr(atom, "cost_consequence_clues", "") or "", max_words=3)
+
+            for field_name, support_parts in [
+                ("failure_mode", [tool_terms or workaround_phrase, segment_terms or role_terms]),
+                ("current_workaround", [tool_terms or segment_terms, role_terms]),
+                ("trigger_event", [failure_phrase or job_terms, segment_terms or role_terms]),
+            ]:
+                candidates = self._field_distinguishing_candidates(atom, field_name)
+                if not candidates:
+                    continue
+                primary = candidates[0]
+                specific_query = " ".join(
+                    part
+                    for part in [f'"{primary["span"]}"', *support_parts]
+                    if part
+                )
+                classification = self._classify_finding_specific_query(query=specific_query, atom=atom)
+                if classification.get("is_finding_specific"):
+                    add(
+                        specific_query,
+                        query_origin="finding_specific",
+                        classification=classification,
+                    )
+
+            cohort_haystack = normalize_content(
+                " ".join(
+                    [
+                        title or "",
+                        summary or "",
+                        getattr(atom, "segment", "") or "",
+                        getattr(atom, "user_role", "") or "",
+                        getattr(atom, "pain_statement", "") or "",
+                        getattr(atom, "job_to_be_done", "") or "",
+                        getattr(atom, "failure_mode", "") or "",
+                        getattr(atom, "trigger_event", "") or "",
+                        getattr(atom, "current_workaround", "") or "",
+                        getattr(atom, "current_tools", "") or "",
+                    ]
+                )
+            )
+            accounting_focus = any(marker in cohort_haystack for marker in [
+                "reconciliation", "bank", "deposit", "invoice", "payment", "payout", "quickbooks", "qbo", "month end", "close",
+            ])
+            seller_reporting_focus = (
+                any(marker in cohort_haystack for marker in ["shopify", "amazon", "etsy", "seller", "merchant", "store"])
+                and any(marker in cohort_haystack for marker in ["profitability", "revenue", "payout", "bank deposit", "spreadsheet", "reporting", "reconciliation"])
+            )
+
+            if seller_reporting_focus:
+                for query in [
+                    '"shopify amazon etsy" "payout reconciliation"',
+                    '"sales channel profitability" spreadsheet',
+                    '"bank deposits" payouts spreadsheet',
+                    '"channel profitability reporting" spreadsheet',
+                ]:
+                    add(query, query_origin="strategy_pack")
+            elif accounting_focus:
+                for query in [
+                    '"manual reconciliation" "small business"',
+                    '"payment reconciliation" "small business"',
+                    '"bank deposits not matching invoices" spreadsheet',
+                    '"quickbooks payout reconciliation" forum',
+                ]:
+                    add(query, query_origin="strategy_pack")
+
+            for parts in [
+                [failure_phrase, workaround_phrase or tool_terms, segment_terms],
+                [trigger_phrase or failure_phrase, job_phrase or job_terms, role_terms],
+                [job_terms, tool_terms or workaround_phrase, segment_terms],
+                [failure_phrase or trigger_phrase, segment_terms, cost_phrase],
+            ]:
+                add(" ".join(part for part in parts if part), query_origin="fallback")
+
+            core_concepts = self._extract_core_problem_concepts(atom)
+            if core_concepts:
+                for combo in [
+                    " ".join(core_concepts[:3]),
+                    " ".join(core_concepts[:2]) + " pain point",
+                    " ".join(core_concepts[:2]) + " frustration",
+                ]:
+                    add(combo, query_origin="fallback")
+
+        base_query = self._build_validation_query(title, summary)
+        if not planned:
+            add(base_query, query_origin="fallback")
+        elif len(planned) < 2:
+            shortened_base = " ".join(base_query.split()[: min(self.validation_query_terms, 5)])
+            add(shortened_base, query_origin="fallback")
+
+        specific = [item for item in planned if item.get("query_origin") == "finding_specific"]
+        non_specific = [item for item in planned if item.get("query_origin") != "finding_specific"]
+        ordered = specific[:requested_specific_queries] + non_specific + specific[requested_specific_queries:]
+
+        profile = self._recurrence_budget_profile(atom)
+        effective_limit = min(limit, profile["query_limit"])
+        return ordered[:effective_limit]
+
+    def _hydrate_recurrence_query_plan(
+        self,
+        *,
+        queries: list[str],
+        atom: Optional[Any],
+        finding_kind: str,
+    ) -> list[dict[str, Any]]:
+        strategy_metadata = self._recurrence_strategy_metadata(atom=atom, finding_kind=finding_kind)
+        hydrated: list[dict[str, Any]] = []
+        for query in queries:
+            normalized = self._normalize_recurrence_query(query)
+            if not normalized or any(item["query"] == normalized for item in hydrated):
+                continue
+            classification = self._classify_finding_specific_query(query=normalized, atom=atom)
+            query_origin = "finding_specific" if classification.get("is_finding_specific") else "fallback"
+            hydrated.append(
+                {
+                    "query": normalized,
+                    "query_origin": query_origin,
+                    "distinguishing_source_field": str(classification.get("distinguishing_source_field", "") or ""),
+                    "distinguishing_concept": str(classification.get("distinguishing_concept", "") or ""),
+                    "distinguishing_concept_span": str(classification.get("distinguishing_concept_span", "") or ""),
+                    **strategy_metadata,
+                }
+            )
+        return hydrated
 
     def _recurrence_role_terms(self, text: str) -> str:
         cleaned = _clean_recurrence_text(text)
@@ -6059,6 +6393,14 @@ class ResearchToolkit:
                 "source_family": source_label,
                 "source": doc.source,
                 "query_text": getattr(doc, "retrieval_query", "") or (queries_attempted[0] if queries_attempted else ""),
+                "query_origin": getattr(doc, "query_origin", "") or "",
+                "distinguishing_source_field": getattr(doc, "distinguishing_source_field", "") or "",
+                "distinguishing_concept": getattr(doc, "distinguishing_concept", "") or "",
+                "distinguishing_concept_span": getattr(doc, "distinguishing_concept_span", "") or "",
+                "domain_key": getattr(doc, "domain_key", "") or "",
+                "workflow_cluster_key": getattr(doc, "workflow_cluster_key", "") or "",
+                "retrieval_strategy_key": getattr(doc, "retrieval_strategy_key", "") or "",
+                "corroboration_strategy_key": getattr(doc, "corroboration_strategy_key", "") or "",
                 "normalized_url": normalize_search_url(doc.url),
                 "title": doc.title,
                 "snippet": doc.snippet,
@@ -6097,11 +6439,42 @@ class ResearchToolkit:
         *,
         finding_kind: str,
         atom: Optional[Any] = None,
+        query_plan: Optional[list[dict[str, Any]]] = None,
         trace: Optional[dict[str, Any]] = None,
     ) -> tuple[list[SearchDocument], dict[str, Any]]:
-        corroboration_plan = self._build_corroboration_plan(atom=atom, queries=queries, finding_kind=finding_kind)
+        hydrated_query_plan = list(query_plan or self._hydrate_recurrence_query_plan(
+            queries=queries,
+            atom=atom,
+            finding_kind=finding_kind,
+        ))
         budget_profile = self._recurrence_budget_profile(atom)
-        selected_queries = queries[: budget_profile["query_limit"]]
+        selected_query_plan = hydrated_query_plan[: budget_profile["query_limit"]]
+        selected_queries = [item["query"] for item in selected_query_plan]
+        corroboration_plan = self._build_corroboration_plan(atom=atom, queries=selected_queries, finding_kind=finding_kind)
+        strategy_metadata = (
+            {
+                "domain_key": str(selected_query_plan[0].get("domain_key", "") or ""),
+                "workflow_cluster_key": str(selected_query_plan[0].get("workflow_cluster_key", "") or ""),
+                "retrieval_strategy_key": str(selected_query_plan[0].get("retrieval_strategy_key", "") or ""),
+                "corroboration_strategy_key": str(selected_query_plan[0].get("corroboration_strategy_key", "") or ""),
+            }
+            if selected_query_plan
+            else self._recurrence_strategy_metadata(atom=atom, finding_kind=finding_kind)
+        )
+        requested_specific_queries = 2
+        generated_specific_queries = sum(
+            1 for item in hydrated_query_plan if item.get("query_origin") == "finding_specific"
+        )
+        executed_specific_queries = sum(
+            1 for item in selected_query_plan if item.get("query_origin") == "finding_specific"
+        )
+        strategy_pack_query_count = sum(
+            1 for item in selected_query_plan if item.get("query_origin") == "strategy_pack"
+        )
+        query_origin_query_counts = {
+            origin: sum(1 for item in selected_query_plan if item.get("query_origin") == origin)
+            for origin in ("finding_specific", "strategy_pack", "fallback", "specialized_surface")
+        }
         all_subreddits = self._recurrence_subreddits(atom, limit=5) if atom is not None else []
         subreddit_plan = all_subreddits[: budget_profile["subreddit_limit"]]
         all_sites = self._recurrence_site_plan(
@@ -6136,8 +6509,9 @@ class ResearchToolkit:
         probe_queries = selected_queries[: budget_profile.get("probe_query_limit", 1)]
         probe_subreddits = subreddit_plan[: budget_profile.get("probe_subreddit_limit", 1)]
         probe_sites = site_plan[: budget_profile.get("probe_site_limit", 1)]
-        probe_docs, probe_results_by_query, probe_results_by_source, _probe_collection_meta = await self._run_recurrence_collection(
+        probe_docs, probe_results_by_query, probe_results_by_source, _probe_collection_meta = await self._run_recurrence_collection_with_compat(
             queries=probe_queries,
+            query_plan=selected_query_plan,
             subreddit_plan=probe_subreddits,
             site_plan=probe_sites,
             atom=atom,
@@ -6193,8 +6567,9 @@ class ResearchToolkit:
                 if len(all_sites) > len(branch_sites):
                     branch_sites = all_sites[: min(len(all_sites), len(branch_sites) + 1)]
                     branched_after_probe = True
-            recurrence_docs, results_by_query, results_by_source, collection_meta = await self._run_recurrence_collection(
+            recurrence_docs, results_by_query, results_by_source, collection_meta = await self._run_recurrence_collection_with_compat(
                 queries=selected_queries,
+                query_plan=selected_query_plan,
                 subreddit_plan=branch_subreddits,
                 site_plan=branch_sites,
                 atom=atom,
@@ -6360,6 +6735,13 @@ class ResearchToolkit:
             "warmed_validation_queries": warmed_validation_queries,
             "queries_considered": list(queries),
             "queries_executed": list(selected_queries),
+            "query_plan": list(selected_query_plan),
+            "requested_specific_queries": requested_specific_queries,
+            "generated_specific_queries": generated_specific_queries,
+            "executed_specific_queries": executed_specific_queries,
+            "strategy_pack_query_count": strategy_pack_query_count,
+            "query_origin_query_counts": query_origin_query_counts,
+            **strategy_metadata,
             "recurrence_budget_profile": budget_profile,
             "candidate_meaningful": self._meaningful_candidate_snapshot(atom),
             "recurrence_probe_summary": {
@@ -6624,6 +7006,7 @@ class ResearchToolkit:
         self,
         *,
         queries: list[str],
+        query_plan: Optional[list[dict[str, Any]]] = None,
         subreddit_plan: list[str],
         site_plan: list[tuple[Optional[str], str]],
         atom: Optional[Any],
@@ -6649,8 +7032,17 @@ class ResearchToolkit:
         docs_by_source: dict[str, list[SearchDocument]] = {label: [] for label in results_by_source}
         queries_by_source: dict[str, list[str]] = {label: [] for label in results_by_source}
         evidence_attempts: list[dict[str, Any]] = []
+        query_metadata_by_query = {
+            str(item.get("query") or ""): dict(item)
+            for item in (query_plan or [])
+            if isinstance(item, dict) and str(item.get("query") or "")
+        }
 
         def _new_attempt(query: str, source_family: str, source_name: str = "") -> dict[str, Any]:
+            query_metadata = query_metadata_by_query.get(query, {})
+            query_origin = str(query_metadata.get("query_origin", "") or "")
+            if not query_origin and source_family == "forum_fallback":
+                query_origin = "fallback"
             attempt = {
                 "query": query,
                 "source_family": source_family,
@@ -6665,7 +7057,16 @@ class ResearchToolkit:
                 "partial_match_count": 0,
                 "failure_class": "",
                 "error": "",
-                "metadata": {},
+                "metadata": {
+                    "query_origin": query_origin,
+                    "distinguishing_source_field": str(query_metadata.get("distinguishing_source_field", "") or ""),
+                    "distinguishing_concept": str(query_metadata.get("distinguishing_concept", "") or ""),
+                    "distinguishing_concept_span": str(query_metadata.get("distinguishing_concept_span", "") or ""),
+                    "domain_key": str(query_metadata.get("domain_key", "") or ""),
+                    "workflow_cluster_key": str(query_metadata.get("workflow_cluster_key", "") or ""),
+                    "retrieval_strategy_key": str(query_metadata.get("retrieval_strategy_key", "") or ""),
+                    "corroboration_strategy_key": str(query_metadata.get("corroboration_strategy_key", "") or ""),
+                },
                 "_started_at": time.monotonic(),
             }
             evidence_attempts.append(attempt)
@@ -6780,7 +7181,12 @@ class ResearchToolkit:
                 for site, source_label in site_plan:
                     diagnostics: dict[str, Any] = {}
                     attempt = _new_attempt(query, source_label, site or source_label)
-                    attempt["metadata"] = {"site": site or "", "intent": "validation_recurrence"}
+                    existing_metadata = attempt.get("metadata") if isinstance(attempt.get("metadata"), dict) else {}
+                    attempt["metadata"] = {
+                        **existing_metadata,
+                        "site": site or "",
+                        "intent": "validation_recurrence",
+                    }
                     task = asyncio.create_task(
                         _search_web_with_diagnostics(
                             query,
@@ -6909,6 +7315,10 @@ class ResearchToolkit:
                 if not normalized_url or normalized_url in seen_urls:
                     continue
                 seen_urls.add(normalized_url)
+                query_metadata = query_metadata_by_query.get(query, {})
+                query_origin = str(query_metadata.get("query_origin", "") or "")
+                if not query_origin and source_label == "forum_fallback":
+                    query_origin = "fallback"
                 recurrence_docs.append(
                     SearchDocument(
                         title=doc.title,
@@ -6917,6 +7327,14 @@ class ResearchToolkit:
                         source=doc.source,
                         source_family=source_label,
                         retrieval_query=query,
+                        query_origin=query_origin,
+                        distinguishing_source_field=str(query_metadata.get("distinguishing_source_field", "") or ""),
+                        distinguishing_concept=str(query_metadata.get("distinguishing_concept", "") or ""),
+                        distinguishing_concept_span=str(query_metadata.get("distinguishing_concept_span", "") or ""),
+                        domain_key=str(query_metadata.get("domain_key", "") or ""),
+                        workflow_cluster_key=str(query_metadata.get("workflow_cluster_key", "") or ""),
+                        retrieval_strategy_key=str(query_metadata.get("retrieval_strategy_key", "") or ""),
+                        corroboration_strategy_key=str(query_metadata.get("corroboration_strategy_key", "") or ""),
                     )
                 )
                 self._track_recurrence_doc(trace, recurrence_docs[-1])
@@ -7002,6 +7420,14 @@ class ResearchToolkit:
                     source=doc.source,
                     source_family=getattr(doc, "source_family", ""),
                     retrieval_query=getattr(doc, "retrieval_query", ""),
+                    query_origin=getattr(doc, "query_origin", ""),
+                    distinguishing_source_field=getattr(doc, "distinguishing_source_field", ""),
+                    distinguishing_concept=getattr(doc, "distinguishing_concept", ""),
+                    distinguishing_concept_span=getattr(doc, "distinguishing_concept_span", ""),
+                    domain_key=getattr(doc, "domain_key", ""),
+                    workflow_cluster_key=getattr(doc, "workflow_cluster_key", ""),
+                    retrieval_strategy_key=getattr(doc, "retrieval_strategy_key", ""),
+                    corroboration_strategy_key=getattr(doc, "corroboration_strategy_key", ""),
                 )
             )
             if len(merged_docs) >= stop_after_docs:
@@ -7511,6 +7937,8 @@ class ResearchToolkit:
             family_retrieved = 0
             family_deduped = 0
             for attempt_index in range(corroboration_plan.max_attempts_per_family):
+                cohort_queries: list[str] = []
+                specialized_queries: list[str] = []
                 if source_label == "web":
                     family_sites, attempt_routing_override = self._specialized_web_routing_sites(
                         atom=atom,
@@ -7545,8 +7973,27 @@ class ResearchToolkit:
                         queries=family_queries,
                     )
 
-                extra_docs, extra_results_by_query, extra_results_by_source, extra_collection_meta = await self._run_recurrence_collection(
+                family_query_plan = self._hydrate_recurrence_query_plan(
                     queries=family_queries,
+                    atom=atom,
+                    finding_kind="problem_signal",
+                )
+                if source_label == "web":
+                    normalized_cohort_queries = {
+                        self._normalize_recurrence_query(query) for query in cohort_queries if query
+                    }
+                    normalized_specialized_queries = {
+                        self._normalize_recurrence_query(query) for query in specialized_queries if query
+                    }
+                    for item in family_query_plan:
+                        if item["query"] in normalized_specialized_queries:
+                            item["query_origin"] = "specialized_surface"
+                        elif item["query"] in normalized_cohort_queries:
+                            item["query_origin"] = "strategy_pack"
+
+                extra_docs, extra_results_by_query, extra_results_by_source, extra_collection_meta = await self._run_recurrence_collection_with_compat(
+                    queries=family_queries,
+                    query_plan=family_query_plan,
                     subreddit_plan=family_subreddits,
                     site_plan=family_sites,
                     atom=atom,

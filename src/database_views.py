@@ -24,6 +24,13 @@ def _canonical_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     return _canonical_evaluation(evidence).get("evidence", {}) or {}
 
 
+def _canonical_or_legacy(evidence: dict[str, Any], key: str, default: Any = None) -> Any:
+    canonical = _canonical_evidence(evidence)
+    if key in canonical:
+        return canonical.get(key)
+    return evidence.get(key, default)
+
+
 def sorted_recurrence_match_records(records: Any) -> list[dict[str, Any]]:
     if not isinstance(records, list):
         return []
@@ -77,6 +84,16 @@ def build_recent_validation_row(row: dict[str, Any], evidence: dict[str, Any]) -
         "matched_results_by_source": evidence.get("matched_results_by_source", {}),
         "partial_results_by_source": evidence.get("partial_results_by_source", {}),
         "source_yield": evidence.get("source_yield", {}),
+        "query_origin_query_counts": _canonical_or_legacy(evidence, "query_origin_query_counts", {}),
+        "query_origin_counts": _canonical_or_legacy(evidence, "query_origin_counts", {}),
+        "attribution_scope_counts": _canonical_or_legacy(evidence, "attribution_scope_counts", {}),
+        "origin_scope_counts": _canonical_or_legacy(evidence, "origin_scope_counts", {}),
+        "comparison_sibling_finding_id": _canonical_or_legacy(evidence, "comparison_sibling_finding_id", 0),
+        "comparison_sibling_validation_id": _canonical_or_legacy(evidence, "comparison_sibling_validation_id", 0),
+        "comparison_scope": _canonical_or_legacy(evidence, "comparison_scope", ""),
+        "query_overlap_ratio": _canonical_or_legacy(evidence, "query_overlap_ratio", 0.0),
+        "matched_url_overlap_ratio": _canonical_or_legacy(evidence, "matched_url_overlap_ratio", 0.0),
+        "compression_signal": _canonical_or_legacy(evidence, "compression_signal", "none"),
     }
 
 
@@ -139,6 +156,32 @@ def build_validation_review_row(
         "recurrence_gap_reason": evidence.get("recurrence_gap_reason", ""),
         "recurrence_failure_class": evidence.get("recurrence_failure_class", ""),
         "queries_executed": evidence.get("queries_executed", []),
+        "query_plan": evidence.get("query_plan", []),
+        "requested_specific_queries": canonical_evidence.get("requested_specific_queries", evidence.get("requested_specific_queries", 2)),
+        "generated_specific_queries": canonical_evidence.get("generated_specific_queries", evidence.get("generated_specific_queries", 0)),
+        "executed_specific_queries": canonical_evidence.get("executed_specific_queries", evidence.get("executed_specific_queries", 0)),
+        "strategy_pack_query_count": canonical_evidence.get("strategy_pack_query_count", evidence.get("strategy_pack_query_count", 0)),
+        "query_origin_query_counts": canonical_evidence.get("query_origin_query_counts", evidence.get("query_origin_query_counts", {})),
+        "query_origin_counts": canonical_evidence.get("query_origin_counts", evidence.get("query_origin_counts", {})),
+        "attribution_scope_counts": canonical_evidence.get("attribution_scope_counts", evidence.get("attribution_scope_counts", {})),
+        "origin_scope_counts": canonical_evidence.get("origin_scope_counts", evidence.get("origin_scope_counts", {})),
+        "finding_specific_match_count": canonical_evidence.get("finding_specific_match_count", evidence.get("finding_specific_match_count", 0)),
+        "cluster_only_match_count": canonical_evidence.get("cluster_only_match_count", evidence.get("cluster_only_match_count", 0)),
+        "generic_domain_match_count": canonical_evidence.get("generic_domain_match_count", evidence.get("generic_domain_match_count", 0)),
+        "domain_key": canonical_evidence.get("domain_key", evidence.get("domain_key", "")),
+        "workflow_cluster_key": canonical_evidence.get("workflow_cluster_key", evidence.get("workflow_cluster_key", "")),
+        "retrieval_strategy_key": canonical_evidence.get("retrieval_strategy_key", evidence.get("retrieval_strategy_key", "")),
+        "corroboration_strategy_key": canonical_evidence.get("corroboration_strategy_key", evidence.get("corroboration_strategy_key", "")),
+        "comparison_sibling_finding_id": canonical_evidence.get("comparison_sibling_finding_id", evidence.get("comparison_sibling_finding_id", 0)),
+        "comparison_sibling_validation_id": canonical_evidence.get("comparison_sibling_validation_id", evidence.get("comparison_sibling_validation_id", 0)),
+        "comparison_sibling_domain_key": canonical_evidence.get("comparison_sibling_domain_key", evidence.get("comparison_sibling_domain_key", "")),
+        "comparison_sibling_strategy_key": canonical_evidence.get("comparison_sibling_strategy_key", evidence.get("comparison_sibling_strategy_key", "")),
+        "comparison_scope": canonical_evidence.get("comparison_scope", evidence.get("comparison_scope", "")),
+        "query_overlap_ratio": canonical_evidence.get("query_overlap_ratio", evidence.get("query_overlap_ratio", 0.0)),
+        "matched_url_overlap_ratio": canonical_evidence.get("matched_url_overlap_ratio", evidence.get("matched_url_overlap_ratio", 0.0)),
+        "shared_query_count": canonical_evidence.get("shared_query_count", evidence.get("shared_query_count", 0)),
+        "shared_matched_url_count": canonical_evidence.get("shared_matched_url_count", evidence.get("shared_matched_url_count", 0)),
+        "compression_signal": canonical_evidence.get("compression_signal", evidence.get("compression_signal", "none")),
         "recurrence_budget_profile": evidence.get("recurrence_budget_profile", {}),
         "candidate_meaningful": evidence.get("candidate_meaningful", {}),
         "recurrence_probe_summary": evidence.get("recurrence_probe_summary", {}),
