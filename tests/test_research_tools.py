@@ -152,7 +152,7 @@ def test_validate_problem_builds_compact_query_and_caps_evidence():
             )
         return docs
 
-    async def fake_gather(queries, finding_kind, atom=None):
+    async def fake_gather(queries, finding_kind, atom=None, trace=None):
         docs = await fake_search(queries[0], max_results=6, intent="validation_recurrence")
         return docs, {
             "recurrence_score": 0.7,
@@ -250,8 +250,9 @@ def test_validate_problem_timeout_preserves_partial_recurrence_docs():
         }
     )
 
-    async def slow_gather(queries, finding_kind, atom=None):
+    async def slow_gather(queries, finding_kind, atom=None, trace=None):
         toolkit._track_recurrence_attempt(
+            trace,
             {
                 "query": queries[0],
                 "source_family": "reddit",
@@ -270,6 +271,7 @@ def test_validate_problem_timeout_preserves_partial_recurrence_docs():
             }
         )
         toolkit._track_recurrence_doc(
+            trace,
             SearchDocument(
                 title="Manual reconciliation pain",
                 url="https://reddit.com/r/accounting/comments/partial",
@@ -301,6 +303,90 @@ def test_validate_problem_timeout_preserves_partial_recurrence_docs():
     assert result["evidence"]["recurrence_doc_count"] == 1
     assert result["evidence"]["recurrence_results_by_source"]["reddit"] == 1
     assert result["evidence"]["recurrence_docs"][0]["url"] == "https://reddit.com/r/accounting/comments/partial"
+
+
+def test_validate_problem_timeout_trace_is_call_scoped():
+    toolkit = ResearchToolkit(
+        {
+            "validation": {
+                "search": {
+                    "recurrence_budget_seconds": 0.03,
+                    "competitor_budget_seconds": 0.01,
+                }
+            }
+        }
+    )
+
+    spawned: list[asyncio.Task] = []
+
+    async def leaking_gather(queries, finding_kind, atom=None, trace=None):
+        query = queries[0]
+
+        async def late_emit():
+            await asyncio.sleep(0.04)
+            toolkit._track_recurrence_attempt(
+                trace,
+                {
+                    "query": query,
+                    "source_family": "web",
+                    "source_name": "web",
+                    "status": "completed",
+                    "duration_ms": 1,
+                    "raw_count": 1,
+                    "filtered_count": 0,
+                    "kept_count": 1,
+                    "deduped_count": 1,
+                    "strong_match_count": 0,
+                    "partial_match_count": 0,
+                    "failure_class": "retrieved",
+                    "error": "",
+                    "metadata": {},
+                },
+            )
+            toolkit._track_recurrence_doc(
+                trace,
+                SearchDocument(
+                    title=f"Late doc for {query}",
+                    url=f"https://example.com/{abs(hash(query))}",
+                    snippet="Late partial recurrence evidence",
+                    source="web",
+                    source_family="web",
+                    retrieval_query=query,
+                ),
+            )
+
+        spawned.append(asyncio.create_task(late_emit()))
+        await asyncio.sleep(0.06)
+        return [], {}
+
+    async def fast_search(*args, **kwargs):
+        return []
+
+    toolkit.gather_recurrence_evidence = leaking_gather
+    toolkit.search_web = fast_search
+
+    async def run_scenario():
+        first = await toolkit.validate_problem(
+            title="Running a yoga studio shouldn't feel this messy",
+            summary="So my friend and I run a small yoga studio together and keep juggling spreadsheets.",
+            finding_kind="pain_point",
+        )
+        second = await toolkit.validate_problem(
+            title="How do you handle PDF bank statements with no CSV export?",
+            summary="Bookkeepers keep doing manual entry because QuickBooks cannot import PDFs.",
+            finding_kind="pain_point",
+        )
+        await asyncio.gather(*spawned, return_exceptions=True)
+        return first, second
+
+    first, second = asyncio.run(run_scenario())
+
+    first_queries = first["evidence"]["queries_executed"]
+    second_queries = second["evidence"]["queries_executed"]
+
+    assert any("yoga studio" in query for query in first_queries)
+    assert all("yoga studio" not in query for query in second_queries)
+    assert all("friend run small yoga studio" not in query for query in second_queries)
 
 
 def test_extract_core_problem_concepts_keeps_short_tech_terms_and_dedupes():
@@ -722,9 +808,9 @@ def test_choose_corroboration_action_retries_practitioner_web_confirmation_gap_b
     assert action.reason == "high_specificity_cross_source_retry"
 
 
-def test_research_toolkit_defaults_ddgs_backend_to_duckduckgo():
+def test_research_toolkit_defaults_ddgs_backend_to_auto():
     toolkit = ResearchToolkit({"validation": {"search": {}}})
-    assert toolkit.ddgs_backend == "duckduckgo"
+    assert toolkit.ddgs_backend == "auto"
 
 
 def test_llm_client_defaults_to_gemma4_latest():
@@ -3026,7 +3112,7 @@ def test_expand_recurrence_source_families_warms_reddit_branch_queries(monkeypat
             "uncovered_after": 0,
         }
 
-    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback):
+    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback, trace=None):
         return [], {query: 0 for query in queries}, {"reddit": 0}, {
             "retrieved_by_source": {"reddit": 0},
             "deduped_by_source": {"reddit": 0},
@@ -3159,7 +3245,7 @@ def test_expand_recurrence_source_families_records_reshape_retry(monkeypatch):
 
     call_queries: list[list[str]] = []
 
-    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback):
+    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback, trace=None):
         call_queries.append(list(queries))
         return [
             SearchDocument(
@@ -3225,7 +3311,7 @@ def test_expand_recurrence_source_families_records_reshape_retry_on_empty_retrie
 
     call_queries: list[list[str]] = []
 
-    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback):
+    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback, trace=None):
         call_queries.append(list(queries))
         return [], {query: 0 for query in queries}, {"github": 0}, {
             "retrieved_by_source": {"github": 0},
@@ -3320,7 +3406,7 @@ def test_web_zero_retrieval_retry_switches_to_decomposed_queries(monkeypatch):
 
     call_queries: list[list[str]] = []
 
-    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback):
+    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback, trace=None):
         call_queries.append(list(queries))
         return [], {query: 0 for query in queries}, {"web": 0}, {
             "retrieved_by_source": {"web": 0},
@@ -3415,7 +3501,7 @@ def test_specialized_web_routing_metadata_populates(monkeypatch):
 
     captured_sites: list[list[tuple[object, str]]] = []
 
-    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback):
+    async def fake_run_recurrence_collection(*, queries, subreddit_plan, site_plan, atom, per_source_limit, stop_after_docs, allow_fallback, trace=None):
         captured_sites.append(list(site_plan))
         return [], {query: 0 for query in queries}, {"web": 0}, {
             "retrieved_by_source": {"web": 0},

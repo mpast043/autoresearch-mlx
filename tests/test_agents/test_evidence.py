@@ -306,6 +306,75 @@ class TestEvidenceAgent(unittest.IsolatedAsyncioTestCase):
         self.assertIn("cost_pressure_score", market.evidence)
         self.assertIn("willingness_to_pay_signal", market.evidence)
 
+    async def test_corroboration_record_degrades_timeout_without_attributable_confirmations(self):
+        async def fake_validate_problem(**_kwargs):
+            return {
+                "problem_score": 0.34,
+                "value_score": 0.52,
+                "feasibility_score": 0.62,
+                "solution_gap_score": 0.58,
+                "saturation_score": 0.44,
+                "evidence": {
+                    "query": '"pdf bank statements" bookkeeping',
+                    "competitor_query": '"pdf bank statements" bookkeeping software tool alternative',
+                    "recurrence_queries": ['"pdf bank statements" bookkeeping'],
+                    "recurrence_state": "thin",
+                    "recurrence_timeout": True,
+                    "recurrence_gap_reason": "timeout_after_partial_retrieval",
+                    "recurrence_failure_class": "partial_retrieval_timeout",
+                    "recurrence_query_coverage": 1.0,
+                    "recurrence_doc_count": 12,
+                    "recurrence_domain_count": 7,
+                    "recurrence_results_by_source": {"reddit": 0, "web": 12, "github": 0},
+                    "recurrence_results_by_query": {'"pdf bank statements" bookkeeping': 12},
+                    "recurrence_docs": [
+                        {
+                            "title": "Manual cleanup after PDF exports",
+                            "url": "https://example.com/pdf-cleanup",
+                            "snippet": "Teams still copy numbers from PDF statements into spreadsheets.",
+                            "source": "web",
+                            "source_family": "web",
+                        }
+                    ],
+                    "matched_results_by_source": {},
+                    "partial_results_by_source": {},
+                    "matched_docs_by_source": {},
+                    "partial_docs_by_source": {},
+                    "family_confirmation_count": 0,
+                    "source_yield": {},
+                    "competitor_docs": [],
+                    "competitor_domains": [],
+                },
+            }
+
+        self.agent.toolkit.validate_problem = fake_validate_problem
+        finding_id = self.db.insert_finding(
+            Finding(
+                source="reddit-problem",
+                source_url="https://reddit.com/r/bookkeeping/comments/test",
+                product_built="PDF bank statements without CSV export",
+                outcome_summary="Bookkeepers keep doing manual entry because QuickBooks cannot import PDF statements.",
+                finding_kind="pain_point",
+                source_class="pain_signal",
+                evidence_json=json.dumps({}),
+            )
+        )
+
+        await self.agent._enrich_finding({"finding_id": finding_id})
+
+        corroboration = self.db.get_corroboration(finding_id)
+        self.assertIsNotNone(corroboration)
+        self.assertEqual(corroboration.independent_confirmations, 0)
+        self.assertLessEqual(corroboration.corroboration_score, 0.24)
+        self.assertLessEqual(corroboration.evidence_sufficiency, 0.32)
+        self.assertEqual(corroboration.evidence["cross_source_match_score"], 0.0)
+        self.assertTrue(corroboration.evidence["contradiction_guard_applied"])
+        self.assertEqual(
+            corroboration.evidence["contradiction_guard_reason"],
+            "timeout_partial_retrieval_without_attributable_confirmations",
+        )
+        self.assertEqual(corroboration.evidence["source_families"], ["reddit"])
+
     async def test_review_metadata_flows_into_market_enrichment_only(self):
         async def fake_validate_problem(**_kwargs):
             return {

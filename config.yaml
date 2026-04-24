@@ -99,9 +99,9 @@ discovery:
   # Wider surface area → more new threads vs. only default subs/queries (dedupe is by content_hash).
   reddit:
     # Reddit /search.json time filter: hour|day|week|month|year|all — use "all" to include older posts.
-    search_time_filter: month
+    search_time_filter: year
     # false = search curated operator/problem subreddits instead of noisy r/all.
-    use_r_all: true
+    use_r_all: false
     # Per wave: how many subs × keywords to combine (each pair = one search). Use 0 = no cap (use entire lists).
     max_subreddits_per_wave: 6
     max_keywords_per_wave: 6
@@ -149,6 +149,15 @@ discovery:
       - '"order received" "label printed" whatsapp spreadsheet'
       - "held together by spreadsheets"
       - "copy paste workflow"
+      - "automate this boring task"
+      - "waste hours every week"
+      - "no good tool for"
+      - "pain point workflow"
+      - "frustrating manual process"
+      - "data entry errors"
+      - "reconcile payouts"
+      - "invoice matching manually"
+      - "spreadsheet hell"
     # Optional buckets for suggest-discovery to return per-theme keyword hints.
     theme_keywords:
       saas:
@@ -199,7 +208,7 @@ classification:
 
 # Security agent for vulnerability scanning
 security:
-  enabled: true
+  enabled: false
   min_severity: "nit"  # blocker, suggestion, nit
 
 # Technical writer for auto-documentation
@@ -222,9 +231,9 @@ llm:
   base_url: http://localhost:11434
   max_tokens: 2000
   timeout: 180
-  reasoning_model: qwen3.5:cloud
+  reasoning_model: gemma4:latest
   reasoning_max_tokens: 4000
-  reasoning_timeout: 120
+  reasoning_timeout: 180
 
 build_prep:
   wedge_evaluation:
@@ -259,10 +268,12 @@ validation:
     recurrence_budget_seconds: 45.0
     competitor_budget_seconds: 20.0
     max_results_per_domain: 2
-    # DuckDuckGo provider backend: "duckduckgo" (HTML) or "brave" or "google" etc
-    ddgs_backend: duckduckgo
+    # DuckDuckGo provider backend: "auto" tries all (html/lite/bing), "html", "lite", "bing"
+    ddgs_backend: auto
     # Extra results to fetch beyond max_results to allow deduplication headroom
     ddgs_extra_results: 4
+    # Use LLM to assess recurrence when all search providers return empty (default: false)
+    llm_fallback: false
     # Result truncation lengths
     result_title_length: 180
     result_snippet_length: 320
@@ -278,8 +289,8 @@ validation:
     request_timeout_general: 20
 
 reddit_bridge:
-  enabled: true
-  mode: bridge_with_fallback
+  enabled: false
+  mode: fallback_only
   seed_on_miss: true
   base_url: ${REDDIT_BRIDGE_BASE_URL}
   auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}

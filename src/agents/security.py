@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.agents.base import BaseAgent
+
+logger = logging.getLogger(__name__)
 from src.messaging import MessageType
 
 

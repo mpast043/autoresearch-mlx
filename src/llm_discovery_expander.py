@@ -308,7 +308,18 @@ class LLMClient:
             )
             with urllib.request.urlopen(req, timeout=effective_timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
-                return result.get("message", {}).get("content", "")
+                message = result.get("message", {})
+                content = message.get("content", "")
+                # Reasoning models (e.g. qwen3.5) put chain-of-thought in
+                # message.thinking and the answer in message.content.  If content
+                # is empty the model ran out of tokens on thinking — fall back to
+                # the thinking text so the caller gets something useful.
+                if not content.strip():
+                    thinking = message.get("thinking", "")
+                    if thinking.strip():
+                        logger.debug("Ollama sync: content empty, using thinking field (%d chars)", len(thinking))
+                        content = thinking
+                return content
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
             logger.warning(f"Ollama generation failed: {e}")
             return None
@@ -346,7 +357,18 @@ class LLMClient:
                         logger.warning(f"Ollama async error {resp.status}: {error_text[:200]}")
                         return None
                     result = await resp.json()
-                    return result.get("message", {}).get("content", "")
+                    message = result.get("message", {})
+                    content = message.get("content", "")
+                    # Reasoning models (e.g. qwen3.5) put chain-of-thought in
+                    # message.thinking and the answer in message.content.  If
+                    # content is empty the model ran out of tokens on thinking —
+                    # fall back to the thinking text so the caller gets something.
+                    if not content.strip():
+                        thinking = message.get("thinking", "")
+                        if thinking.strip():
+                            logger.debug("Ollama async: content empty, using thinking field (%d chars)", len(thinking))
+                            content = thinking
+                    return content
         except Exception as e:
             logger.warning(f"Ollama async generation failed: {e}")
             return None

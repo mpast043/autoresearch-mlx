@@ -955,8 +955,20 @@ def _clean_recurrence_text(text: str, *, limit: int = 160) -> str:
 
 def topical_overlap(query: str, title: str, snippet: str, domain: str) -> int:
     haystack = f"{title} {snippet} {domain}".lower()
-    term_hits = sum(1 for term in query_terms(query) if term in haystack)
-    phrase_hits = sum(2 for phrase in query_phrases(query) if phrase in haystack)
+    terms = query_terms(query)
+    phrases = query_phrases(query)
+    term_hits = sum(1 for term in terms if term in haystack)
+    phrase_hits = sum(2 for phrase in phrases if phrase in haystack)
+    # When all terms are inside quoted phrases and no phrases match,
+    # extract individual words from phrases as fallback term candidates
+    # so that quoted queries still get overlap credit for partial matches
+    if not terms and phrases and phrase_hits == 0:
+        phrase_terms: list[str] = []
+        for phrase in phrases:
+            for token in re.findall(r"[a-z0-9&/-]+", phrase):
+                if token not in QUERY_STOPWORDS and len(token) > 2 and token not in phrase_terms:
+                    phrase_terms.append(token)
+        term_hits = sum(1 for term in phrase_terms if term in haystack)
     return term_hits + phrase_hits
 
 
@@ -1067,8 +1079,6 @@ class ResearchToolkit:
         self._search_cache: dict[tuple[str, int, Optional[str], str], list[SearchDocument]] = {}
         self._fetch_cache: dict[str, dict[str, Any]] = {}
         self._recurrence_attempt_cache: dict[str, tuple[list[SearchDocument], dict[str, Any]]] = {}
-        self._last_recurrence_attempt_trace: list[dict[str, Any]] = []
-        self._last_recurrence_docs: list[SearchDocument] = []
         self._discovery_feedback: dict[str, dict[str, dict[str, Any]]] = {}
         self._cache_timestamps: dict[str, float] = {}
         self._cache_ttl: float = 3600.0  # 1 hour
@@ -1099,7 +1109,7 @@ class ResearchToolkit:
             validation_search.get("competitor_budget_seconds", 20.0)
         )
         self.search_domain_cap = max(1, int(validation_search.get("max_results_per_domain", 2)))
-        self.ddgs_backend = validation_search.get("ddgs_backend", "duckduckgo")
+        self.ddgs_backend = validation_search.get("ddgs_backend", "auto")
         self.ddgs_extra_results = max(0, int(validation_search.get("ddgs_extra_results", 4)))
         self.result_title_length = max(20, int(validation_search.get("result_title_length", 180)))
         self.result_snippet_length = max(20, int(validation_search.get("result_snippet_length", 320)))
@@ -2058,6 +2068,12 @@ class ResearchToolkit:
             if pain_ok and overlap >= 2:
                 if not self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
                     return True
+            # Blog-like pages with moderate overlap (2+) also corroborate recurrence —
+            # the existence of guides/how-tos about a manual process proves people
+            # struggle with it. Only reject if overlap is very low or it's low-quality.
+            if overlap >= 2 and any(pattern in haystack for pattern in BLOG_LIKE_PATTERNS):
+                if not self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
+                    return True
             if any(pattern in haystack for pattern in BLOG_LIKE_PATTERNS):
                 return False
             if self._is_low_quality_corroboration_page(title=title, snippet=snippet, domain=domain, url=url):
@@ -2294,12 +2310,9 @@ class ResearchToolkit:
                 self._cache_set(self._search_cache, cache_key, list(results))
                 return list(results)
 
-        async def _run_ddg_provider(import_path: str, timeout: int) -> list[dict[str, Any]]:
+        async def _run_ddg_provider(timeout: int) -> list[dict[str, Any]]:
             def _collect() -> list[dict[str, Any]]:
-                if import_path == "ddgs":
-                    from ddgs import DDGS  # type: ignore
-                else:
-                    from duckduckgo_search import DDGS  # type: ignore
+                from ddgs import DDGS  # type: ignore
 
                 rows: list[dict[str, Any]] = []
                 with DDGS() as ddgs:
@@ -2313,7 +2326,7 @@ class ResearchToolkit:
             return await asyncio.wait_for(asyncio.to_thread(_collect), timeout=timeout)
 
         try:
-            for row in await _run_ddg_provider("ddgs", provider_timeout):
+            for row in await _run_ddg_provider(provider_timeout):
                 _append_result(row.get("title", ""), row.get("href", ""), row.get("body", ""))
                 if len(results) >= max_results:
                     break
@@ -2324,16 +2337,6 @@ class ResearchToolkit:
             logger.debug("ddgs search provider failed: %s", exc)
             if diagnostics is not None:
                 diagnostics.setdefault("provider_errors", []).append({"provider": "ddgs", "error": str(exc)})
-
-        try:
-            for row in await _run_ddg_provider("duckduckgo_search", provider_timeout):
-                _append_result(row.get("title", ""), row.get("href", ""), row.get("body", ""))
-                if len(results) >= max_results:
-                    break
-        except Exception as exc:
-            logger.debug("duckduckgo_search provider failed: %s", exc)
-            if diagnostics is not None:
-                diagnostics.setdefault("provider_errors", []).append({"provider": "duckduckgo_search", "error": str(exc)})
 
         if results:
             self._cache_set(self._search_cache, cache_key, list(results))
@@ -2368,6 +2371,28 @@ class ResearchToolkit:
             if diagnostics is not None:
                 diagnostics.setdefault("provider_errors", []).append({"provider": "ddg_html", "error": str(exc)})
 
+        # Tier 3.5: ddgs with mojeek backend (independent search index)
+        if not results:
+            try:
+                def _ddgs_mojeek_search() -> list[dict[str, Any]]:
+                    from ddgs import DDGS
+                    rows: list[dict[str, Any]] = []
+                    with DDGS() as ddgs:
+                        for row in ddgs.text(full_query, backend="mojeek", max_results=max_results + self.ddgs_extra_results):
+                            rows.append(row)
+                            if len(rows) >= max_results + self.ddgs_extra_results:
+                                break
+                    return rows
+
+                for row in await asyncio.wait_for(asyncio.to_thread(_ddgs_mojeek_search), timeout=provider_timeout):
+                    _append_result(row.get("title", ""), row.get("href", ""), row.get("body", ""))
+                    if len(results) >= max_results:
+                        break
+            except Exception as exc:
+                logger.debug("ddgs mojeek backend failed: %s", exc)
+                if diagnostics is not None:
+                    diagnostics.setdefault("provider_errors", []).append({"provider": "ddgs_mojeek", "error": str(exc)})
+
         if validation_intent and results and not (intent == "validation_recurrence" and site):
             self._cache_set(self._search_cache, cache_key, list(results))
             return list(results)
@@ -2379,7 +2404,11 @@ class ResearchToolkit:
                         "https://www.bing.com/search",
                         params={"q": full_query},
                         timeout=request_timeout,
-                        headers={"User-Agent": self.search_user_agent},
+                        headers={
+                            "User-Agent": self.search_user_agent,
+                            "Accept-Language": "en-US,en;q=0.9",
+                            "Accept": "text/html,application/xhtml+xml",
+                        },
                     )
                     response.raise_for_status()
                     return response.text
@@ -2398,13 +2427,97 @@ class ResearchToolkit:
                         snippet_el.get_text(" ", strip=True) if snippet_el else "",
                     ) and len(results) >= max_results:
                         break
-            except Exception:
+            except Exception as exc:
+                logger.debug("Bing HTML search failed: %s", exc)
                 if diagnostics is not None:
-                    diagnostics.setdefault("provider_errors", []).append({"provider": "bing", "error": "request_failed"})
-                return []
+                    diagnostics.setdefault("provider_errors", []).append({"provider": "bing", "error": str(exc)})
+
+        # Tier 5: LLM fallback for recurrence assessment (if all search failed)
+        if not results and intent == "validation_recurrence":
+            llm_fallback_enabled = self.config.get("validation", {}).get("search", {}).get("llm_fallback", False)
+            if llm_fallback_enabled:
+                try:
+                    llm_assessment = await self._llm_recurrence_assessment(query, full_query)
+                    if llm_assessment:
+                        for item in llm_assessment:
+                            if _append_result(item["title"], item.get("url", ""), item["snippet"]) and len(results) >= max_results:
+                                break
+                except Exception:
+                    pass  # LLM failure is non-fatal
 
         self._cache_set(self._search_cache, cache_key, list(results))
         return list(results)
+
+    async def _llm_recurrence_assessment(
+        self, query: str, full_query: str
+    ) -> list[dict[str, str]] | None:
+        """Use LLM to assess recurrence when all search providers return empty.
+
+        Returns a list of {title, snippet, url} dicts representing
+        likely manifestations of the problem, or None if the LLM
+        judges it not a real recurring issue.
+        """
+        from src.llm_discovery_expander import LLMClient
+
+        llm_client = LLMClient(self.config)
+        model = self.config.get("llm", {}).get("reasoning_model", "") or None
+
+        system_prompt = (
+            "You are an expert at determining whether a software/operations problem "
+            "is a real, recurring issue that many people face. "
+            "Respond ONLY with valid JSON: "
+            '{"confirmed": true/false, "manifestations": [{title, snippet, url}]}'
+        )
+        user_prompt = (
+            f"A web search for the following query returned ZERO results:\n"
+            f'"{full_query}"\n\n'
+            f"Is this a real, recurring problem that many people face? "
+            f"If yes, list 2-4 common manifestations as they might appear in "
+            f"forum posts, blog articles, or Stack Overflow questions. "
+            f"If not a real recurring problem, set confirmed=false and manifestations=[]."
+        )
+
+        try:
+            raw = await llm_client.agenerate(
+                system_prompt, user_prompt, model=model, max_tokens=800, timeout=30
+            )
+        except Exception:
+            return None
+
+        if not raw:
+            return None
+
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            # Try to extract JSON from the response
+            import re
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if match:
+                try:
+                    parsed = json.loads(match.group())
+                except (json.JSONDecodeError, TypeError):
+                    return None
+            else:
+                return None
+
+        if not parsed.get("confirmed"):
+            return None
+
+        manifestations = parsed.get("manifestations", [])
+        if not manifestations:
+            return None
+
+        # Validate structure
+        valid = []
+        for item in manifestations:
+            if isinstance(item, dict) and item.get("title") and item.get("snippet"):
+                valid.append({
+                    "title": str(item["title"])[:180],
+                    "snippet": str(item["snippet"])[:320],
+                    "url": str(item.get("url", ""))[:300],
+                })
+        return valid if valid else None
 
     async def fetch_content(self, url: str) -> dict[str, Any]:
         cached = self._cache_get(self._fetch_cache, url)
@@ -3237,31 +3350,44 @@ class ResearchToolkit:
             findings.extend(await self._discover_web_problem_threads(queries=queries[:2], observer=observer))
         return findings
 
-    def _reset_recurrence_attempt_trace(self) -> None:
-        self._last_recurrence_attempt_trace = []
-        self._last_recurrence_docs: list[SearchDocument] = []
+    def _new_recurrence_trace(self) -> dict[str, Any]:
+        return {
+            "attempts": [],
+            "docs": [],
+        }
 
-    def _track_recurrence_attempt(self, attempt: dict[str, Any]) -> dict[str, Any]:
-        self._last_recurrence_attempt_trace.append(attempt)
+    def _track_recurrence_attempt(self, trace: Optional[dict[str, Any]], attempt: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(trace, dict):
+            trace.setdefault("attempts", []).append(attempt)
         return attempt
 
-    def _track_recurrence_doc(self, doc: SearchDocument) -> SearchDocument:
-        self._last_recurrence_docs.append(doc)
+    def _track_recurrence_doc(self, trace: Optional[dict[str, Any]], doc: SearchDocument) -> SearchDocument:
+        if isinstance(trace, dict):
+            trace.setdefault("docs", []).append(doc)
         return doc
 
-    def get_last_recurrence_attempt_trace(self) -> list[dict[str, Any]]:
+    def get_last_recurrence_attempt_trace(self, trace: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not isinstance(trace, dict):
+            return []
         return [
             {key: value for key, value in dict(attempt).items() if not str(key).startswith("_")}
-            for attempt in getattr(self, "_last_recurrence_attempt_trace", [])
+            for attempt in trace.get("attempts", [])
         ]
 
-    def get_last_recurrence_docs(self) -> list[SearchDocument]:
-        return list(getattr(self, "_last_recurrence_docs", []))
+    def get_last_recurrence_docs(self, trace: Optional[dict[str, Any]]) -> list[SearchDocument]:
+        if not isinstance(trace, dict):
+            return []
+        return list(trace.get("docs", []))
 
-    def _timeout_recurrence_attempts(self, queries: list[str], reason: str) -> list[dict[str, Any]]:
+    def _timeout_recurrence_attempts(
+        self,
+        trace: Optional[dict[str, Any]],
+        queries: list[str],
+        reason: str,
+    ) -> list[dict[str, Any]]:
         attempts = []
         now = time.monotonic()
-        for raw_attempt in getattr(self, "_last_recurrence_attempt_trace", []):
+        for raw_attempt in (trace or {}).get("attempts", []):
             attempt = {key: value for key, value in dict(raw_attempt).items() if not str(key).startswith("_")}
             started_at = raw_attempt.get("_started_at")
             if started_at and not attempt.get("duration_ms"):
@@ -3305,20 +3431,25 @@ class ResearchToolkit:
         recurrence_queries = self.build_recurrence_queries(title=title, summary=summary, atom=atom)
         recurrence_timeout = False
         competitor_timeout = False
-        self._reset_recurrence_attempt_trace()
+        recurrence_trace = self._new_recurrence_trace()
         try:
             recurrence_docs, recurrence_meta = await asyncio.wait_for(
                 self.gather_recurrence_evidence(
                     recurrence_queries,
                     finding_kind=finding_kind,
                     atom=atom,
+                    trace=recurrence_trace,
                 ),
                 timeout=self.validation_recurrence_budget_seconds,
             )
         except asyncio.TimeoutError:
             recurrence_timeout = True
-            evidence_attempts = self._timeout_recurrence_attempts(recurrence_queries, "recurrence_budget_timeout")
-            recurrence_docs = self.get_last_recurrence_docs()
+            evidence_attempts = self._timeout_recurrence_attempts(
+                recurrence_trace,
+                recurrence_queries,
+                "recurrence_budget_timeout",
+            )
+            recurrence_docs = self.get_last_recurrence_docs(recurrence_trace)
             partial_results_by_source = {
                 "web": 0,
                 "reddit": 0,
@@ -5846,6 +5977,16 @@ class ResearchToolkit:
             return "strong"
         if (signature_hits >= 1 and buckets >= 1) or workflow_hits >= 2:
             return "partial"
+        # Docs that passed search relevance filtering for recurrence and contain
+        # any workflow language are at least partial corroboration — the search
+        # engine already confirmed topical relevance.
+        if workflow_hits >= 1 and (signature_hits >= 1 or buckets >= 1):
+            return "partial"
+        # A single workflow term in a search-validated doc is thin but valid
+        if workflow_hits >= 1:
+            return "partial"
+        if signature_hits >= 1 or buckets >= 1:
+            return "partial"
         return "none"
 
     def _source_repo_count(self, docs: list[SearchDocument]) -> int:
@@ -5956,6 +6097,7 @@ class ResearchToolkit:
         *,
         finding_kind: str,
         atom: Optional[Any] = None,
+        trace: Optional[dict[str, Any]] = None,
     ) -> tuple[list[SearchDocument], dict[str, Any]]:
         corroboration_plan = self._build_corroboration_plan(atom=atom, queries=queries, finding_kind=finding_kind)
         budget_profile = self._recurrence_budget_profile(atom)
@@ -6002,6 +6144,7 @@ class ResearchToolkit:
             per_source_limit=budget_profile.get("probe_max_results", 2),
             stop_after_docs=max(2, budget_profile.get("probe_max_results", 2)),
             allow_fallback=False,
+            trace=trace,
         )
         branch_subreddits = list(subreddit_plan)
         branch_sites = list(site_plan)
@@ -6058,6 +6201,7 @@ class ResearchToolkit:
                 per_source_limit=max(2, self.validation_recurrence_limit // 2),
                 stop_after_docs=budget_profile["early_stop_docs"],
                 allow_fallback=probe_hit_count == 0 and not branched_after_probe,
+                trace=trace,
             )
             recurrence_docs, results_by_query, results_by_source, collection_meta, source_family_branch = await self._expand_recurrence_source_families(
                 selected_queries=selected_queries,
@@ -6070,6 +6214,7 @@ class ResearchToolkit:
                 current_collection_meta=collection_meta,
                 budget_profile=budget_profile,
                 corroboration_plan=corroboration_plan,
+                trace=trace,
             )
 
         recurrence_domains = {domain_for(doc.url) for doc in recurrence_docs if doc.url}
@@ -6485,6 +6630,7 @@ class ResearchToolkit:
         per_source_limit: int,
         stop_after_docs: int,
         allow_fallback: bool,
+        trace: Optional[dict[str, Any]] = None,
     ) -> tuple[list[SearchDocument], dict[str, int], dict[str, int], dict[str, Any]]:
         seen_urls: set[str] = set()
         recurrence_docs: list[SearchDocument] = []
@@ -6523,7 +6669,7 @@ class ResearchToolkit:
                 "_started_at": time.monotonic(),
             }
             evidence_attempts.append(attempt)
-            self._track_recurrence_attempt(attempt)
+            self._track_recurrence_attempt(trace, attempt)
             return attempt
 
         def _finish_attempt(
@@ -6649,10 +6795,29 @@ class ResearchToolkit:
                     queries_by_source.setdefault(source_label, [])
                     if query not in queries_by_source[source_label]:
                         queries_by_source[source_label].append(query)
-                done, pending = await asyncio.wait(
-                    [record[0] for record in site_task_records],
-                    timeout=self._recurrence_source_task_timeout(),
-                )
+                done: set[asyncio.Task[Any]] = set()
+                pending: set[asyncio.Task[Any]] = set()
+                try:
+                    done, pending = await asyncio.wait(
+                        [record[0] for record in site_task_records],
+                        timeout=self._recurrence_source_task_timeout(),
+                    )
+                except asyncio.CancelledError:
+                    for task, site, _source_label, attempt, diagnostics in site_task_records:
+                        if task.done():
+                            continue
+                        _finish_attempt(
+                            attempt,
+                            status="timeout",
+                            raw_count=int(diagnostics.get("raw_count", 0) or 0),
+                            filtered_count=int(diagnostics.get("filtered_count", 0) or 0),
+                            kept_count=int(diagnostics.get("accepted_count", 0) or 0),
+                            error="cancelled",
+                            metadata={"site": site or "", "provider_errors": diagnostics.get("provider_errors", [])},
+                        )
+                        task.cancel()
+                    await asyncio.gather(*(record[0] for record in site_task_records), return_exceptions=True)
+                    raise
                 for task, site, source_label, attempt, diagnostics in site_task_records:
                     if task in pending:
                         _finish_attempt(
@@ -6666,6 +6831,8 @@ class ResearchToolkit:
                         )
                 for task in pending:
                     task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
                 for task, site, source_label, attempt, diagnostics in site_task_records:
                     if task not in done:
                         continue
@@ -6752,7 +6919,7 @@ class ResearchToolkit:
                         retrieval_query=query,
                     )
                 )
-                self._track_recurrence_doc(recurrence_docs[-1])
+                self._track_recurrence_doc(trace, recurrence_docs[-1])
                 results_by_source[source_label] = results_by_source.get(source_label, 0) + 1
                 deduped_by_source[source_label] = deduped_by_source.get(source_label, 0) + 1
                 docs_by_source.setdefault(source_label, []).append(recurrence_docs[-1])
@@ -7126,6 +7293,7 @@ class ResearchToolkit:
         current_collection_meta: dict[str, Any],
         budget_profile: dict[str, Any],
         corroboration_plan: Optional[CorroborationPlan] = None,
+        trace: Optional[dict[str, Any]] = None,
     ) -> tuple[list[SearchDocument], dict[str, int], dict[str, int], dict[str, Any], dict[str, Any]]:
         if _is_non_operational_business_risk_atom(atom):
             return current_docs, current_results_by_query, current_results_by_source, current_collection_meta, {
@@ -7385,6 +7553,7 @@ class ResearchToolkit:
                     per_source_limit=max(2, self.validation_recurrence_limit // 2),
                     stop_after_docs=max(2, budget_profile["target_docs"]),
                     allow_fallback=False,
+                    trace=trace,
                 )
                 prior_doc_count = len(merged_docs)
                 merged_docs, merged_results_by_query, merged_results_by_source = self._merge_recurrence_results(

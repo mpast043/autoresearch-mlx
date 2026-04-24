@@ -330,6 +330,106 @@ def _doc_source(doc: Any) -> str:
     return str(getattr(doc, "source", "") or "")
 
 
+def _evidence_record_url(record: Any) -> str:
+    if isinstance(record, dict):
+        return str(record.get("normalized_url") or record.get("url") or "")
+    return _doc_url(record)
+
+
+def _confirmed_recurrence_records(evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    confirmed: list[dict[str, Any]] = []
+    for source_label, records in (evidence.get("matched_docs_by_source", {}) or {}).items():
+        for record in records or []:
+            if not isinstance(record, dict):
+                continue
+            confirmed.append(
+                {
+                    **record,
+                    "source_family": str(record.get("source_family") or source_label or ""),
+                }
+            )
+    return confirmed
+
+
+def _has_confirmed_source_yield(evidence: dict[str, Any]) -> bool:
+    for details in (evidence.get("source_yield", {}) or {}).values():
+        if not isinstance(details, dict):
+            continue
+        if details.get("confirmed"):
+            return True
+        if int(details.get("docs_strong_match", 0) or 0) > 0:
+            return True
+    return False
+
+
+def _apply_corroboration_contradiction_guard(
+    evidence: dict[str, Any],
+    *,
+    origin_source_family: str,
+    origin_source_group: str,
+    corroboration_score: float,
+    evidence_sufficiency: float,
+) -> dict[str, Any]:
+    recurrence_state = str(evidence.get("recurrence_state", "") or "")
+    family_confirmation_count = int(evidence.get("family_confirmation_count", 0) or 0)
+    matched_docs_by_source = evidence.get("matched_docs_by_source", {}) or {}
+    source_yield = evidence.get("source_yield", {}) or {}
+    recurrence_gap_reason = str(evidence.get("recurrence_gap_reason", "") or "")
+    recurrence_failure_class = str(evidence.get("recurrence_failure_class", "") or "")
+    recurrence_timeout = bool(evidence.get("recurrence_timeout"))
+
+    no_inspectable_matches = not any(records for records in matched_docs_by_source.values())
+    no_attributable_yield = not source_yield
+    no_confirmed_yield = not _has_confirmed_source_yield(evidence)
+    no_confirmed_recurrence = (
+        recurrence_state in {"thin", "weak", "timeout"}
+        and family_confirmation_count == 0
+        and no_inspectable_matches
+        and (no_attributable_yield or no_confirmed_yield)
+    )
+    timeout_partial = recurrence_timeout or recurrence_gap_reason == "timeout_after_partial_retrieval"
+
+    if not no_confirmed_recurrence:
+        return {
+            "applied": False,
+            "corroboration_score": corroboration_score,
+            "evidence_sufficiency": evidence_sufficiency,
+            "independent_confirmations": None,
+            "source_families": None,
+            "source_groups": None,
+            "core_source_families": None,
+            "cross_source_match_count": None,
+            "cross_source_match_score": None,
+            "guard_reason": "",
+        }
+
+    score_cap = 0.24 if timeout_partial else 0.39
+    sufficiency_cap = 0.32 if timeout_partial else 0.46
+    source_families = [origin_source_family] if origin_source_family else []
+    source_groups = [origin_source_group] if origin_source_group else []
+    core_source_families = [
+        family for family in source_families if family in CORE_CORROBORATION_FAMILIES
+    ]
+
+    return {
+        "applied": True,
+        "corroboration_score": min(corroboration_score, score_cap),
+        "evidence_sufficiency": min(evidence_sufficiency, sufficiency_cap),
+        "independent_confirmations": 0,
+        "source_families": source_families,
+        "source_groups": source_groups,
+        "core_source_families": core_source_families,
+        "cross_source_match_count": 0,
+        "cross_source_match_score": 0.0,
+        "guard_reason": (
+            "timeout_partial_retrieval_without_attributable_confirmations"
+            if timeout_partial
+            else "thin_recurrence_without_attributable_confirmations"
+        ),
+        "recurrence_failure_class": recurrence_failure_class,
+    }
+
+
 def _signature_tool_terms(atom: Optional[Any]) -> list[str]:
     """Extract tool/technology names from atom fields for soft matching.
 
@@ -1195,14 +1295,22 @@ class EvidenceAgent(BaseAgent):
         query_set_hash = hashlib.sha1(json.dumps(recurrence_queries, sort_keys=True).encode("utf-8")).hexdigest()
         recurrence_score = float(evidence_scores.get("problem_score", 0.0) or 0.0)
         query_coverage = float(evidence.get("recurrence_query_coverage", 0.0) or 0.0)
-        doc_count = int(evidence.get("recurrence_doc_count", 0) or 0)
-        domain_count = int(evidence.get("recurrence_domain_count", 0) or 0)
+        raw_doc_count = int(evidence.get("recurrence_doc_count", 0) or 0)
+        raw_domain_count = int(evidence.get("recurrence_domain_count", 0) or 0)
         results_by_query = evidence.get("recurrence_results_by_query", {}) or {}
         results_by_source = evidence.get("recurrence_results_by_source", {}) or {}
         # Use full doc list for signature matching, not the truncated sample
         recurrence_docs = evidence.get("_all_recurrence_docs") or evidence.get("recurrence_docs", []) or []
+        confirmed_records = _confirmed_recurrence_records(evidence)
         source_diversity = sum(1 for count in results_by_source.values() if count)
         query_breadth = sum(1 for count in results_by_query.values() if count)
+        doc_count = len(confirmed_records) if confirmed_records else raw_doc_count
+        confirmed_domains = {
+            urlparse(_evidence_record_url(record)).netloc.lower().replace("www.", "")
+            for record in confirmed_records
+            if _evidence_record_url(record)
+        }
+        domain_count = len(confirmed_domains) if confirmed_records else raw_domain_count
         confirmation_depth_score = min(doc_count, 8) / 8.0
         domain_depth_score = min(domain_count, 5) / 5.0
         source_diversity_score = min(source_diversity, 4) / 4.0
@@ -1221,22 +1329,43 @@ class EvidenceAgent(BaseAgent):
         matched_doc_families: list[str] = [origin_source_family] if origin_source_family else []
         matched_doc_groups: list[str] = [origin_source_group] if origin_source_family else []
         matched_family_counts: dict[str, int] = {origin_source_family: 1} if origin_source_family else {}
-        cross_source_match_count = 1 if origin_source_family else 0
-        for doc in recurrence_docs:
-            if not _doc_matches_signature(doc, signature_terms, origin_family=origin_source_family, tool_terms=tool_terms):
-                continue
-            cross_source_match_count += 1
-            doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
-            matched_doc_families.append(doc_family)
-            matched_doc_groups.append(_source_family_group(doc_family))
-            matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
+        cross_source_match_count = 0
+        if confirmed_records:
+            for record in confirmed_records:
+                doc_family = _infer_source_family(
+                    str(record.get("source_family", "") or ""),
+                    _evidence_record_url(record),
+                    "",
+                )
+                if not doc_family:
+                    continue
+                cross_source_match_count += 1
+                matched_doc_families.append(doc_family)
+                matched_doc_groups.append(_source_family_group(doc_family))
+                matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
+        else:
+            for doc in recurrence_docs:
+                if not _doc_matches_signature(doc, signature_terms, origin_family=origin_source_family, tool_terms=tool_terms):
+                    continue
+                cross_source_match_count += 1
+                doc_family = _infer_source_family(_doc_source(doc), _doc_url(doc), "")
+                matched_doc_families.append(doc_family)
+                matched_doc_groups.append(_source_family_group(doc_family))
+                matched_family_counts[doc_family] = matched_family_counts.get(doc_family, 0) + 1
         source_families = sorted(set(matched_doc_families))
         source_groups = sorted(set(matched_doc_groups))
 
         # LLM second-pass: when heuristic signature matching found too few
         # source families (empty or single-family), ask the reasoning model
         # to semantically assess rejected docs to find cross-source corroboration.
-        if len(source_families) < 2 and self._llm_client and recurrence_docs:
+        allow_llm_rescue = (
+            len(source_families) < 2
+            and self._llm_client
+            and recurrence_docs
+            and not evidence.get("recurrence_timeout")
+            and str(evidence.get("recurrence_gap_reason", "") or "") != "timeout_after_partial_retrieval"
+        )
+        if allow_llm_rescue:
             # Collect docs that were rejected by the heuristic
             rejected_docs = [(i, doc) for i, doc in enumerate(recurrence_docs)
                              if not _doc_matches_signature(doc, signature_terms, origin_family=origin_source_family, tool_terms=tool_terms)]
@@ -1336,6 +1465,33 @@ class EvidenceAgent(BaseAgent):
                 - generalizability["generalizability_penalty"] * 0.8,
             ),
         )
+        contradiction_guard = _apply_corroboration_contradiction_guard(
+            evidence,
+            origin_source_family=origin_source_family,
+            origin_source_group=origin_source_group,
+            corroboration_score=corroboration_score,
+            evidence_sufficiency=evidence_sufficiency,
+        )
+        if contradiction_guard["applied"]:
+            corroboration_score = float(contradiction_guard["corroboration_score"])
+            evidence_sufficiency = float(contradiction_guard["evidence_sufficiency"])
+            cross_source_match_count = int(contradiction_guard["cross_source_match_count"])
+            cross_source_match_score = float(contradiction_guard["cross_source_match_score"])
+            source_families = list(contradiction_guard["source_families"])
+            source_groups = list(contradiction_guard["source_groups"])
+            core_source_families = list(contradiction_guard["core_source_families"])
+            source_family_diversity = len(source_families)
+            source_group_diversity = len(source_groups)
+            source_family_diversity_score = min(source_family_diversity, 4) / 4.0
+            source_group_diversity_score = min(source_group_diversity, 3) / 3.0
+            core_source_family_diversity = len(core_source_families)
+            core_source_family_diversity_score = min(core_source_family_diversity, 4) / 4.0
+            matched_family_counts = {family: 1 for family in source_families}
+            doc_count = int(contradiction_guard["independent_confirmations"])
+            domain_count = 0
+            confirmation_depth_score = 0.0
+            domain_depth_score = 0.0
+            source_concentration = 0.0
         corroboration_json = {
             "finding_id": finding_id,
             "run_id": self.db.active_run_id,
@@ -1373,6 +1529,8 @@ class EvidenceAgent(BaseAgent):
             "cross_source_bonus": round(cross_source_bonus, 4),
             "core_source_family_bonus": round(core_source_family_bonus, 4),
             "single_source_penalty": round(single_source_penalty, 4),
+            "contradiction_guard_applied": contradiction_guard["applied"],
+            "contradiction_guard_reason": contradiction_guard["guard_reason"],
             **generalizability,
         }
         return CorroborationRecord(

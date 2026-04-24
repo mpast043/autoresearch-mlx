@@ -134,6 +134,14 @@ class AutoResearcher:
         self.db.set_active_run_id(self.current_run_id)
         set_run_id(self.current_run_id)
 
+        # Bootstrap checks before any pipeline work
+        failures = await self._bootstrap_checks()
+        if failures:
+            for f in failures:
+                logger.warning("BOOTSTRAP FAIL: %s", f)
+            logger.error("Bootstrap checks failed (%d). Fix before running.", len(failures))
+            raise RuntimeError(f"Bootstrap checks failed: {failures}")
+
         # Pass config to opportunity_engine for LLM atom extraction
         from src.opportunity_engine import configure_opportunity_engine
         from src.build_prep import configure_build_prep
@@ -156,6 +164,62 @@ class AutoResearcher:
 
         await self._create_agents()
         self._setup_signals()
+
+    async def _bootstrap_checks(self) -> list[str]:
+        """Pre-flight checks: verify required services are reachable before pipeline starts."""
+        failures: list[str] = []
+
+        # 1. Ollama (LLM) — needed for atom extraction, ideation, build-prep
+        llm_config = self.config.get("llm", {})
+        provider = llm_config.get("provider", "ollama")
+        base_url = llm_config.get("base_url", "http://localhost:11434")
+        if provider in ("ollama", "auto"):
+            try:
+                import urllib.request
+                req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status != 200:
+                        failures.append(f"Ollama returned HTTP {resp.status} at {base_url}")
+                    else:
+                        models = json.loads(resp.read()).get("models", [])
+                        model_names = [m.get("name", "") for m in models]
+                        logger.info("Bootstrap OK: Ollama at %s (%d models: %s)", base_url, len(model_names), ", ".join(model_names[:5]))
+            except Exception as e:
+                failures.append(f"Ollama unreachable at {base_url}: {e}")
+
+        # 2. ddgs (web search) — needed for validation recurrence evidence
+        try:
+            from ddgs import DDGS
+            with DDGS() as ddgs:
+                results = ddgs.text("test search", backend="auto", max_results=1)
+            if not results:
+                failures.append("ddgs 'auto' backend returned 0 results (may be rate-limited)")
+            else:
+                logger.info("Bootstrap OK: ddgs search returned results")
+        except Exception as e:
+            failures.append(f"ddgs search failed: {e}")
+
+        # 3. Reddit bridge (if enabled) — warn if unreachable but don't fail (fallback exists)
+        reddit_bridge = self.config.get("reddit_bridge", {})
+        if reddit_bridge.get("enabled", False):
+            bridge_url = reddit_bridge.get("base_url", "")
+            if bridge_url:
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(bridge_url, method="HEAD")
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        logger.info("Bootstrap OK: Reddit bridge at %s (HTTP %d)", bridge_url, resp.status)
+                except Exception as e:
+                    logger.warning("Bootstrap WARN: Reddit bridge unreachable at %s: %s (will use fallback)", bridge_url, e)
+
+        # 4. Database writable
+        try:
+            self.db.set_active_run_id(self.current_run_id)
+            logger.info("Bootstrap OK: SQLite database writable")
+        except Exception as e:
+            failures.append(f"Database not writable: {e}")
+
+        return failures
 
     async def _create_agents(self) -> None:
         assert self.db is not None
