@@ -4025,8 +4025,13 @@ class Database:
     def get_backlog_workbench(self, limit: int = 25) -> list[dict[str, Any]]:
         findings = self.get_findings(status="qualified", limit=5000)
         items: list[dict[str, Any]] = []
+        active_run = self.active_run_id
         for finding in findings:
             if (finding.source_class or "") != "pain_signal" or finding.id is None:
+                continue
+            # Skip findings already processed by evidence in this run to avoid
+            # duplicate requeue when the pipeline drains and restarts.
+            if active_run and self.get_corroboration(int(finding.id), active_run) is not None:
                 continue
             signal_rows = self.get_raw_signals_by_finding(int(finding.id))
             atom_rows = self.get_problem_atoms_by_finding(int(finding.id))

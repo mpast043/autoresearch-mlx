@@ -2497,6 +2497,92 @@ def test_discover_reddit_problem_threads_skips_thread_fetch_for_prefiltered_docs
     assert findings == []
 
 
+def test_discover_reddit_problem_threads_excludes_degraded_search_docs():
+    toolkit = ResearchToolkit(
+        {
+            "discovery": {
+                "reddit": {
+                    "search_sorts": ["relevance"],
+                    "per_sort_limit": 1,
+                    "max_docs_per_pair": 1,
+                }
+            }
+        }
+    )
+
+    async def fake_reddit_search(subreddit, query, limit=2, sort="relevance"):
+        return [
+            SearchDocument(
+                title="manual reconciliation workflow breaks",
+                url="https://reddit.com/r/shopify/comments/degraded",
+                snippet="manual reconciliation keeps breaking every week",
+                source=f"reddit/{subreddit}",
+                source_quality="degraded",
+            )
+        ]
+
+    async def should_not_fetch_thread_context(url):
+        raise AssertionError("degraded search docs must not be hydrated into normal findings")
+
+    toolkit.reddit_search = fake_reddit_search
+    toolkit.reddit_thread_context = should_not_fetch_thread_context
+
+    findings = asyncio.run(
+        toolkit._discover_reddit_problem_threads(
+            subreddits=["shopify"],
+            queries=["manual reconciliation workflow"],
+        )
+    )
+
+    assert findings == []
+
+
+def test_discover_reddit_problem_threads_excludes_degraded_thread_context():
+    toolkit = ResearchToolkit(
+        {
+            "discovery": {
+                "reddit": {
+                    "search_sorts": ["relevance"],
+                    "per_sort_limit": 1,
+                    "max_docs_per_pair": 1,
+                }
+            }
+        }
+    )
+
+    async def fake_reddit_search(subreddit, query, limit=2, sort="relevance"):
+        return [
+            SearchDocument(
+                title="manual reconciliation workflow breaks",
+                url="https://reddit.com/r/shopify/comments/degraded-thread",
+                snippet="manual reconciliation keeps breaking every week",
+                source=f"reddit/{subreddit}",
+                source_quality="bridge",
+            )
+        ]
+
+    async def fake_thread_context(url):
+        return {
+            "title": "workflow breaks",
+            "text": "manual reconciliation keeps breaking every week and teams fall back to spreadsheets",
+            "description": "manual reconciliation keeps breaking every week",
+            "comments": ["same here"],
+            "source_quality": "degraded",
+        }
+
+    toolkit.reddit_search = fake_reddit_search
+    toolkit.reddit_thread_context = fake_thread_context
+
+    findings = asyncio.run(
+        toolkit._discover_reddit_problem_threads(
+            subreddits=["shopify"],
+            queries=["manual reconciliation workflow"],
+        )
+    )
+
+    assert findings == []
+
+
 def test_discover_reddit_problem_threads_queries_multiple_sort_modes():
     toolkit = ResearchToolkit(
         {
@@ -2599,9 +2685,10 @@ def test_reddit_bridge_only_miss_returns_empty_without_public_fallback(monkeypat
     assert metrics["reddit_fallback_queries"] == 0
 
 
-def test_reddit_bridge_with_fallback_uses_public_reddit_on_miss(monkeypatch):
+def test_reddit_bridge_with_fallback_uses_public_reddit_on_miss(monkeypatch, caplog):
     toolkit = ResearchToolkit({"reddit_bridge": {"enabled": True, "base_url": "https://bridge.example", "mode": "bridge_with_fallback"}})
     toolkit.node_bin = None
+    caplog.set_level("INFO")
 
     async def fake_search_posts(**kwargs):
         raise BridgeError("no_cached_result", "no cached search result", 404)
@@ -2616,6 +2703,8 @@ def test_reddit_bridge_with_fallback_uses_public_reddit_on_miss(monkeypatch):
     assert metrics["reddit_mode"] == "bridge_with_fallback"
     assert metrics["reddit_bridge_misses"] == 1
     assert metrics["reddit_fallback_queries"] == 1
+    assert "using degraded fallback legacy/public path" in caplog.text
+    assert "using degraded fallback path=public_json" in caplog.text
 
 
 def test_reddit_public_direct_bypasses_bridge(monkeypatch):

@@ -42,6 +42,20 @@ class RedditSeedSummary:
     discovered_posts: int = 0
     unique_urls: int = 0
     thread_cache_hits: int = 0
+    bridge_search_count: int = 0
+    bridge_search_result_count: int = 0
+    public_json_search_count: int = 0
+    bridge_thread_count: int = 0
+    bridge_thread_no_cached_count: int = 0
+    public_json_thread_count: int = 0
+    degraded_fallback_findings_count: int = 0
+    degraded_fallback_docs_count: int = 0
+    bridge_covered_pairs: int = 0
+    degraded_covered_pairs: int = 0
+    pairs_with_usable_bridge_docs: int = 0
+    pairs_with_only_degraded_docs: int = 0
+    failed_pairs: int = 0
+    truly_uncovered_pairs: int = 0
 
 
 def reddit_post_id_from_url(url: str) -> str:
@@ -132,8 +146,7 @@ class RedditSeeder:
     def build_toolkit(self) -> ResearchToolkit:
         config = copy.deepcopy(self.config)
         config.setdefault("reddit_bridge", {})
-        config["reddit_bridge"]["enabled"] = False
-        config["reddit_bridge"]["mode"] = "public_direct"
+        config["reddit_bridge"]["seed_on_miss"] = False
         return ResearchToolkit(config)
 
     def iter_pairs(
@@ -215,25 +228,47 @@ class RedditSeeder:
                 return pair_summary
 
             if self.bypass_cache:
-                logger.info("reddit_seed BYPASSING CACHE subreddit=%s query=%r", subreddit, query)
+                logger.info(
+                    "reddit_seed bypassing local seed cache subreddit=%s query=%r; transport still attempts bridge first and labels degraded fallback",
+                    subreddit,
+                    query,
+                )
 
             pair_summary.searched_pairs += 1
             docs = await toolkit.reddit_search(subreddit, query, limit=self.search_limit)
             if not docs:
                 logger.info("reddit_seed no docs subreddit=%s query=%r", subreddit, query)
-                self.relay_store.put_search(
-                    subreddit=subreddit,
-                    query=query,
-                    sort="relevance",
-                    cursor="",
-                    items=[],
-                    next_cursor="",
+                pair_summary.truly_uncovered_pairs += 1
+                return pair_summary
+
+            usable_docs = [
+                doc
+                for doc in docs
+                if str(getattr(doc, "source_quality", "") or "normal").lower() != "degraded"
+            ]
+            degraded_docs = [
+                doc
+                for doc in docs
+                if str(getattr(doc, "source_quality", "") or "normal").lower() == "degraded"
+            ]
+            if usable_docs:
+                pair_summary.bridge_covered_pairs += 1
+                pair_summary.pairs_with_usable_bridge_docs += 1
+            if degraded_docs:
+                pair_summary.degraded_covered_pairs += 1
+            if degraded_docs and not usable_docs:
+                pair_summary.pairs_with_only_degraded_docs += 1
+                pair_summary.truly_uncovered_pairs += 1
+                logger.info(
+                    "reddit_seed degraded-only pair not cached for evidence subreddit=%s query=%r degraded_docs=%s",
+                    subreddit,
+                    query,
+                    len(degraded_docs),
                 )
-                pair_summary.cached_searches += 1
                 return pair_summary
 
             query_posts: list[dict[str, Any]] = []
-            for doc in docs:
+            for doc in usable_docs:
                 if not doc.url:
                     continue
                 async with seen_urls_lock:
@@ -253,28 +288,37 @@ class RedditSeeder:
                         "description": doc.snippet,
                         "comments": [],
                     }
+                context_quality = str(context.get("source_quality", "") or "normal").lower()
+                if context_quality in {"degraded", "bridge_miss"}:
+                    logger.info(
+                        "reddit_seed skipping unusable thread context for relay cache url=%s subreddit=%s query=%r source_quality=%s",
+                        doc.url,
+                        subreddit,
+                        query,
+                        context_quality,
+                    )
+                    context = {
+                        "title": doc.title,
+                        "description": doc.snippet,
+                        "comments": [],
+                        "source_quality": getattr(doc, "source_quality", "normal"),
+                    }
 
                 post_item = build_post_item(doc, subreddit=subreddit, thread_context=context)
                 comment_items = build_comment_items(post_item, list(context.get("comments", []) or []))
 
-                self.relay_store.put_thread(url=doc.url, post=post_item, comments=comment_items)
-                self.relay_store.put_comments(url=doc.url, items=comment_items)
+                if context_quality not in {"degraded", "bridge_miss"}:
+                    self.relay_store.put_thread(url=doc.url, post=post_item, comments=comment_items)
+                    self.relay_store.put_comments(url=doc.url, items=comment_items)
 
-                pair_summary.cached_threads += 1
+                    pair_summary.cached_threads += 1
                 pair_summary.cached_comments += len(comment_items)
                 pair_summary.discovered_posts += 1
                 query_posts.append(post_item)
 
             if not query_posts:
-                self.relay_store.put_search(
-                    subreddit=subreddit,
-                    query=query,
-                    sort="relevance",
-                    cursor="",
-                    items=[],
-                    next_cursor="",
-                )
-                pair_summary.cached_searches += 1
+                pair_summary.failed_pairs += 1
+                pair_summary.truly_uncovered_pairs += 1
                 return pair_summary
 
             self.relay_store.put_search(
@@ -305,17 +349,43 @@ class RedditSeeder:
                 summary.cached_comments += pair_summary.cached_comments
                 summary.discovered_posts += pair_summary.discovered_posts
                 summary.thread_cache_hits += pair_summary.thread_cache_hits
+                summary.bridge_covered_pairs += pair_summary.bridge_covered_pairs
+                summary.degraded_covered_pairs += pair_summary.degraded_covered_pairs
+                summary.pairs_with_usable_bridge_docs += pair_summary.pairs_with_usable_bridge_docs
+                summary.pairs_with_only_degraded_docs += pair_summary.pairs_with_only_degraded_docs
+                summary.failed_pairs += pair_summary.failed_pairs
+                summary.truly_uncovered_pairs += pair_summary.truly_uncovered_pairs
 
             summary.unique_urls = len(seen_urls)
-            summary.uncovered_pairs = max(summary.total_pairs - summary.existing_cached_pairs - summary.cached_searches, 0)
+            metrics = toolkit.get_reddit_runtime_metrics() if hasattr(toolkit, "get_reddit_runtime_metrics") else {}
+            summary.bridge_search_count = int(metrics.get("bridge_search_count", 0) or 0)
+            summary.bridge_search_result_count = int(metrics.get("bridge_search_result_count", 0) or 0)
+            summary.public_json_search_count = int(metrics.get("public_json_search_count", 0) or 0)
+            summary.bridge_thread_count = int(metrics.get("bridge_thread_count", 0) or 0)
+            summary.bridge_thread_no_cached_count = int(metrics.get("bridge_thread_no_cached_count", 0) or 0)
+            summary.public_json_thread_count = int(metrics.get("public_json_thread_count", 0) or 0)
+            summary.degraded_fallback_findings_count = int(metrics.get("degraded_fallback_findings_count", 0) or 0)
+            summary.degraded_fallback_docs_count = int(metrics.get("degraded_fallback_docs_count", 0) or 0)
+            summary.uncovered_pairs = summary.truly_uncovered_pairs
             logger.info(
-                "reddit_seed completed total_pairs=%s searched_pairs=%s cached_searches=%s cached_threads=%s unique_urls=%s uncovered_pairs=%s",
+                "reddit_seed completed total_pairs=%s searched_pairs=%s cached_searches=%s cached_threads=%s unique_urls=%s uncovered_pairs=%s bridge_covered_pairs=%s degraded_covered_pairs=%s pairs_with_usable_bridge_docs=%s pairs_with_only_degraded_docs=%s failed_pairs=%s truly_uncovered_pairs=%s bridge_searches=%s public_json_searches=%s public_json_threads=%s degraded_fallback_findings=%s degraded_fallback_docs=%s",
                 summary.total_pairs,
                 summary.searched_pairs,
                 summary.cached_searches,
                 summary.cached_threads,
                 summary.unique_urls,
                 summary.uncovered_pairs,
+                summary.bridge_covered_pairs,
+                summary.degraded_covered_pairs,
+                summary.pairs_with_usable_bridge_docs,
+                summary.pairs_with_only_degraded_docs,
+                summary.failed_pairs,
+                summary.truly_uncovered_pairs,
+                summary.bridge_search_count,
+                summary.public_json_search_count,
+                summary.public_json_thread_count,
+                summary.degraded_fallback_findings_count,
+                summary.degraded_fallback_docs_count,
             )
             return summary
         finally:

@@ -2964,6 +2964,14 @@ class ResearchToolkit:
                     for doc in await self.reddit_search(subreddit, keyword, limit=per_sort_limit, sort=sort_mode):
                         if not doc.url or doc.url in pair_seen:
                             continue
+                        if str(getattr(doc, "source_quality", "") or "normal").lower() == "degraded":
+                            logger.info(
+                                "reddit success discovery excluding degraded search doc from normal findings url=%s subreddit=%s query=%r",
+                                doc.url,
+                                subreddit,
+                                keyword,
+                            )
+                            continue
                         pair_seen.add(doc.url)
                         pair_docs.append(doc)
                         if len(pair_docs) >= max_docs_per_pair:
@@ -2990,6 +2998,13 @@ class ResearchToolkit:
         findings: list[dict[str, Any]] = []
         for keyword, doc in docs:
             content = await self.reddit_thread_context(doc.url)
+            if str(content.get("source_quality", "") or "normal").lower() == "degraded":
+                logger.info(
+                    "reddit success discovery excluding degraded thread context from normal findings url=%s query=%r",
+                    doc.url,
+                    keyword,
+                )
+                continue
             full_text = compact_text(f"{doc.title} {doc.snippet} {content.get('text', '')}", 2400)
             money = first_match(
                 [r"\$[\d,.]+(?:[kKmM])?\s*(?:mrr|arr|revenue|monthly)", r"\d+\s+(?:customers|users|clients)"],
@@ -3134,6 +3149,14 @@ class ResearchToolkit:
                         for doc in direct_docs:
                             if not doc.url or doc.url in pair_seen:
                                 continue
+                            if str(getattr(doc, "source_quality", "") or "normal").lower() == "degraded":
+                                logger.info(
+                                    "reddit discovery excluding degraded search doc from normal findings url=%s subreddit=%s query=%r",
+                                    doc.url,
+                                    subreddit,
+                                    query,
+                                )
+                                continue
                             if not self._should_hydrate_reddit_problem_doc(doc):
                                 continue
                             pair_seen.add(doc.url)
@@ -3183,6 +3206,14 @@ class ResearchToolkit:
         async def _build_finding(subreddit: str, query: str, sort_mode: str, doc: SearchDocument) -> Optional[dict[str, Any]]:
             async with context_sem:
                 content = await self.reddit_thread_context(doc.url)
+            if str(content.get("source_quality", "") or "normal").lower() == "degraded":
+                logger.info(
+                    "reddit discovery excluding degraded thread context from normal findings url=%s subreddit=%s query=%r",
+                    doc.url,
+                    subreddit,
+                    query,
+                )
+                return None
             full_text = compact_text(f"{doc.title} {doc.snippet} {content.get('text', '')}", 2400)
             if not self._is_problem_candidate(doc.title, full_text, source_url=doc.url):
                 return None
@@ -3205,6 +3236,10 @@ class ResearchToolkit:
                     "page_excerpt": content.get("description", ""),
                     "comments": content.get("comments", []),
                     "comment_metadata": content.get("comment_metadata", []),
+                    "source_quality": "bridge"
+                    if str(getattr(doc, "source_quality", "") or "normal").lower() == "bridge"
+                    else str(getattr(doc, "source_quality", "") or "normal"),
+                    "thread_context_quality": str(content.get("source_quality", "") or "normal"),
                 },
             }
 

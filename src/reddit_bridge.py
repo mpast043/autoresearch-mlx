@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -11,6 +12,9 @@ from typing import Any
 import aiohttp
 
 from src.utils.circuit_breaker import CircuitOpenError, get_breaker
+
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_env(value: str | None) -> str:
@@ -252,6 +256,7 @@ class RedditBridgeClient:
         Returns the thread data on success, or None on failure.
         """
         if not self.devvit_enabled:
+            logger.info("devvit fetch-thread unavailable postId=%s reason=devvit_app_url_not_configured", post_id)
             return None
         try:
             session = await self._get_session()
@@ -263,7 +268,12 @@ class RedditBridgeClient:
             ) as response:
                 if response.status != 200:
                     body = await response.json() if response.content_type == "application/json" else {}
-                    logger.warning("devvit fetch-thread failed status=%s postId=%s", response.status, post_id)
+                    logger.warning(
+                        "devvit fetch-thread failed status=%s postId=%s error=%s",
+                        response.status,
+                        post_id,
+                        body.get("error", "") if isinstance(body, dict) else "",
+                    )
                     return None
                 body = await response.json()
                 if not body.get("ok"):
@@ -273,6 +283,26 @@ class RedditBridgeClient:
         except Exception as exc:
             logger.warning("devvit fetch-thread error postId=%s error=%s", post_id, exc)
             return None
+
+    async def devvit_health(self) -> dict[str, Any]:
+        if not self.devvit_enabled:
+            raise BridgeError("devvit_not_configured", "REDDIT_DEVVIT_APP_URL is not configured")
+        try:
+            session = await self._get_session()
+            async with session.get(
+                f"{self.devvit_app_url}/api/health",
+                headers=self._auth_headers(),
+            ) as response:
+                payload = await response.json()
+        except TimeoutError as exc:
+            raise BridgeError("devvit_timeout", "Devvit health check timed out") from exc
+        except aiohttp.ClientError as exc:
+            raise BridgeError("devvit_unavailable", f"Devvit health check failed: {exc}") from exc
+        if response.status >= 400:
+            raise BridgeError("devvit_unhealthy", "Devvit health check failed", response.status)
+        if not isinstance(payload, dict):
+            raise BridgeError("bad_response_shape", "Devvit health endpoint returned invalid response")
+        return payload
 
     async def push_seed_subreddits(self, subreddits: list[str]) -> bool:
         """Push the expanded subreddit list to the relay so Devvit cron can pick it up."""

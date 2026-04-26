@@ -8,6 +8,17 @@ AutoResearch MLX is an evidence-first weak-signal problem discovery and validati
 
 The default pipeline path is: `discovery -> evidence -> validation -> build_prep`. **Auto-ideate** can be enabled in `config.yaml` (`orchestration.auto_ideate_after_validation`); it runs on **promote** (`passed`) or on **prototype_candidate** when a **build brief** exists (see `docs/PRODUCT_LOOP.md`). **Auto-build** remains off by default (`builder.auto_build`).
 
+## Project Priority Filter
+
+Treat the engine as internal infrastructure and the wedge as the income vehicle.
+
+Only build engine features that improve at least one of:
+- wedge quality
+- wedge trust / evidence confidence
+- speed to pilot
+
+Every change to scoring, evidence, retrieval, policy, architecture, refactors, tooling, or schema should be justified against that filter. If a proposal only improves engine neatness or internal sophistication without improving wedge selection, wedge confidence, or speed to pilot, treat it as low value and prefer deletion, deferral, or a smaller alternative.
+
 ## Commands
 
 ```bash

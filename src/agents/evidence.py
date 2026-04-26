@@ -986,15 +986,67 @@ class EvidenceAgent(BaseAgent):
 
     async def stop(self) -> None:
         inflight = list(self._inflight)
-        for task in inflight:
-            task.cancel()
         if inflight:
-            await asyncio.gather(*inflight, return_exceptions=True)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*inflight, return_exceptions=True),
+                    timeout=30.0,
+                )
+                logger.info("evidence agent: all %s inflight tasks completed gracefully", len(inflight))
+            except asyncio.TimeoutError:
+                logger.warning("evidence agent: %s inflight tasks did not finish in 30s, cancelling", len(inflight))
+                for task in inflight:
+                    task.cancel()
+                await asyncio.gather(*inflight, return_exceptions=True)
+                for task in inflight:
+                    if task.cancelled():
+                        finding_id = getattr(task, "_finding_id", None)
+                        if finding_id:
+                            try:
+                                self.db.insert_ledger_entry(
+                                    EvidenceLedgerEntry(
+                                        entity_type="finding",
+                                        entity_id=finding_id,
+                                        entry_kind="evidence_interrupted",
+                                        stance="neutral",
+                                        source_name="evidence",
+                                        source_url="",
+                                        quote_text="",
+                                        summary="Evidence task was cancelled during pipeline shutdown.",
+                                        metadata_json=json.dumps(
+                                            {"reason": "pipeline_shutdown", "agent": self.name}
+                                        ),
+                                    )
+                                )
+                                logger.warning("evidence task cancelled finding=%s: wrote interruption ledger", finding_id)
+                            except Exception as exc:
+                                logger.warning("evidence task cancelled finding=%s: failed to write ledger: %s", finding_id, exc)
         await super().stop()
 
     def _harvest_completed_tasks(self, tasks: set[asyncio.Task]) -> None:
         for task in tasks:
             if task.cancelled():
+                finding_id = getattr(task, "_finding_id", None)
+                if finding_id:
+                    try:
+                        self.db.insert_ledger_entry(
+                            EvidenceLedgerEntry(
+                                entity_type="finding",
+                                entity_id=finding_id,
+                                entry_kind="evidence_interrupted",
+                                stance="neutral",
+                                source_name="evidence",
+                                source_url="",
+                                quote_text="",
+                                summary="Evidence task was cancelled during pipeline shutdown.",
+                                metadata_json=json.dumps(
+                                    {"reason": "pipeline_shutdown", "agent": self.name}
+                                ),
+                            )
+                        )
+                        logger.warning("evidence task cancelled finding=%s: wrote interruption ledger", finding_id)
+                    except Exception as exc:
+                        logger.warning("evidence task cancelled finding=%s: failed to write ledger: %s", finding_id, exc)
                 continue
             try:
                 task.result()
@@ -1041,6 +1093,7 @@ class EvidenceAgent(BaseAgent):
                     continue
 
                 task = asyncio.create_task(self._process_with_tracking(message))
+                task._finding_id = message.payload.get("finding_id")
                 self._inflight.add(task)
             except asyncio.CancelledError:
                 break

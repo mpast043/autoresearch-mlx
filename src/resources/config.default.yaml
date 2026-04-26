@@ -249,6 +249,7 @@ reddit_bridge:
   seed_on_miss: true
   base_url: ${REDDIT_BRIDGE_BASE_URL}
   auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}
+  devvit_app_url: ${REDDIT_DEVVIT_APP_URL}
 
 reddit_relay:
   auth_token: ${REDDIT_RELAY_AUTH_TOKEN}

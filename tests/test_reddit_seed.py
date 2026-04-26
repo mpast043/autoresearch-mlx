@@ -105,15 +105,106 @@ def test_seed_populates_summary_with_full_pair_counts():
             os.remove(path)
 
 
-def test_seed_toolkit_forces_public_direct_mode():
+def test_seed_toolkit_keeps_bridge_enabled_but_disables_recursive_seed_on_miss():
     path = tempfile.mktemp(suffix=".db")
     try:
         seeder = RedditSeeder(
             {"reddit_bridge": {"enabled": True, "base_url": "https://bridge.example", "mode": "bridge_with_fallback"}, "reddit_relay": {"cache_db_path": path}},
         )
         toolkit = seeder.build_toolkit()
-        assert toolkit.reddit_mode == "public_direct"
-        assert toolkit.reddit_bridge.enabled is False
+        assert toolkit.reddit_mode == "bridge_with_fallback"
+        assert toolkit.reddit_bridge.enabled is True
+        assert toolkit.reddit_transport.bridge_seed_on_miss is False
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_seed_does_not_cache_degraded_only_search_results():
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        store = RedditRelayStore(path)
+        seeder = RedditSeeder(
+            {"discovery": {"reddit": {"seed_limit": 1}}, "reddit_relay": {"cache_db_path": path}},
+            relay_store=store,
+        )
+
+        class StubToolkit:
+            def get_reddit_runtime_metrics(self):
+                return {
+                    "public_json_search_count": 1,
+                    "degraded_fallback_docs_count": 1,
+                    "degraded_fallback_findings_count": 0,
+                }
+
+            async def reddit_search(self, subreddit, query, limit=2):
+                return [
+                    SearchDocument(
+                        title="Manual reconciliation fallback",
+                        url="https://reddit.com/r/sysadmin/comments/degraded/thread/",
+                        snippet="manual spreadsheet reconciliation",
+                        source=f"reddit/{subreddit}",
+                        source_quality="degraded",
+                    )
+                ]
+
+            async def reddit_thread_context(self, url):
+                raise AssertionError("degraded-only search docs should not be thread-fetched")
+
+        seeder.build_toolkit = lambda: StubToolkit()
+        summary = asyncio.run(seeder.seed(subreddits=["sysadmin"], queries=["manual reconciliation"]))
+
+        assert summary.cached_searches == 0
+        assert summary.degraded_covered_pairs == 1
+        assert summary.pairs_with_only_degraded_docs == 1
+        assert summary.truly_uncovered_pairs == 1
+        assert summary.degraded_fallback_findings_count == 0
+        assert summary.degraded_fallback_docs_count == 1
+        assert not store.has_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="")
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_seed_does_not_cache_bridge_miss_thread_context_as_thread_evidence():
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        store = RedditRelayStore(path)
+        seeder = RedditSeeder(
+            {"discovery": {"reddit": {"seed_limit": 1}}, "reddit_relay": {"cache_db_path": path}},
+            relay_store=store,
+        )
+
+        class StubToolkit:
+            def get_reddit_runtime_metrics(self):
+                return {
+                    "bridge_search_count": 1,
+                    "bridge_search_result_count": 1,
+                    "bridge_thread_no_cached_count": 1,
+                }
+
+            async def reddit_search(self, subreddit, query, limit=2):
+                return [
+                    SearchDocument(
+                        title="Manual reconciliation from bridge",
+                        url="https://reddit.com/r/sysadmin/comments/abc123/thread/",
+                        snippet="bridge-backed post body",
+                        source=f"reddit/{subreddit}",
+                        source_quality="bridge",
+                    )
+                ]
+
+            async def reddit_thread_context(self, url):
+                return {"title": "", "description": "", "comments": [], "source_quality": "bridge_miss"}
+
+        seeder.build_toolkit = lambda: StubToolkit()
+        summary = asyncio.run(seeder.seed(subreddits=["sysadmin"], queries=["manual reconciliation"]))
+
+        assert summary.cached_searches == 1
+        assert summary.cached_threads == 0
+        assert summary.bridge_covered_pairs == 1
+        assert store.has_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="")
+        assert not store.has_thread(url="https://reddit.com/r/sysadmin/comments/abc123/thread/")
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -140,11 +231,12 @@ def test_seed_caches_empty_search_results_for_no_doc_pairs():
 
         assert summary.total_pairs == 1
         assert summary.searched_pairs == 1
-        assert summary.cached_searches == 1
-        assert store.has_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="")
+        assert summary.cached_searches == 0
+        assert summary.truly_uncovered_pairs == 1
+        assert summary.uncovered_pairs == 1
+        assert not store.has_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="")
         result = store.get_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="", limit=10)
-        assert result is not None
-        assert result["items"] == []
+        assert result is None
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -175,8 +267,9 @@ def test_seed_recovers_when_search_cache_table_is_missing():
 
         assert coverage.total_pairs == 1
         assert coverage.uncovered_pairs == 1
-        assert summary.cached_searches == 1
-        assert store.has_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="")
+        assert summary.cached_searches == 0
+        assert summary.truly_uncovered_pairs == 1
+        assert not store.has_search(subreddit="sysadmin", query="manual reconciliation", sort="relevance", cursor="")
     finally:
         if os.path.exists(path):
             os.remove(path)

@@ -20,6 +20,7 @@ from cli import (
     build_operator_report,
     build_verbose_report,
     resolve_database_path_from_config,
+    run_check_bridge,
     render_watch_snapshot,
 )
 from src.database import Database, Finding
@@ -637,3 +638,93 @@ def test_cmd_rescreen_revives_pre_atom_reconciliation_signal(monkeypatch, tmp_pa
     assert len(raw_signals) == 1
     assert len(atoms) == 1
     db.close()
+
+
+def test_check_bridge_runs_search_smoke_without_public_fallback(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+reddit_bridge:
+  enabled: true
+  base_url: https://bridge.example
+  auth_token: test-token
+""",
+        encoding="utf-8",
+    )
+
+    async def fake_health(self):
+        return {"ok": True, "service": "autoresearch-reddit-relay"}
+
+    async def fake_search_posts(self, *, subreddit, query, limit=2, sort="relevance", cursor=""):
+        assert subreddit == "smallbusiness"
+        assert query == "manual reconciliation"
+        assert limit == 1
+        return (
+            [
+                {
+                    "id": "abc123",
+                    "kind": "post",
+                    "subreddit": subreddit,
+                    "title": "Manual reconciliation hurts",
+                    "body": "We still reconcile payouts in spreadsheets.",
+                    "author": "operator",
+                    "permalink": "https://reddit.com/r/smallbusiness/comments/abc123/thread/",
+                    "score": 4,
+                    "num_comments": 2,
+                    "created_utc": 1,
+                    "source_type": "reddit",
+                    "post_id": "abc123",
+                    "parent_id": "",
+                }
+            ],
+            "",
+        )
+
+    monkeypatch.setattr("src.reddit_bridge.RedditBridgeClient.health", fake_health)
+    monkeypatch.setattr("src.reddit_bridge.RedditBridgeClient.search_posts", fake_search_posts)
+
+    result = asyncio.run(
+        run_check_bridge(
+            config_path,
+            subreddit="smallbusiness",
+            query="manual reconciliation",
+            limit=1,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["search"]["endpoint"] == "/api/reddit/search-posts"
+    assert result["search"]["items"] == 1
+    assert result["search"]["first_has_body"] is True
+
+
+def test_check_bridge_reports_endpoint_or_auth_failure(monkeypatch, tmp_path):
+    from src.reddit_bridge import BridgeError
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+reddit_bridge:
+  enabled: true
+  base_url: https://bridge.example
+  auth_token: wrong-token
+""",
+        encoding="utf-8",
+    )
+
+    async def fake_health(self):
+        return {"ok": True, "service": "autoresearch-reddit-relay"}
+
+    async def fake_search_posts(self, **_kwargs):
+        raise BridgeError("auth_failed", "reddit bridge rejected the bearer token", 401)
+
+    monkeypatch.setattr("src.reddit_bridge.RedditBridgeClient.health", fake_health)
+    monkeypatch.setattr("src.reddit_bridge.RedditBridgeClient.search_posts", fake_search_posts)
+
+    result = asyncio.run(run_check_bridge(config_path))
+
+    assert result["ok"] is False
+    assert result["health"]["ok"] is True
+    assert result["search"]["ok"] is False
+    assert result["search"]["code"] == "auth_failed"
+    assert "before any public_json fallback" in result["search"]["hint"]

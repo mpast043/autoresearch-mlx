@@ -52,6 +52,59 @@ def test_packaged_default_runtime_resources_exist():
     assert DEFAULT_EVAL_PATH.exists()
 
 
+def test_bootstrap_reddit_bridge_resolves_env_placeholder(monkeypatch, tmp_path, caplog):
+    config_path = tmp_path / "config.yaml"
+    db_path = tmp_path / "autoresearch.db"
+    config_path.write_text(
+        """
+database:
+  path: autoresearch.db
+llm:
+  provider: none
+reddit_bridge:
+  enabled: true
+  base_url: ${REDDIT_BRIDGE_BASE_URL}
+  auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("REDDIT_BRIDGE_BASE_URL", "https://relay.example")
+    monkeypatch.setenv("REDDIT_BRIDGE_AUTH_TOKEN", "test-token")
+
+    class FakeDDGS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def text(self, *_args, **_kwargs):
+            return [{"title": "ok"}]
+
+    monkeypatch.setitem(sys.modules, "ddgs", type("FakeDDGSModule", (), {"DDGS": FakeDDGS}))
+    seen = {}
+
+    async def fake_health(self):
+        seen["base_url"] = self.base_url
+        return {"ok": True, "service": "autoresearch-reddit-relay"}
+
+    monkeypatch.setattr("src.reddit_bridge.RedditBridgeClient.health", fake_health)
+
+    app = AutoResearcher(config_path=str(config_path))
+    app.db = Database(str(db_path))
+    app.db.init_schema()
+    app.current_run_id = "test-run"
+    try:
+        failures = asyncio.run(app._bootstrap_checks())
+    finally:
+        app.db.close()
+
+    assert failures == []
+    assert seen["base_url"] == "https://relay.example"
+    assert "${REDDIT_BRIDGE_BASE_URL}" not in caplog.text
+
+
 def test_snapshot_includes_evidence_layers_and_ledger():
     temp_dir = tempfile.mkdtemp()
     try:

@@ -30,3 +30,10 @@ data/discovery_expansion.json
 data/*.json
 recovery_artifacts/
 tmp/*.yaml
+
+# Generated artifacts
+*.egg-info/
+*.db-shm
+*.db-wal
+uv.lock
+docs/DESIGN_SPEC_REVIEW_*.md

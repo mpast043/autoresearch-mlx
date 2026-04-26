@@ -21,3 +21,4 @@ class SearchDocument:
     workflow_cluster_key: str = ""
     retrieval_strategy_key: str = ""
     corroboration_strategy_key: str = ""
+    source_quality: str = "normal"

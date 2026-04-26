@@ -289,8 +289,8 @@ validation:
     request_timeout_general: 20
 
 reddit_bridge:
-  enabled: false
-  mode: fallback_only
+  enabled: true
+  mode: bridge_with_fallback
   seed_on_miss: true
   base_url: ${REDDIT_BRIDGE_BASE_URL}
   auth_token: ${REDDIT_BRIDGE_AUTH_TOKEN}

@@ -41,6 +41,43 @@ class StubBridgeClient:
         return None
 
 
+class HydratingBridgeClient:
+    enabled = True
+
+    def __init__(self):
+        self.thread_calls = 0
+        self.fetch_calls = 0
+
+    async def search_posts(self, *, subreddit, query, limit=2, sort="relevance"):
+        return [], ""
+
+    async def get_post_thread(self, *, url, comment_limit=8, depth=4):
+        self.thread_calls += 1
+        if self.thread_calls == 1:
+            raise BridgeError("no_cached_result", "no cached thread result", 404)
+        return {
+            "post": {
+                "title": "Bridge hydrated thread",
+                "body": "The post body is now available from relay cache.",
+            },
+            "comments": [
+                {
+                    "body": "We reconcile this by hand every week.",
+                    "author": "opslead",
+                    "score": 7,
+                }
+            ],
+        }
+
+    async def fetch_thread_from_devvit(self, *, post_id):
+        self.fetch_calls += 1
+        assert post_id == "abc123"
+        return {"ok": True, "postId": post_id, "commentCount": 1}
+
+    async def close(self):
+        return None
+
+
 def build_transport(*, bridge_client=None, reddit_mode="bridge_with_fallback") -> RedditTransport:
     return RedditTransport(
         config={"reddit_bridge": {"seed_on_miss": True}},
@@ -71,7 +108,21 @@ async def test_warm_validation_queries_runs_in_bridge_with_fallback(monkeypatch)
 
         async def seed(self, *, subreddits, queries):
             captured["seed"] = (list(subreddits), list(queries))
-            return type("Summary", (), {"cached_searches": 1, "uncovered_pairs": 0})()
+            return type(
+                "Summary",
+                (),
+                {
+                    "searched_pairs": 1,
+                    "cached_searches": 1,
+                    "uncovered_pairs": 0,
+                    "bridge_covered_pairs": 1,
+                    "degraded_covered_pairs": 0,
+                    "pairs_with_usable_bridge_docs": 1,
+                    "pairs_with_only_degraded_docs": 0,
+                    "failed_pairs": 0,
+                    "truly_uncovered_pairs": 0,
+                },
+            )()
 
     monkeypatch.setattr("reddit_seed.RedditSeeder", FakeSeeder)
     transport = build_transport()
@@ -100,6 +151,9 @@ async def test_search_warms_bridge_cache_before_fallback(monkeypatch):
             "seeded_searches": 1,
             "uncovered_before": 1,
             "uncovered_after": 0,
+            "pairs_with_usable_bridge_docs": 1,
+            "pairs_with_only_degraded_docs": 0,
+            "truly_uncovered_pairs": 0,
         }
 
     monkeypatch.setattr(transport, "warm_validation_queries", fake_warm_validation_queries)
@@ -109,4 +163,20 @@ async def test_search_warms_bridge_cache_before_fallback(monkeypatch):
     assert len(docs) == 1
     assert docs[0].url == "https://reddit.com/r/operations/comments/abc123/thread/"
     assert warmed == [(["operations"], ["manual reconciliation"])]
+    assert transport.metrics["reddit_fallback_queries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_thread_context_hydrates_devvit_on_no_cached_result():
+    bridge = HydratingBridgeClient()
+    transport = build_transport(bridge_client=bridge)
+
+    context = await transport.thread_context("https://reddit.com/r/operations/comments/abc123/thread/")
+
+    assert bridge.fetch_calls == 1
+    assert bridge.thread_calls == 2
+    assert "Bridge hydrated thread" in context["title"]
+    assert "reconcile this by hand" in context["text"]
+    assert transport.metrics["bridge_thread_no_cached_count"] == 1
+    assert transport.metrics["public_json_thread_count"] == 0
     assert transport.metrics["reddit_fallback_queries"] == 0

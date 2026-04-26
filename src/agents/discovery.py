@@ -499,6 +499,7 @@ class DiscoveryAgent(BaseAgent):
         self._cycle_strategy: dict[str, dict[str, Any]] = {}
         self._cycle_counts: dict[str, int] = defaultdict(int)
         self._last_reddit_seed_summary: dict[str, Any] = {}
+        self._last_reddit_runtime_metrics: dict[str, Any] = {}
         self.bypass_cache = bypass_cache
         # Term lifecycle manager for forward+reverse search space control
         self.term_lifecycle = TermLifecycleManager(db, self.config)
@@ -526,6 +527,13 @@ class DiscoveryAgent(BaseAgent):
 
     async def _refresh_toolkit(self, new_config: dict[str, Any]) -> None:
         old_toolkit = self.toolkit
+        if hasattr(old_toolkit, "get_reddit_runtime_metrics"):
+            old_metrics = old_toolkit.get_reddit_runtime_metrics() or {}
+            for key, value in old_metrics.items():
+                if isinstance(value, int):
+                    self._last_reddit_runtime_metrics[key] = int(self._last_reddit_runtime_metrics.get(key, 0) or 0) + value
+                elif key not in self._last_reddit_runtime_metrics:
+                    self._last_reddit_runtime_metrics[key] = value
         self.config = new_config
         self.check_interval = self.config.get("discovery", {}).get("check_interval", 300)
         self._sync_sources_from_config()
@@ -986,6 +994,20 @@ class DiscoveryAgent(BaseAgent):
                 "seeded_cached_threads": summary.cached_threads,
                 "seeded_thread_cache_hits": summary.thread_cache_hits,
                 "seeded_unique_urls": summary.unique_urls,
+                "bridge_search_count": summary.bridge_search_count,
+                "bridge_search_result_count": summary.bridge_search_result_count,
+                "public_json_search_count": summary.public_json_search_count,
+                "bridge_thread_count": summary.bridge_thread_count,
+                "bridge_thread_no_cached_count": summary.bridge_thread_no_cached_count,
+                "public_json_thread_count": summary.public_json_thread_count,
+                "degraded_fallback_findings_count": summary.degraded_fallback_findings_count,
+                "degraded_fallback_docs_count": summary.degraded_fallback_docs_count,
+                "seeded_bridge_covered_pairs": summary.bridge_covered_pairs,
+                "seeded_degraded_covered_pairs": summary.degraded_covered_pairs,
+                "seeded_pairs_with_usable_bridge_docs": summary.pairs_with_usable_bridge_docs,
+                "seeded_pairs_with_only_degraded_docs": summary.pairs_with_only_degraded_docs,
+                "seeded_failed_pairs": summary.failed_pairs,
+                "seeded_truly_uncovered_pairs": summary.truly_uncovered_pairs,
             }
             logger.info(
                 "reddit relay primed total_pairs=%s searched_pairs=%s cached_searches=%s cached_threads=%s uncovered_pairs=%s",
@@ -1005,8 +1027,15 @@ class DiscoveryAgent(BaseAgent):
                 self.status_tracker.log(f"reddit_relay_seed_failed error={exc}")
 
     def reddit_runtime_summary(self) -> dict[str, Any]:
+        current_metrics = self.toolkit.get_reddit_runtime_metrics()
+        merged_metrics = dict(self._last_reddit_runtime_metrics)
+        for key, value in current_metrics.items():
+            if isinstance(value, int):
+                merged_metrics[key] = int(merged_metrics.get(key, 0) or 0) + value
+            else:
+                merged_metrics[key] = value
         return {
-            **self.toolkit.get_reddit_runtime_metrics(),
+            **merged_metrics,
             **self._last_reddit_seed_summary,
         }
 

@@ -65,6 +65,7 @@ class AutoResearcher:
         self.current_run_id = ""
         self.discovery_bypass_cache = False
         self._ignore_backlog_for_completion = False
+        self._sigint_count = 0
 
     def _load_config(self, path: str | Path) -> dict[str, Any]:
         config_file = resolve_project_path(path, default=DEFAULT_CONFIG_PATH)
@@ -202,15 +203,29 @@ class AutoResearcher:
         # 3. Reddit bridge (if enabled) — warn if unreachable but don't fail (fallback exists)
         reddit_bridge = self.config.get("reddit_bridge", {})
         if reddit_bridge.get("enabled", False):
-            bridge_url = reddit_bridge.get("base_url", "")
-            if bridge_url:
+            client = None
+            try:
+                from src.reddit_bridge import RedditBridgeClient
+
+                client = RedditBridgeClient(reddit_bridge)
                 try:
-                    import urllib.request
-                    req = urllib.request.Request(bridge_url, method="HEAD")
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        logger.info("Bootstrap OK: Reddit bridge at %s (HTTP %d)", bridge_url, resp.status)
-                except Exception as e:
-                    logger.warning("Bootstrap WARN: Reddit bridge unreachable at %s: %s (will use fallback)", bridge_url, e)
+                    if not client.enabled:
+                        logger.warning("Bootstrap WARN: Reddit bridge enabled but base_url resolved empty (will use fallback)")
+                    else:
+                        health = await client.health()
+                        logger.info(
+                            "Bootstrap OK: Reddit bridge at %s service=%s",
+                            client.base_url,
+                            health.get("service", "unknown"),
+                        )
+                finally:
+                    await client.close()
+            except Exception as e:
+                logger.warning(
+                    "Bootstrap WARN: Reddit bridge unreachable at %s: %s (will use fallback)",
+                    getattr(client, "base_url", ""),
+                    e,
+                )
 
         # 4. Database writable
         try:
@@ -263,11 +278,21 @@ class AutoResearcher:
             self.orchestrator.register_agent(agent)
 
     def _setup_signals(self) -> None:
-        def _handle_shutdown(*_args: Any) -> None:
+        def _handle_sigint(*_args: Any) -> None:
+            self._sigint_count += 1
+            if self._sigint_count == 1:
+                logger.info("SIGINT received: initiating graceful shutdown (press Ctrl+C again to force quit)")
+                self.shutdown_event.set()
+            else:
+                logger.warning("SIGINT received again: force quitting immediately")
+                sys.exit(1)
+
+        def _handle_sigterm(*_args: Any) -> None:
+            logger.info("SIGTERM received: initiating graceful shutdown")
             self.shutdown_event.set()
 
-        signal.signal(signal.SIGINT, _handle_shutdown)
-        signal.signal(signal.SIGTERM, _handle_shutdown)
+        signal.signal(signal.SIGINT, _handle_sigint)
+        signal.signal(signal.SIGTERM, _handle_sigterm)
 
     async def _wait_for_pipeline_drained(self, max_wait_seconds: float) -> bool:
         """Block until queue/agents idle or deadline. Returns True if drained, False on timeout."""
@@ -553,11 +578,42 @@ class AutoResearcher:
             "reddit_bridge_misses",
             "reddit_fallback_queries",
             "reddit_public_direct_queries",
+            "bridge_search_count",
+            "bridge_search_result_count",
+            "public_json_search_count",
+            "bridge_thread_count",
+            "bridge_thread_no_cached_count",
+            "public_json_thread_count",
+            "degraded_fallback_findings_count",
+            "degraded_fallback_docs_count",
+            "degraded_fallback_validation_count",
+            "bridge_upstream_failure_count",
+            "bridge_search_retry_count",
+            "bridge_search_seed_recovery_count",
+            "devvit_hydration_configured_count",
+            "devvit_hydration_unconfigured_count",
+            "devvit_hydration_attempt_count",
+            "devvit_hydration_success_count",
+            "devvit_hydration_failure_count",
+            "devvit_hydration_retry_success_count",
+            "devvit_hydration_retry_failure_count",
             "reddit_validation_seed_runs",
             "reddit_validation_seeded_pairs",
             "reddit_validation_seed_searches",
             "reddit_validation_seed_uncovered_before",
             "reddit_validation_seed_uncovered_after",
+            "reddit_validation_seed_bridge_covered_pairs",
+            "reddit_validation_seed_degraded_covered_pairs",
+            "reddit_validation_seed_pairs_with_usable_bridge_docs",
+            "reddit_validation_seed_pairs_with_only_degraded_docs",
+            "reddit_validation_seed_failed_pairs",
+            "reddit_validation_seed_truly_uncovered_pairs",
+            "seeded_bridge_covered_pairs",
+            "seeded_degraded_covered_pairs",
+            "seeded_pairs_with_usable_bridge_docs",
+            "seeded_pairs_with_only_degraded_docs",
+            "seeded_failed_pairs",
+            "seeded_truly_uncovered_pairs",
         }
         passthrough_keys = {
             "seeded_total_pairs",
@@ -569,6 +625,9 @@ class AutoResearcher:
             "seeded_cached_threads",
             "seeded_thread_cache_hits",
             "seeded_unique_urls",
+            "seeded_degraded_covered_pairs",
+            "seeded_pairs_with_only_degraded_docs",
+            "seeded_truly_uncovered_pairs",
         }
 
         aggregate: dict[str, Any] = {key: 0 for key in summed_keys}
@@ -595,6 +654,21 @@ class AutoResearcher:
         if not phases:
             return {}
 
+        discovery_phase = phases.get("discovery", {})
+        aggregate["degraded_fallback_findings_count"] = int(
+            discovery_phase.get("degraded_fallback_findings_count", 0) or 0
+        )
+        aggregate["degraded_fallback_validation_count"] = sum(
+            int((phases.get(name, {}) or {}).get("public_json_search_count", 0) or 0)
+            + int((phases.get(name, {}) or {}).get("public_json_thread_count", 0) or 0)
+            for name in ("evidence", "validation")
+        )
+        if int(aggregate.get("reddit_validation_seed_runs", 0) or 0) == 0:
+            for key in (
+                "reddit_validation_seed_uncovered_before",
+                "reddit_validation_seed_uncovered_after",
+            ):
+                aggregate[key] = None
         aggregate["reddit_mode"] = modes[0] if len(modes) == 1 else modes
         aggregate["phases"] = phases
         return aggregate

@@ -52,8 +52,16 @@ def run_backup_db(config_path: str | Path) -> dict:
     return {"ok": True, "from": str(db_path.resolve()), "to": str(dest.resolve())}
 
 
-async def run_check_bridge(config_path: str | Path) -> dict:
-    """Call the hosted relay `/api/health` using `reddit_bridge` config (validates URL + token)."""
+async def run_check_bridge(
+    config_path: str | Path,
+    *,
+    subreddit: str = "smallbusiness",
+    query: str = "manual reconciliation",
+    limit: int = 1,
+    sort: str = "relevance",
+    skip_search: bool = False,
+) -> dict:
+    """Call hosted relay health and, by default, one bridge search without public fallback."""
     cfg, _ = load_runtime_config(config_path)
     bridge_cfg = dict(cfg.get("reddit_bridge") or {})
     from src.reddit_bridge import BridgeError, RedditBridgeClient
@@ -67,12 +75,75 @@ async def run_check_bridge(config_path: str | Path) -> dict:
                 "hint": "Set REDDIT_BRIDGE_BASE_URL and enable reddit_bridge in config.yaml",
             }
         health = await client.health()
-        return {
+        result = {
             "ok": True,
             "base_url": client.base_url,
             "token_configured": bool(client.auth_token),
             "health": health,
+            "devvit": {
+                "configured": bool(client.devvit_app_url),
+                "base_url": client.devvit_app_url,
+                "health_ok": False,
+            },
         }
+        if client.devvit_app_url:
+            try:
+                devvit_health = await client.devvit_health()
+                result["devvit"]["health_ok"] = True
+                result["devvit"]["health"] = devvit_health
+            except BridgeError as exc:
+                result["devvit"].update(
+                    {
+                        "health_ok": False,
+                        "code": exc.code,
+                        "status": exc.status,
+                        "error": exc.message,
+                    }
+                )
+        else:
+            result["devvit"]["code"] = "devvit_not_configured"
+            result["devvit"]["error"] = "REDDIT_DEVVIT_APP_URL is empty or unset"
+        if skip_search:
+            return result
+        try:
+            items, next_cursor = await client.search_posts(
+                subreddit=subreddit,
+                query=query,
+                limit=max(1, min(int(limit), 25)),
+                sort=sort,
+            )
+            result["search"] = {
+                "ok": True,
+                "endpoint": "/api/reddit/search-posts",
+                "method": "POST",
+                "subreddit": subreddit,
+                "query": query,
+                "sort": sort,
+                "items": len(items),
+                "next_cursor": next_cursor,
+                "first_url": items[0].get("permalink", "") if items else "",
+                "first_has_body": bool(items and items[0].get("body")),
+            }
+            return result
+        except BridgeError as exc:
+            result["ok"] = False
+            result["search"] = {
+                "ok": False,
+                "endpoint": "/api/reddit/search-posts",
+                "method": "POST",
+                "subreddit": subreddit,
+                "query": query,
+                "sort": sort,
+                "code": exc.code,
+                "status": exc.status,
+                "error": exc.message,
+                "hint": (
+                    "Relay is reachable but has no matching cached/live result."
+                    if exc.code == "no_cached_result"
+                    else "Bridge endpoint/auth/shape failed before any public_json fallback."
+                ),
+            }
+            return result
     except BridgeError as exc:
         return {
             "ok": False,
@@ -533,7 +604,16 @@ async def cmd_reddit_seed(args: argparse.Namespace, _app: AutoResearcher) -> Non
 
 
 async def cmd_check_bridge(args: argparse.Namespace, _app: AutoResearcher) -> None:
-    print_json(await run_check_bridge(args.config))
+    print_json(
+        await run_check_bridge(
+            args.config,
+            subreddit=args.subreddit,
+            query=args.query or args.bridge_query,
+            limit=args.bridge_limit,
+            sort=args.sort,
+            skip_search=args.skip_search,
+        )
+    )
 
 
 async def cmd_backup_db(args: argparse.Namespace, _app: AutoResearcher) -> None:
@@ -782,6 +862,156 @@ async def cmd_scoring_report(args: argparse.Namespace, _app: AutoResearcher) -> 
                 limit=max(1, args.limit),
             )
         )
+    finally:
+        db.close()
+
+
+async def cmd_false_kill_risk(args: argparse.Namespace, _app: AutoResearcher) -> None:
+    from src.database import Database
+
+    db_path = resolve_database_path_from_config(args.config)
+    if not db_path.exists():
+        print(f"No database found at {db_path}")
+        return
+
+    db = Database(str(db_path))
+    try:
+        conn = db._get_connection()
+        rows = conn.execute(
+            """
+            SELECT
+                o.id AS opportunity_id,
+                o.cluster_id,
+                o.title,
+                o.status,
+                o.recommendation,
+                o.selection_status,
+                o.selection_reason,
+                o.pain_severity,
+                o.frequency_score,
+                o.cost_of_inaction,
+                o.workaround_density,
+                o.evidence_quality,
+                o.corroboration_strength,
+                o.evidence_sufficiency,
+                o.problem_truth_score,
+                o.revenue_readiness_score,
+                o.decision_score,
+                o.composite_score,
+                o.notes_json,
+                c.label AS cluster_label,
+                json_extract(c.metadata_json, '$.atom_count') AS atom_count,
+                json_extract(c.metadata_json, '$.signal_count') AS signal_count,
+                GROUP_CONCAT(pa.pain_statement, ' | ') AS pain_statements,
+                GROUP_CONCAT(pa.failure_mode, ' | ') AS failure_modes,
+                GROUP_CONCAT(pa.current_workaround, ' | ') AS workarounds,
+                MAX(co.corroboration_score) AS max_corroboration,
+                MAX(co.source_diversity) AS max_source_diversity,
+                MAX(co.independent_confirmations) AS max_independent_confirmations
+            FROM opportunities o
+            LEFT JOIN opportunity_clusters c ON c.id = o.cluster_id
+            LEFT JOIN cluster_members cm ON cm.cluster_id = c.id
+            LEFT JOIN problem_atoms pa ON pa.id = cm.problem_atom_id
+            LEFT JOIN corroborations co ON co.finding_id = pa.finding_id
+            WHERE o.status IN ('killed', 'parked')
+            GROUP BY o.id
+            ORDER BY o.decision_score DESC, o.problem_truth_score DESC
+            LIMIT ?
+            """,
+            (max(1, args.limit),),
+        ).fetchall()
+
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            row_dict = dict(row)
+            pain_severity = float(row_dict.get("pain_severity") or 0.0)
+            frequency_score = float(row_dict.get("frequency_score") or 0.0)
+            cost_of_inaction = float(row_dict.get("cost_of_inaction") or 0.0)
+            workaround_density = float(row_dict.get("workaround_density") or 0.0)
+            evidence_quality = float(row_dict.get("evidence_quality") or 0.0)
+            corroboration_strength = float(row_dict.get("corroboration_strength") or 0.0)
+            evidence_sufficiency = float(row_dict.get("evidence_sufficiency") or 0.0)
+            problem_truth_score = float(row_dict.get("problem_truth_score") or 0.0)
+            decision_score = float(row_dict.get("decision_score") or 0.0)
+            max_corroboration = float(row_dict.get("max_corroboration") or 0.0)
+            max_source_diversity = float(row_dict.get("max_source_diversity") or 0.0)
+            max_independent_confirmations = float(row_dict.get("max_independent_confirmations") or 0.0)
+            atom_count = int(row_dict.get("atom_count") or 0)
+            signal_count = int(row_dict.get("signal_count") or 0)
+
+            pain_sharpness = (
+                pain_severity * 0.25
+                + frequency_score * 0.25
+                + cost_of_inaction * 0.20
+                + workaround_density * 0.15
+                + evidence_quality * 0.15
+            )
+            corroboration_depth = (
+                max_corroboration * 0.40
+                + max_source_diversity * 0.30
+                + max_independent_confirmations * 0.30
+            )
+            recurrence_proxy = min(atom_count, 10) / 10.0
+            rescue_score = round(pain_sharpness - corroboration_depth + recurrence_proxy * 0.15, 4)
+
+            notes = _json_loads(str(row_dict.get("notes_json") or "{}"), {})
+            revalidation = notes.get("revalidation", {})
+            decision_reason = revalidation.get("selection_reason") or row_dict.get("selection_reason") or ""
+
+            kill_cause = decision_reason
+            if not kill_cause:
+                if decision_score < 0.15:
+                    kill_cause = "below_threshold"
+                elif corroboration_strength < 0.3:
+                    kill_cause = "thin_corroboration"
+                else:
+                    kill_cause = "unknown"
+
+            suggested_rescue = []
+            if max_corroboration < 0.35:
+                suggested_rescue.append("run_corroboration_queries")
+            if max_source_diversity < 2:
+                suggested_rescue.append("seek_cross_source_confirmation")
+            if evidence_sufficiency < 0.35:
+                suggested_rescue.append("deepen_evidence_sufficiency")
+            if atom_count < 3:
+                suggested_rescue.append("harvest_more_signals")
+            if not suggested_rescue:
+                suggested_rescue.append("review_thresholds")
+
+            results.append({
+                "opportunity_id": row_dict.get("opportunity_id"),
+                "cluster_id": row_dict.get("cluster_id"),
+                "title": row_dict.get("title") or row_dict.get("cluster_label") or "",
+                "status": row_dict.get("status"),
+                "kill_cause": kill_cause,
+                "rescue_score": rescue_score,
+                "pain_sharpness": round(pain_sharpness, 4),
+                "corroboration_depth": round(corroboration_depth, 4),
+                "recurrence_proxy": round(recurrence_proxy, 4),
+                "decision_score": round(decision_score, 4),
+                "problem_truth_score": round(problem_truth_score, 4),
+                "revenue_readiness_score": round(float(row_dict.get("revenue_readiness_score") or 0.0), 4),
+                "atom_count": atom_count,
+                "signal_count": signal_count,
+                "max_corroboration": round(max_corroboration, 4),
+                "max_source_diversity": round(max_source_diversity, 4),
+                "pain_snippet": (str(row_dict.get("pain_statements") or "")[:120] + "...")
+                if len(str(row_dict.get("pain_statements") or "")) > 120
+                else str(row_dict.get("pain_statements") or ""),
+                "suggested_rescue": suggested_rescue,
+            })
+
+        results.sort(key=lambda r: (-r["rescue_score"], -r["pain_sharpness"]))
+        print_json({
+            "command": "false-kill-risk",
+            "total": len(results),
+            "thresholds": {
+                "promotion": 0.18,
+                "park": 0.15,
+            },
+            "results": results,
+        })
     finally:
         db.close()
 
@@ -1697,6 +1927,7 @@ COMMANDS: dict[str, Callable[..., Awaitable[None]]] = {
     "run-once": cmd_run_once,
     "run-unseeded": cmd_run_unseeded,
     "deep-research": cmd_deep_research,
+    "false-kill-risk": cmd_false_kill_risk,
 }
 
 
@@ -1753,6 +1984,7 @@ async def main() -> None:
             "security-scan",
             "generate-docs",
             "sre-health",
+            "false-kill-risk",
         ],
         help="Command to execute",
     )
@@ -1761,6 +1993,11 @@ async def main() -> None:
     parser.add_argument("--interval", type=float, default=1.0, help="Refresh interval for watch mode")
     parser.add_argument("--host", help="Host override for reddit-relay")
     parser.add_argument("--port", type=int, help="Port override for reddit-relay")
+    parser.add_argument("--subreddit", default="smallbusiness", help="Subreddit for check-bridge smoke search")
+    parser.add_argument("--bridge-query", default="manual reconciliation", help="Query for check-bridge smoke search")
+    parser.add_argument("--bridge-limit", type=int, default=1, help="Result limit for check-bridge smoke search")
+    parser.add_argument("--sort", default="relevance", help="Sort for check-bridge smoke search")
+    parser.add_argument("--skip-search", action="store_true", help="Only call relay health in check-bridge")
     parser.add_argument("--eval-path", default=str(DEFAULT_EVAL_PATH), help="Path to behavior eval fixture set")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to runtime config")
     parser.add_argument("--finding-id", type=int, help="Finding id for review-mark")

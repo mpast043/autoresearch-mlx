@@ -721,7 +721,14 @@ class LLMDiscoveryExpander:
         raw = await self.client.agenerate(QUERY_DERIVATION_SYSTEM, user_prompt)
         if not raw:
             logger.info("Async query derivation failed, falling back to sync")
-            raw = self.client.generate(QUERY_DERIVATION_SYSTEM, user_prompt)
+            try:
+                raw = await asyncio.wait_for(
+                    asyncio.to_thread(self.client.generate, QUERY_DERIVATION_SYSTEM, user_prompt),
+                    timeout=self.client.timeout or 120,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Sync LLM query derivation timed out after %s seconds", self.client.timeout or 120)
+                raw = None
         if raw:
             data = _extract_json(raw)
             if data:
@@ -829,7 +836,14 @@ class LLMDiscoveryExpander:
         if not raw:
             # Fallback to sync generation if async failed (e.g. event loop conflict)
             logger.info("Async LLM call failed, falling back to sync")
-            raw = self.client.generate(system_prompt, user_prompt)
+            try:
+                raw = await asyncio.wait_for(
+                    asyncio.to_thread(self.client.generate, system_prompt, user_prompt),
+                    timeout=self.client.timeout or 120,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Sync LLM fallback timed out after %s seconds", self.client.timeout or 120)
+                raw = None
         if not raw:
             logger.warning("LLM expansion failed, no response received")
             return []
@@ -1010,7 +1024,14 @@ class LLMAtomExtractor:
         raw = await self.client.agenerate(ATOM_EXTRACT_SYSTEM, user_prompt)
         if not raw:
             logger.info("LLM async atom extraction failed, trying sync")
-            return self.extract(raw_text, heuristic_atom)
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(self.extract, raw_text, heuristic_atom),
+                    timeout=self.client.timeout or 120,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Sync LLM atom extraction timed out after %s seconds", self.client.timeout or 120)
+                return heuristic_atom
 
         data = _extract_json(raw)
         if not data:

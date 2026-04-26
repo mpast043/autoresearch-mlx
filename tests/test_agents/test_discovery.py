@@ -659,6 +659,32 @@ def test_duplicate_finding_by_hash_not_stored(temp_db):
     assert finding_id_2 is None
 
 
+def test_process_finding_skips_duplicate_content_hash_race_condition(temp_db):
+    """Simulate two concurrent discoveries of the same URL — second must not crash."""
+    agent = DiscoveryAgent(temp_db)
+    finding_data = {
+        "source": "reddit-problem",
+        "source_url": "https://reddit.com/r/entrepreneur/comments/xyz-race",
+        "entrepreneur": "Race Test",
+        "product_built": "Race Condition Test",
+        "outcome_summary": "Testing race condition where two coroutines discover the same URL.",
+        "finding_kind": "pain_point",
+    }
+
+    # First call succeeds
+    id1 = asyncio.run(agent._process_finding(finding_data))
+    assert id1 is not None
+    assert id1 > 0
+
+    # Simulate race: same content_hash bypasses _seen_hashes guard
+    agent._seen_hashes.clear()
+
+    # Second call must NOT crash — should return None or existing id
+    id2 = asyncio.run(agent._process_finding(finding_data))
+    # Should skip gracefully (either None or the existing id)
+    assert id2 is None or id2 == id1
+
+
 def test_discover_once_does_not_block_on_reddit_priming(temp_db):
     agent = DiscoveryAgent(temp_db, sources=["reddit"])
 

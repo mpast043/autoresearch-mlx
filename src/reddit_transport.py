@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +18,14 @@ try:
     from src.search_models import SearchDocument
 except Exception:  # pragma: no cover - supports package and direct module usage
     from search_models import SearchDocument
+
+
+REDDIT_POST_ID_RE = re.compile(r"/comments/([a-z0-9]+)/", re.IGNORECASE)
+
+
+def _post_id_from_url(url: str) -> str:
+    match = REDDIT_POST_ID_RE.search(str(url))
+    return match.group(1) if match else ""
 
 
 class RedditTransport:
@@ -61,11 +70,36 @@ class RedditTransport:
             "reddit_bridge_misses": 0,
             "reddit_fallback_queries": 0,
             "reddit_public_direct_queries": 0,
+            "bridge_search_count": 0,
+            "bridge_search_result_count": 0,
+            "public_json_search_count": 0,
+            "bridge_thread_count": 0,
+            "bridge_thread_no_cached_count": 0,
+            "public_json_thread_count": 0,
+            "degraded_fallback_findings_count": 0,
+            "degraded_fallback_docs_count": 0,
+            "degraded_fallback_validation_count": 0,
+            "bridge_upstream_failure_count": 0,
+            "bridge_search_retry_count": 0,
+            "bridge_search_seed_recovery_count": 0,
+            "devvit_hydration_configured_count": 0,
+            "devvit_hydration_unconfigured_count": 0,
+            "devvit_hydration_attempt_count": 0,
+            "devvit_hydration_success_count": 0,
+            "devvit_hydration_failure_count": 0,
+            "devvit_hydration_retry_success_count": 0,
+            "devvit_hydration_retry_failure_count": 0,
             "reddit_validation_seed_runs": 0,
             "reddit_validation_seeded_pairs": 0,
             "reddit_validation_seed_searches": 0,
             "reddit_validation_seed_uncovered_before": 0,
             "reddit_validation_seed_uncovered_after": 0,
+            "reddit_validation_seed_bridge_covered_pairs": 0,
+            "reddit_validation_seed_degraded_covered_pairs": 0,
+            "reddit_validation_seed_pairs_with_usable_bridge_docs": 0,
+            "reddit_validation_seed_pairs_with_only_degraded_docs": 0,
+            "reddit_validation_seed_failed_pairs": 0,
+            "reddit_validation_seed_truly_uncovered_pairs": 0,
         }
         self.validation_seeded_pairs: set[tuple[str, str]] = set()
 
@@ -139,15 +173,15 @@ class RedditTransport:
             subreddits=[normalized_subreddit],
             queries=[normalized_query],
         )
-        seeded = int(summary.get("seeded_searches", 0) or 0)
-        uncovered_after = int(summary.get("uncovered_after", 0) or 0)
-        if seeded > 0 or uncovered_after == 0:
+        usable_bridge_pairs = int(summary.get("pairs_with_usable_bridge_docs", 0) or 0)
+        if usable_bridge_pairs > 0:
             self._logger.info(
-                "reddit_search warmed relay cache subreddit=%s query=%r seeded_searches=%s uncovered_after=%s",
+                "reddit_search warmed relay cache subreddit=%s query=%r usable_bridge_pairs=%s degraded_only_pairs=%s truly_uncovered_pairs=%s",
                 normalized_subreddit,
                 normalized_query,
-                seeded,
-                uncovered_after,
+                usable_bridge_pairs,
+                int(summary.get("pairs_with_only_degraded_docs", 0) or 0),
+                int(summary.get("truly_uncovered_pairs", 0) or 0),
             )
             return True
         return False
@@ -165,6 +199,13 @@ class RedditTransport:
                 "seeded_searches": 0,
                 "uncovered_before": 0,
                 "uncovered_after": 0,
+                "searched_pairs": 0,
+                "bridge_covered_pairs": 0,
+                "degraded_covered_pairs": 0,
+                "pairs_with_usable_bridge_docs": 0,
+                "pairs_with_only_degraded_docs": 0,
+                "failed_pairs": 0,
+                "truly_uncovered_pairs": 0,
             }
 
         normalized_subreddits = [str(subreddit).strip() for subreddit in subreddits if str(subreddit).strip()]
@@ -180,6 +221,13 @@ class RedditTransport:
                 "seeded_searches": 0,
                 "uncovered_before": 0,
                 "uncovered_after": 0,
+                "searched_pairs": 0,
+                "bridge_covered_pairs": 0,
+                "degraded_covered_pairs": 0,
+                "pairs_with_usable_bridge_docs": 0,
+                "pairs_with_only_degraded_docs": 0,
+                "failed_pairs": 0,
+                "truly_uncovered_pairs": 0,
             }
 
         pairs = [
@@ -195,6 +243,13 @@ class RedditTransport:
                 "seeded_searches": 0,
                 "uncovered_before": 0,
                 "uncovered_after": 0,
+                "searched_pairs": 0,
+                "bridge_covered_pairs": 0,
+                "degraded_covered_pairs": 0,
+                "pairs_with_usable_bridge_docs": 0,
+                "pairs_with_only_degraded_docs": 0,
+                "failed_pairs": 0,
+                "truly_uncovered_pairs": 0,
             }
 
         try:
@@ -214,6 +269,13 @@ class RedditTransport:
                 "seeded_searches": 0,
                 "uncovered_before": 0,
                 "uncovered_after": 0,
+                "searched_pairs": 0,
+                "bridge_covered_pairs": 0,
+                "degraded_covered_pairs": 0,
+                "pairs_with_usable_bridge_docs": 0,
+                "pairs_with_only_degraded_docs": 0,
+                "failed_pairs": 0,
+                "truly_uncovered_pairs": 0,
             }
 
         self.validation_seeded_pairs.update(pairs)
@@ -222,19 +284,54 @@ class RedditTransport:
         self.metrics["reddit_validation_seed_searches"] += int(summary.cached_searches)
         self.metrics["reddit_validation_seed_uncovered_before"] += int(before.uncovered_pairs)
         self.metrics["reddit_validation_seed_uncovered_after"] += int(summary.uncovered_pairs)
+        self.metrics["bridge_search_count"] += int(getattr(summary, "bridge_search_count", 0) or 0)
+        self.metrics["bridge_search_result_count"] += int(getattr(summary, "bridge_search_result_count", 0) or 0)
+        self.metrics["public_json_search_count"] += int(getattr(summary, "public_json_search_count", 0) or 0)
+        self.metrics["bridge_thread_count"] += int(getattr(summary, "bridge_thread_count", 0) or 0)
+        self.metrics["bridge_thread_no_cached_count"] += int(getattr(summary, "bridge_thread_no_cached_count", 0) or 0)
+        self.metrics["public_json_thread_count"] += int(getattr(summary, "public_json_thread_count", 0) or 0)
+        self.metrics["degraded_fallback_findings_count"] += int(
+            getattr(summary, "degraded_fallback_findings_count", 0) or 0
+        )
+        self.metrics["degraded_fallback_docs_count"] += int(getattr(summary, "degraded_fallback_docs_count", 0) or 0)
+        self.metrics["reddit_validation_seed_bridge_covered_pairs"] += int(getattr(summary, "bridge_covered_pairs", 0) or 0)
+        self.metrics["reddit_validation_seed_degraded_covered_pairs"] += int(getattr(summary, "degraded_covered_pairs", 0) or 0)
+        self.metrics["reddit_validation_seed_pairs_with_usable_bridge_docs"] += int(
+            getattr(summary, "pairs_with_usable_bridge_docs", 0) or 0
+        )
+        self.metrics["reddit_validation_seed_pairs_with_only_degraded_docs"] += int(
+            getattr(summary, "pairs_with_only_degraded_docs", 0) or 0
+        )
+        self.metrics["reddit_validation_seed_failed_pairs"] += int(getattr(summary, "failed_pairs", 0) or 0)
+        self.metrics["reddit_validation_seed_truly_uncovered_pairs"] += int(
+            getattr(summary, "truly_uncovered_pairs", 0) or 0
+        )
         self._logger.info(
-            "reddit validation queries warmed pairs=%s searches=%s uncovered_before=%s uncovered_after=%s",
+            "reddit validation queries warmed pairs=%s searches=%s bridge_covered_pairs=%s degraded_covered_pairs=%s usable_bridge_pairs=%s degraded_only_pairs=%s failed_pairs=%s truly_uncovered_pairs=%s uncovered_before=%s uncovered_after=%s",
             len(pairs),
             summary.cached_searches,
+            getattr(summary, "bridge_covered_pairs", 0),
+            getattr(summary, "degraded_covered_pairs", 0),
+            getattr(summary, "pairs_with_usable_bridge_docs", 0),
+            getattr(summary, "pairs_with_only_degraded_docs", 0),
+            getattr(summary, "failed_pairs", 0),
+            getattr(summary, "truly_uncovered_pairs", summary.uncovered_pairs),
             before.uncovered_pairs,
             summary.uncovered_pairs,
         )
         return {
             "seed_runs": 1,
             "seeded_pairs": len(pairs),
+            "searched_pairs": int(getattr(summary, "searched_pairs", len(pairs)) or 0),
             "seeded_searches": int(summary.cached_searches),
             "uncovered_before": int(before.uncovered_pairs),
             "uncovered_after": int(summary.uncovered_pairs),
+            "bridge_covered_pairs": int(getattr(summary, "bridge_covered_pairs", 0) or 0),
+            "degraded_covered_pairs": int(getattr(summary, "degraded_covered_pairs", 0) or 0),
+            "pairs_with_usable_bridge_docs": int(getattr(summary, "pairs_with_usable_bridge_docs", 0) or 0),
+            "pairs_with_only_degraded_docs": int(getattr(summary, "pairs_with_only_degraded_docs", 0) or 0),
+            "failed_pairs": int(getattr(summary, "failed_pairs", 0) or 0),
+            "truly_uncovered_pairs": int(getattr(summary, "truly_uncovered_pairs", summary.uncovered_pairs) or 0),
         }
 
     async def search(
@@ -266,6 +363,7 @@ class RedditTransport:
                 # bridge_with_fallback should continue to legacy/public paths when the bridge
                 # is not configured in the current environment (e.g. Codespaces).
             try:
+                self.metrics["bridge_search_count"] += 1
                 bridge_posts, _next_cursor = await self.reddit_bridge.search_posts(
                     subreddit=subreddit,
                     query=query,
@@ -278,11 +376,13 @@ class RedditTransport:
                         url=post.get("permalink", ""),
                         snippet=self._compact_text(post.get("body", ""), 500),
                         source=f"reddit/{post.get('subreddit', subreddit)}",
+                        source_quality="bridge",
                     )
                     for post in bridge_posts
                     if post.get("permalink")
                 ]
                 self.metrics["reddit_bridge_hits"] += 1
+                self.metrics["bridge_search_result_count"] += len(docs)
                 self._logger.info(
                     "reddit_search using bridge path subreddit=%s query=%r limit=%s results=%s mode=%s",
                     subreddit,
@@ -295,6 +395,8 @@ class RedditTransport:
                 return docs
             except BridgeError as exc:
                 self.metrics["reddit_bridge_misses"] += 1
+                if exc.code == "upstream_reddit_failure":
+                    self.metrics["bridge_upstream_failure_count"] += 1
                 if self.reddit_mode == "bridge_only":
                     self._logger.info(
                         "reddit_search bridge miss code=%s subreddit=%s query=%r mode=bridge_only; returning empty",
@@ -309,6 +411,8 @@ class RedditTransport:
                     seeded = await self._maybe_seed_bridge_pair(subreddit=subreddit, query=query)
                     if seeded:
                         try:
+                            self.metrics["bridge_search_retry_count"] += 1
+                            self.metrics["bridge_search_count"] += 1
                             bridge_posts, _next_cursor = await self.reddit_bridge.search_posts(
                                 subreddit=subreddit,
                                 query=query,
@@ -321,11 +425,14 @@ class RedditTransport:
                                     url=post.get("permalink", ""),
                                     snippet=self._compact_text(post.get("body", ""), 500),
                                     source=f"reddit/{post.get('subreddit', subreddit)}",
+                                    source_quality="bridge",
                                 )
                                 for post in bridge_posts
                                 if post.get("permalink")
                             ]
                             self.metrics["reddit_bridge_hits"] += 1
+                            self.metrics["bridge_search_seed_recovery_count"] += 1
+                            self.metrics["bridge_search_result_count"] += len(docs)
                             self._logger.info(
                                 "reddit_search recovered via bridge seed subreddit=%s query=%r limit=%s results=%s",
                                 subreddit,
@@ -338,11 +445,18 @@ class RedditTransport:
                         except BridgeError as retry_exc:
                             exc = retry_exc
                 log_fn = self._logger.info if exc.code == "no_cached_result" else self._logger.warning
+                normalized_query = self._normalize_query(query)
                 log_fn(
-                    "reddit_search bridge failure code=%s subreddit=%s query=%r; falling back to legacy/public path (%s)",
+                    "reddit_search bridge failure code=%s status=%s subreddit=%s query=%r normalized_query=%r query_normalized=%s sort=%s retry_count=%s seed_only=%s; using degraded fallback legacy/public path (%s)",
                     exc.code,
+                    exc.status,
                     subreddit,
                     query,
+                    normalized_query,
+                    normalized_query != query,
+                    sort,
+                    self.metrics["bridge_search_retry_count"],
+                    not self.bridge_seed_on_miss,
                     exc.message,
                 )
                 self.metrics["reddit_fallback_queries"] += 1
@@ -409,14 +523,17 @@ class RedditTransport:
                         url=f"https://reddit.com{permalink}" if permalink else "",
                         snippet=self._compact_text(data.get("selftext", ""), 500),
                         source=f"reddit/{subreddit}",
+                        source_quality="degraded",
                     )
                 )
             return [doc for doc in docs if doc.url]
 
         try:
             docs = await asyncio.to_thread(_request)
+            self.metrics["public_json_search_count"] += 1
+            self.metrics["degraded_fallback_docs_count"] += len(docs)
             self._logger.info(
-                "reddit_search using fallback path=public_json subreddit=%s query=%r limit=%s results=%s",
+                "reddit_search using degraded fallback path=public_json subreddit=%s query=%r limit=%s results=%s",
                 subreddit,
                 query,
                 limit,
@@ -443,6 +560,7 @@ class RedditTransport:
                 # is not configured in the current environment (e.g. Codespaces).
             try:
                 # Fetch 50 comments sorted by rising to get corroboration
+                self.metrics["bridge_thread_count"] += 1
                 payload = await self.reddit_bridge.get_post_thread(url=url, comment_limit=50, depth=4)
                 comments = [item.get("body", "") for item in payload.get("comments", []) if item.get("body")]
                 # Get comment metadata for corroboration scoring
@@ -470,6 +588,7 @@ class RedditTransport:
                     "description": self._compact_text(payload.get("post", {}).get("body", ""), 900),
                     "comments": comments[:50],
                     "comment_metadata": comment_metadata,
+                    "source_quality": "bridge",
                 }
                 self.metrics["reddit_bridge_hits"] += 1
                 self._cache_set(self.thread_cache, url, result)
@@ -484,6 +603,65 @@ class RedditTransport:
                     )
                     self._cache_set(self.thread_cache, url, {})
                     return {}
+                if exc.code == "no_cached_result":
+                    self.metrics["bridge_thread_no_cached_count"] += 1
+                    post_id = _post_id_from_url(url)
+                    if post_id:
+                        if getattr(self.reddit_bridge, "devvit_enabled", False):
+                            self.metrics["devvit_hydration_configured_count"] += 1
+                        else:
+                            self.metrics["devvit_hydration_unconfigured_count"] += 1
+                        self.metrics["devvit_hydration_attempt_count"] += 1
+                        hydrated = await self.reddit_bridge.fetch_thread_from_devvit(post_id=post_id)
+                        if hydrated:
+                            self.metrics["devvit_hydration_success_count"] += 1
+                            try:
+                                self.metrics["bridge_thread_count"] += 1
+                                payload = await self.reddit_bridge.get_post_thread(url=url, comment_limit=50, depth=4)
+                                comments = [item.get("body", "") for item in payload.get("comments", []) if item.get("body")]
+                                comment_metadata = [
+                                    {
+                                        "body": item.get("body", "")[:200],
+                                        "author": item.get("author", ""),
+                                        "score": item.get("score", 0),
+                                    }
+                                    for item in payload.get("comments", [])[:50]
+                                    if item.get("body")
+                                ]
+                                result = {
+                                    "title": payload.get("post", {}).get("title", ""),
+                                    "text": self._compact_text(
+                                        " ".join(
+                                            [
+                                                payload.get("post", {}).get("title", ""),
+                                                payload.get("post", {}).get("body", ""),
+                                                *comments,
+                                            ]
+                                        ),
+                                        2500,
+                                    ),
+                                    "description": self._compact_text(payload.get("post", {}).get("body", ""), 900),
+                                    "comments": comments[:50],
+                                    "comment_metadata": comment_metadata,
+                                    "source_quality": "bridge",
+                                }
+                                self.metrics["reddit_bridge_hits"] += 1
+                                self.metrics["devvit_hydration_retry_success_count"] += 1
+                                self._cache_set(self.thread_cache, url, result)
+                                self._logger.info("reddit_thread_context hydrated via devvit post_id=%s url=%s", post_id, url)
+                                return result
+                            except BridgeError as retry_exc:
+                                self.metrics["devvit_hydration_retry_failure_count"] += 1
+                                exc = retry_exc
+                        else:
+                            self.metrics["devvit_hydration_failure_count"] += 1
+                            self._logger.info(
+                                "reddit_thread_context bridge no_cached_result url=%s post_id=%s devvit_configured=%s devvit_url_present=%s devvit_hydration_unavailable_or_failed",
+                                url,
+                                post_id,
+                                getattr(self.reddit_bridge, "devvit_enabled", False),
+                                bool(getattr(self.reddit_bridge, "devvit_app_url", "")),
+                            )
                 self._logger.info("reddit_thread_context bridge failure code=%s url=%s (%s)", exc.code, url, exc.message)
                 self.metrics["reddit_fallback_queries"] += 1
 
@@ -532,6 +710,7 @@ class RedditTransport:
                     "description": self._compact_text(post.get("selftext_snippet", ""), 900),
                     "comments": comments,
                     "comment_metadata": comment_metadata,
+                    "source_quality": "legacy",
                 }
                 self._cache_set(self.thread_cache, url, result)
                 self._logger.info(
@@ -542,7 +721,7 @@ class RedditTransport:
                 return result
 
         # Fallback to public JSON API
-        self._logger.info("reddit_thread_context falling back to public_json url=%s node_bin=%s script_exists=%s",
+        self._logger.info("reddit_thread_context using degraded fallback path=public_json url=%s node_bin=%s script_exists=%s",
             url, bool(self.node_bin), self.readonly_script.exists() if hasattr(self.readonly_script, 'exists') else 'N/A')
         json_url = url.rstrip("/") + "/.json"
 
@@ -579,16 +758,27 @@ class RedditTransport:
                 "description": self._compact_text(post.get("selftext", ""), 900),
                 "comments": raw_comments,
                 "comment_metadata": comment_metadata,
+                "source_quality": "degraded",
             }
 
         try:
             payload = await asyncio.to_thread(_request)
+            self.metrics["public_json_thread_count"] += 1
+            if payload.get("text") or payload.get("comments"):
+                self.metrics["degraded_fallback_docs_count"] += 1
             self._cache_set(self.thread_cache, url, payload)
             self._logger.info(
-                "reddit_thread_context using fallback path=public_json url=%s comments=%s",
+                "reddit_thread_context using degraded fallback path=public_json url=%s comments=%s",
                 url,
                 len(payload.get("comments", [])),
             )
             return payload
-        except Exception:
-            return {"title": "", "text": "", "description": "", "comments": []}
+        except Exception as exc:
+            self._logger.info("reddit_thread_context degraded fallback failed path=public_json url=%s error=%s", url, exc)
+            return {
+                "title": "",
+                "text": "",
+                "description": "",
+                "comments": [],
+                "source_quality": "bridge_miss",
+            }
